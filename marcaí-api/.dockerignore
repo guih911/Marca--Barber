@@ -1,0 +1,20 @@
+node_modules
+npm-debug.log*
+.env*
+!.env.example
+.git
+.gitignore
+
+# Sessions e cache — gerenciados por volumes Docker
+.wwebjs_auth
+.wwebjs_cache
+
+# Uploads — gerenciados por volumes Docker
+uploads
+
+# Logs
+*.log
+logs/
+
+# Dev only
+scripts/

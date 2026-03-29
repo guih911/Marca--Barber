@@ -1,0 +1,142 @@
+@import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Manrope:wght@400;500;600;700;800&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 32 35% 95%;
+    --foreground: 24 12% 10%;
+    --card: 0 0% 100%;
+    --card-foreground: 24 12% 10%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 24 12% 10%;
+    --primary: 33 43% 51%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 32 54% 90%;
+    --secondary-foreground: 28 42% 28%;
+    --muted: 30 24% 94%;
+    --muted-foreground: 25 10% 42%;
+    --accent: 33 48% 87%;
+    --accent-foreground: 28 42% 28%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 28 26% 84%;
+    --input: 28 26% 84%;
+    --ring: 33 43% 51%;
+    --radius: 0.9rem;
+  }
+
+  * {
+    @apply border-border;
+    box-sizing: border-box;
+  }
+
+  html {
+    height: 100%;
+    font-family: 'Manrope', system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+    background: #f6f1ea;
+  }
+
+  body {
+    min-height: 100%;
+    @apply bg-fundo text-texto;
+    background-image:
+      radial-gradient(circle at top left, rgba(184, 137, 77, 0.08), transparent 28%),
+      radial-gradient(circle at top right, rgba(17, 17, 17, 0.05), transparent 22%),
+      linear-gradient(180deg, #faf5ef 0%, #f6f1ea 100%);
+    overscroll-behavior-y: none;
+  }
+
+  #root {
+    min-height: 100%;
+  }
+
+  ::-webkit-scrollbar { width: 5px; height: 5px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #d4c3af; border-radius: 99px; }
+  ::-webkit-scrollbar-thumb:hover { background: #b8894d; }
+
+  .sidebar-scroll::-webkit-scrollbar-thumb { background: #3a3028; }
+
+  a, button {
+    transition: color 0.15s, background-color 0.15s, border-color 0.15s, box-shadow 0.15s, opacity 0.15s, transform 0.15s;
+  }
+
+  :focus-visible {
+    outline: 2px solid #b8894d;
+    outline-offset: 2px;
+    border-radius: 8px;
+  }
+
+  ::selection {
+    background: #f3e4d2;
+    color: #4a321a;
+  }
+}
+
+@layer components {
+  .card {
+    @apply bg-white rounded-2xl border border-borda shadow-card;
+  }
+
+  .input-base {
+    @apply w-full px-4 py-2.5 rounded-xl border border-borda bg-white text-sm text-texto
+           placeholder:text-texto-ter
+           focus:outline-none focus:ring-2 focus:ring-primaria/25 focus:border-primaria
+           transition-all duration-150;
+  }
+
+  .badge {
+    @apply inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold;
+  }
+}
+
+@layer utilities {
+  .truncate-2 {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .border-3 { border-width: 3px; }
+
+  .gradient-primaria {
+    background: linear-gradient(135deg, #111111 0%, #b8894d 55%, #d7b37c 100%);
+  }
+
+  .gradient-barber {
+    background: linear-gradient(135deg, #111111 0%, #2a2018 45%, #b8894d 100%);
+  }
+
+  .text-gradient {
+    background: linear-gradient(135deg, #8c6239 0%, #b8894d 45%, #d7b37c 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .animate-enter { @apply animate-fade-in; }
+
+  .glass {
+    backdrop-filter: blur(12px);
+    background: rgba(255, 255, 255, 0.82);
+  }
+
+  .safe-top {
+    padding-top: max(env(safe-area-inset-top), 0px);
+  }
+
+  .safe-bottom {
+    padding-bottom: max(env(safe-area-inset-bottom), 0px);
+  }
+
+  .safe-bottom-margin {
+    margin-bottom: max(env(safe-area-inset-bottom), 0px);
+  }
+}

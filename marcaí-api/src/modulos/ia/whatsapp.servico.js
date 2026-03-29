@@ -1,0 +1,101 @@
+/**
+ * Serviço para envio de mensagens WhatsApp.
+ * Provedores disponíveis: Meta Cloud API e whatsapp-web.js (QR Code)
+ */
+
+const wwebjsManager = require('./wwebjs.manager')
+
+// ─── Meta Cloud API ────────────────────────────────────────────────────────────
+// Docs: https://developers.facebook.com/docs/whatsapp/cloud-api/messages/text-messages
+const enviarMeta = async (config, para, texto) => {
+  const { phoneNumberId, token, apiToken } = config
+  const bearerToken = token || apiToken
+  if (!phoneNumberId || !bearerToken) throw new Error('Meta Cloud API: phoneNumberId e token são obrigatórios')
+
+  const url = `https://graph.facebook.com/v19.0/${phoneNumberId}/messages`
+  const body = {
+    messaging_product: 'whatsapp',
+    to: para,
+    type: 'text',
+    text: { body: texto },
+  }
+
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${bearerToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  })
+
+  if (!res.ok) {
+    const err = await res.text()
+    throw new Error(`Meta API error ${res.status}: ${err}`)
+  }
+
+  return res.json()
+}
+
+// ─── WhatsApp Web.js (QR Code) ─────────────────────────────────────────────────
+const enviarWWebJS = async (config, para, texto) => {
+  const { tenantId } = config
+  if (!tenantId) throw new Error('WWebJS: tenantId é obrigatório para envio')
+  return wwebjsManager.enviarMensagem(tenantId, para, texto)
+}
+
+const obterFotoPerfilWWebJS = async (config, para) => {
+  const { tenantId } = config
+  if (!tenantId) return null
+  return wwebjsManager.obterFotoPerfil(tenantId, para)
+}
+
+// ─── Roteador ──────────────────────────────────────────────────────────────────
+/**
+ * Envia mensagem usando o provedor configurado no tenant.
+ * @param {Object} configWhatsApp - Objeto armazenado em Tenant.configWhatsApp
+ * @param {string} para - Número de destino (E.164, ex: +5511999999999)
+ * @param {string} texto - Texto da mensagem
+ * @param {string} [tenantId] - Necessário para o provedor wwebjs
+ */
+const enviarMensagem = async (configWhatsApp, para, texto, tenantId) => {
+  if (!configWhatsApp || !configWhatsApp.provedor) {
+    console.warn('[WhatsApp] configWhatsApp não configurada — resposta não enviada')
+    return null
+  }
+
+  const { provedor } = configWhatsApp
+
+  try {
+    switch (provedor) {
+      case 'meta':
+        return await enviarMeta(configWhatsApp, para, texto)
+      case 'wwebjs':
+        return await enviarWWebJS({ ...configWhatsApp, tenantId }, para, texto)
+      default:
+        console.warn(`[WhatsApp] Provedor desconhecido: ${provedor}`)
+        return null
+    }
+  } catch (err) {
+    console.error(`[WhatsApp] Erro ao enviar mensagem (${provedor}):`, err.message)
+    return null
+  }
+}
+
+const obterFotoPerfil = async (configWhatsApp, para, tenantId) => {
+  if (!configWhatsApp?.provedor || !para) return null
+
+  try {
+    switch (configWhatsApp.provedor) {
+      case 'wwebjs':
+        return await obterFotoPerfilWWebJS({ ...configWhatsApp, tenantId }, para)
+      default:
+        return null
+    }
+  } catch (err) {
+    console.error(`[WhatsApp] Erro ao buscar foto de perfil (${configWhatsApp.provedor}):`, err.message)
+    return null
+  }
+}
+
+module.exports = { enviarMensagem, enviarMeta, enviarWWebJS, obterFotoPerfil }

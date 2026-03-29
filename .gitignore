@@ -1,0 +1,39 @@
+# ── Variáveis de ambiente ─────────────────────────────────────────────────────
+.env
+.env.local
+.env.production
+.env.prod
+!.env.example
+
+# ── Dependências ──────────────────────────────────────────────────────────────
+node_modules/
+npm-debug.log*
+yarn-error.log
+
+# ── WhatsApp sessions (persistidas via Docker volume em produção) ─────────────
+.wwebjs_auth/
+.wwebjs_cache/
+
+# ── Uploads (persistidos via Docker volume em produção) ───────────────────────
+uploads/
+
+# ── Logs ──────────────────────────────────────────────────────────────────────
+*.log
+logs/
+
+# ── Build frontend ────────────────────────────────────────────────────────────
+dist/
+build/
+
+# ── OS ────────────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ── IDE ───────────────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+
+# ── Prisma ────────────────────────────────────────────────────────────────────
+prisma/*.db
+prisma/*.db-journal

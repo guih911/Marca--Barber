@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>Sem conexão | Marcaí Barber</title>
+    <style>
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        background:
+          radial-gradient(circle at top left, rgba(184, 137, 77, 0.14), transparent 28%),
+          linear-gradient(180deg, #17120d 0%, #111111 100%);
+        color: #f7f1e8;
+        font-family: Manrope, system-ui, sans-serif;
+        padding: 24px;
+        box-sizing: border-box;
+      }
+
+      .card {
+        width: min(100%, 420px);
+        background: rgba(255, 255, 255, 0.08);
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        backdrop-filter: blur(14px);
+        border-radius: 24px;
+        padding: 28px;
+        text-align: center;
+      }
+
+      .logo {
+        width: 72px;
+        height: 72px;
+        margin: 0 auto 18px;
+        border-radius: 22px;
+        background: linear-gradient(135deg, #111111 0%, #b8894d 60%, #d7b37c 100%);
+        display: grid;
+        place-items: center;
+        box-shadow: 0 20px 40px rgba(0, 0, 0, 0.26);
+      }
+
+      h1 {
+        margin: 0 0 10px;
+        font-size: 1.5rem;
+      }
+
+      p {
+        margin: 0;
+        line-height: 1.6;
+        color: rgba(247, 241, 232, 0.82);
+      }
+    </style>
+  </head>
+  <body>
+    <main class="card">
+      <div class="logo">
+        <svg width="32" height="32" viewBox="0 0 24 24" fill="none">
+          <path d="M7 3h10c2.2 0 4 1.8 4 4v10c0 2.2-1.8 4-4 4H7c-2.2 0-4-1.8-4-4V7c0-2.2 1.8-4 4-4Z" stroke="white" stroke-width="1.8" opacity="0.9" />
+          <path d="M7 9h10M8 15h8" stroke="white" stroke-width="1.8" stroke-linecap="round" />
+          <circle cx="8" cy="5.5" r="1" fill="white" />
+          <circle cx="12" cy="5.5" r="1" fill="white" />
+          <circle cx="16" cy="5.5" r="1" fill="white" />
+        </svg>
+      </div>
+      <h1>Você está offline</h1>
+      <p>Assim que a conexão voltar, o Marcaí Barber carrega de novo automaticamente. Se precisar, atualize a tela.</p>
+    </main>
+  </body>
+</html>
