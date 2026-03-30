@@ -9,7 +9,10 @@ const validar = (req, res, next) => {
     const listaErros = erros.array().map((e) => ({
       campo: e.path,
       mensagem: e.msg,
+      valor: e.value,
     }))
+
+    console.log('[Validação] Falhou:', req.method, req.path, JSON.stringify(listaErros))
 
     return res.status(422).json({
       sucesso: false,

@@ -600,11 +600,14 @@ const naoCompareceu = async (tenantId, id, mensagemWhatsApp) => {
   const agAtualizado = await banco.agendamento.update({ where: { id }, data: { status: 'NAO_COMPARECEU' }, include: incluirRelacoes })
 
   // Envia mensagem de recontato pelo WhatsApp (melhor esforço)
-  if (mensagemWhatsApp?.trim() && ag.cliente?.telefone) {
+  const telefoneCliente = ag.cliente?.telefone
+  if (telefoneCliente) {
     try {
       const tenant = await banco.tenant.findUnique({ where: { id: tenantId } })
       if (tenant?.configWhatsApp) {
-        await whatsappServico.enviarMensagem(tenant.configWhatsApp, ag.cliente.telefone, mensagemWhatsApp.trim(), tenantId)
+        // Se tem mensagem personalizada, envia ela. Senão, envia mensagem padrão da IA.
+        const msgFinal = mensagemWhatsApp?.trim() || `Oi, ${ag.cliente?.nome?.split(' ')[0] || 'tudo bem'}! Notamos que você não veio ao seu horário de ${ag.servico?.nome || 'hoje'}. Sem problema! Quer que a gente remarque pra outro dia? É só responder aqui. 😊`
+        await whatsappServico.enviarMensagem(tenant.configWhatsApp, telefoneCliente, msgFinal, tenantId)
       }
     } catch (err) {
       console.warn('[NaoCompareceu] Erro ao enviar mensagem de recontato:', err.message)

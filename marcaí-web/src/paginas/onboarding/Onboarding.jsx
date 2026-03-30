@@ -2,8 +2,7 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   Loader2, Plus, Trash2, ChevronRight, ChevronLeft, Check,
-  Scissors, Users, Zap, BarChart2, Star, Shield, CreditCard,
-  Smartphone, Copy, CheckCircle2, Lock,
+  Scissors, Users, Zap, BarChart2, Star, Shield,
 } from 'lucide-react'
 import api from '../../servicos/api'
 import useAuth from '../../hooks/useAuth'
@@ -39,7 +38,7 @@ const formatarDinheiro = (v) => {
 
 // ─── Barra de progresso ───────────────────────────────────────────────────────
 const ProgressBar = ({ passo, total }) => {
-  const labels = ['Negócio', 'Plano', 'Pagamento', 'Serviços', 'Equipe']
+  const labels = ['Negócio', 'Plano', 'Serviços', 'Equipe']
   return (
     <div className="mb-8">
       <div className="flex items-center gap-1.5 mb-4">
@@ -286,207 +285,8 @@ const Passo2 = ({ planoSelecionado, setPlanoSelecionado, cicloSelecionado, setCi
   )
 }
 
-// ─── Passo 3: Pagamento fake ──────────────────────────────────────────────────
-const PIX_FAKE = '00020126580014BR.GOV.BCB.PIX0136marcaibarber@pagamento.com.br520400005303986540555.905802BR5920Marcaí Barber Ltda6009Sao Paulo62140510marcaipgto6304'
-
-const Passo3 = ({ planoSelecionado, cicloSelecionado, onProximo, onVoltar, carregando }) => {
-  const [aba, setAba] = useState('cartao')
-  const [copiado, setCopiado] = useState(false)
-  const [form, setForm] = useState({ numero: '', nome: '', validade: '', cvv: '', tipo: 'credito' })
-
-  const plano = PLANOS[planoSelecionado] || PLANOS.SOLO
-  const ciclo = CICLOS.find((c) => c.id === cicloSelecionado) || CICLOS[0]
-  const preco = calcPreco(plano.precoMensal, ciclo.desconto)
-
-  const formatarCartao = (v) => v.replace(/\D/g, '').slice(0, 16).replace(/(.{4})/g, '$1 ').trim()
-  const formatarValidade = (v) => {
-    const nums = v.replace(/\D/g, '').slice(0, 4)
-    return nums.length > 2 ? `${nums.slice(0, 2)}/${nums.slice(2)}` : nums
-  }
-
-  const copiarPix = () => {
-    navigator.clipboard.writeText(PIX_FAKE).then(() => {
-      setCopiado(true)
-      setTimeout(() => setCopiado(false), 2000)
-    })
-  }
-
-  const podePagar = aba === 'pix' || (form.numero.replace(/\s/g, '').length === 16 && form.nome && form.validade.length === 5 && form.cvv.length >= 3)
-
-  return (
-    <div>
-      <div className="flex items-center justify-between mb-1">
-        <h2 className="text-xl font-semibold text-texto">Pagamento</h2>
-        <div className="flex items-center gap-1 text-xs text-texto-sec">
-          <Lock size={11} /> <span>Seguro</span>
-        </div>
-      </div>
-
-      {/* Resumo do plano */}
-      <div className="bg-primaria/5 border border-primaria/20 rounded-xl px-4 py-3 mb-5 flex items-center justify-between">
-        <div>
-          <p className="text-sm font-semibold text-texto">Plano {plano.nome} — {ciclo.label}</p>
-          <p className="text-xs text-texto-sec mt-0.5">Renovação automática · Cancele quando quiser</p>
-        </div>
-        <div className="text-right">
-          <p className="text-lg font-bold text-texto">R$ {preco}</p>
-          <p className="text-xs text-texto-sec">{ciclo.sufixo}</p>
-        </div>
-      </div>
-
-      {/* Abas de pagamento */}
-      <div className="flex border border-borda rounded-xl overflow-hidden mb-5">
-        <button
-          onClick={() => setAba('cartao')}
-          className={`flex-1 py-2.5 text-sm font-medium inline-flex items-center justify-center gap-1.5 transition-colors ${aba === 'cartao' ? 'bg-texto text-white' : 'text-texto-sec hover:text-texto'}`}
-        >
-          <CreditCard size={14} /> Cartão
-        </button>
-        <button
-          onClick={() => setAba('pix')}
-          className={`flex-1 py-2.5 text-sm font-medium inline-flex items-center justify-center gap-1.5 transition-colors ${aba === 'pix' ? 'bg-texto text-white' : 'text-texto-sec hover:text-texto'}`}
-        >
-          <Smartphone size={14} /> Pix
-        </button>
-      </div>
-
-      {aba === 'cartao' && (
-        <div className="space-y-3">
-          {/* Tipo cartão */}
-          <div className="flex gap-2">
-            {['credito', 'debito'].map((t) => (
-              <button
-                key={t}
-                onClick={() => setForm((p) => ({ ...p, tipo: t }))}
-                className={`flex-1 py-2 rounded-lg text-sm border transition-colors ${form.tipo === t ? 'border-primaria bg-primaria/5 text-primaria font-medium' : 'border-borda text-texto-sec'}`}
-              >
-                {t === 'credito' ? 'Crédito' : 'Débito'}
-              </button>
-            ))}
-          </div>
-
-          {/* Número do cartão */}
-          <div>
-            <label className="block text-xs font-medium text-texto mb-1">Número do cartão</label>
-            <input
-              value={form.numero}
-              onChange={(e) => setForm((p) => ({ ...p, numero: formatarCartao(e.target.value) }))}
-              placeholder="0000 0000 0000 0000"
-              className="w-full px-4 py-2.5 rounded-lg border border-borda text-sm focus:outline-none focus:ring-2 focus:ring-primaria/30 font-mono"
-            />
-          </div>
-
-          {/* Nome */}
-          <div>
-            <label className="block text-xs font-medium text-texto mb-1">Nome no cartão</label>
-            <input
-              value={form.nome}
-              onChange={(e) => setForm((p) => ({ ...p, nome: e.target.value.toUpperCase() }))}
-              placeholder="NOME COMPLETO"
-              className="w-full px-4 py-2.5 rounded-lg border border-borda text-sm focus:outline-none focus:ring-2 focus:ring-primaria/30 uppercase"
-            />
-          </div>
-
-          {/* Validade + CVV */}
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-medium text-texto mb-1">Validade</label>
-              <input
-                value={form.validade}
-                onChange={(e) => setForm((p) => ({ ...p, validade: formatarValidade(e.target.value) }))}
-                placeholder="MM/AA"
-                className="w-full px-4 py-2.5 rounded-lg border border-borda text-sm focus:outline-none focus:ring-2 focus:ring-primaria/30"
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-texto mb-1">CVV</label>
-              <input
-                value={form.cvv}
-                onChange={(e) => setForm((p) => ({ ...p, cvv: e.target.value.replace(/\D/g, '').slice(0, 4) }))}
-                placeholder="000"
-                className="w-full px-4 py-2.5 rounded-lg border border-borda text-sm focus:outline-none focus:ring-2 focus:ring-primaria/30"
-              />
-            </div>
-          </div>
-        </div>
-      )}
-
-      {aba === 'pix' && (
-        <div className="text-center space-y-4">
-          {/* QR fake */}
-          <div className="inline-block bg-white border-2 border-borda rounded-2xl p-4 mx-auto">
-            <svg width="160" height="160" viewBox="0 0 160 160" className="block">
-              {/* QR code simulado com padrão visual */}
-              <rect width="160" height="160" fill="white"/>
-              {/* Marcadores de canto */}
-              <rect x="8" y="8" width="42" height="42" rx="3" fill="none" stroke="#0f172a" strokeWidth="5"/>
-              <rect x="16" y="16" width="26" height="26" rx="1" fill="#0f172a"/>
-              <rect x="110" y="8" width="42" height="42" rx="3" fill="none" stroke="#0f172a" strokeWidth="5"/>
-              <rect x="118" y="16" width="26" height="26" rx="1" fill="#0f172a"/>
-              <rect x="8" y="110" width="42" height="42" rx="3" fill="none" stroke="#0f172a" strokeWidth="5"/>
-              <rect x="16" y="118" width="26" height="26" rx="1" fill="#0f172a"/>
-              {/* Dados simulados */}
-              {[60,68,76,84,92,100,108].map((y,yi) =>
-                [60,68,76,84,92,100,108,116,124,132,140].map((x,xi) =>
-                  ((yi*3 + xi*7 + yi*xi) % 3 === 0) ? <rect key={`${x}-${y}`} x={x} y={y} width="6" height="6" fill="#0f172a"/> : null
-                )
-              )}
-              {[60,68,76,84,92,100,108].map((x,xi) =>
-                [8,16,24,32,40,48,56].map((y,yi) =>
-                  ((xi*5 + yi*3 + xi*yi) % 3 === 0) ? <rect key={`t${x}-${y}`} x={x} y={y} width="6" height="6" fill="#0f172a"/> : null
-                )
-              )}
-              {[8,16,24,32,40,48,56].map((x,xi) =>
-                [60,68,76,84,92,100,108].map((y,yi) =>
-                  ((xi*4 + yi*6 + xi*yi) % 3 === 0) ? <rect key={`l${x}-${y}`} x={x} y={y} width="6" height="6" fill="#0f172a"/> : null
-                )
-              )}
-              {/* Logo centro */}
-              <rect x="68" y="68" width="24" height="24" rx="4" fill="#6366f1"/>
-              <text x="80" y="84" textAnchor="middle" fill="white" fontSize="12" fontWeight="bold">M</text>
-            </svg>
-          </div>
-
-          <div>
-            <p className="text-sm font-medium text-texto">Escaneie com seu banco</p>
-            <p className="text-xs text-texto-sec mt-0.5">Válido por 30 minutos · Pagamento instantâneo</p>
-          </div>
-
-          <div className="bg-fundo border border-borda rounded-xl p-3 flex items-center gap-2">
-            <p className="text-xs text-texto-sec flex-1 truncate font-mono">{PIX_FAKE.slice(0, 40)}…</p>
-            <button
-              onClick={copiarPix}
-              className="shrink-0 inline-flex items-center gap-1 text-xs font-medium text-primaria"
-            >
-              {copiado ? <><CheckCircle2 size={13} /> Copiado</> : <><Copy size={13} /> Copiar</>}
-            </button>
-          </div>
-        </div>
-      )}
-
-      <div className="flex gap-3 mt-6">
-        <button onClick={onVoltar} className="flex-none border border-borda text-texto-sec py-2.5 px-4 rounded-lg text-sm inline-flex items-center gap-1">
-          <ChevronLeft size={16} /> Voltar
-        </button>
-        <button
-          onClick={onProximo}
-          disabled={!podePagar || carregando}
-          className="flex-1 bg-primaria hover:bg-primaria-escura disabled:opacity-60 text-white font-medium py-2.5 rounded-lg text-sm inline-flex items-center justify-center gap-2"
-        >
-          {carregando ? <Loader2 size={16} className="animate-spin" /> : <Lock size={14} />}
-          Confirmar assinatura
-        </button>
-      </div>
-
-      <p className="text-center text-xs text-texto-sec mt-3 flex items-center justify-center gap-1">
-        <Shield size={11} /> Pagamento seguro · Dados criptografados
-      </p>
-    </div>
-  )
-}
-
-// ─── Passo 4: Serviços ────────────────────────────────────────────────────────
-const Passo4 = ({ servicos, setServicos, onProximo, onVoltar, carregando }) => {
+// ─── Passo 3: Serviços ────────────────────────────────────────────────────────
+const Passo3 = ({ servicos, setServicos, onProximo, onVoltar, carregando }) => {
   const adicionar = () => setServicos((p) => [...p, { nome: '', duracaoMinutos: 60, precoCentavos: '' }])
   const remover = (i) => setServicos((p) => p.filter((_, idx) => idx !== i))
   const atualizar = (i, campo, valor) => setServicos((p) => p.map((s, idx) => (idx === i ? { ...s, [campo]: valor } : s)))
@@ -550,8 +350,8 @@ const Passo4 = ({ servicos, setServicos, onProximo, onVoltar, carregando }) => {
   )
 }
 
-// ─── Passo 5: Profissionais ───────────────────────────────────────────────────
-const Passo5 = ({ profissionais, setProfissionais, servicosDisponiveis, onFinalizar, onVoltar, carregando }) => {
+// ─── Passo 4: Profissionais ───────────────────────────────────────────────────
+const Passo4 = ({ profissionais, setProfissionais, servicosDisponiveis, onFinalizar, onVoltar, carregando }) => {
   const adicionar = () => setProfissionais((p) => [...p, { nome: '', email: '', telefone: '', servicos: [] }])
   const remover = (i) => setProfissionais((p) => p.filter((_, idx) => idx !== i))
   const atualizar = (i, campo, valor) => setProfissionais((p) => p.map((pr, idx) => (idx === i ? { ...pr, [campo]: valor } : pr)))
@@ -669,7 +469,7 @@ const Onboarding = () => {
     }
   }
 
-  const confirmarPagamento = async () => {
+  const confirmarPlano = async () => {
     setCarregando(true)
     setErro('')
     try {
@@ -677,15 +477,14 @@ const Onboarding = () => {
     } catch {
       // ignora se o backend não suporta o campo — persiste só no localStorage
     } finally {
-      // Sempre persiste no estado local para o frontend adaptar a UI
       atualizarTenant({ planoContratado: planoSelecionado, cicloCobranca: cicloSelecionado })
       setCarregando(false)
-      setPasso(4)
+      setPasso(3)
     }
   }
 
   const salvarServicos = async () => {
-    if (servicosCriados.length > 0) { setPasso(5); return }
+    if (servicosCriados.length > 0) { setPasso(4); return }
     setCarregando(true)
     setErro('')
     try {
@@ -699,7 +498,7 @@ const Onboarding = () => {
         criados.push(res.dados)
       }
       setServicosCriados(criados)
-      setPasso(5)
+      setPasso(4)
     } catch (e) {
       setErro(e?.erro?.mensagem || 'Erro ao salvar serviços.')
     } finally {
@@ -760,7 +559,7 @@ const Onboarding = () => {
           <span className="font-display tracking-[0.12em] text-xl text-texto">Marcaí Barber</span>
         </div>
 
-        <ProgressBar passo={passo} total={5} />
+        <ProgressBar passo={passo} total={4} />
 
         {erro && (
           <div className="bg-red-50 border border-red-200 rounded-lg px-4 py-3 text-red-700 text-sm mb-4">{erro}</div>
@@ -773,35 +572,26 @@ const Onboarding = () => {
             setPlanoSelecionado={setPlanoSelecionado}
             cicloSelecionado={cicloSelecionado}
             setCicloSelecionado={setCicloSelecionado}
-            onProximo={() => setPasso(3)}
+            onProximo={confirmarPlano}
             onVoltar={() => setPasso(1)}
           />
         )}
         {passo === 3 && (
           <Passo3
-            planoSelecionado={planoSelecionado}
-            cicloSelecionado={cicloSelecionado}
-            onProximo={confirmarPagamento}
+            servicos={servicos}
+            setServicos={setServicos}
+            onProximo={salvarServicos}
             onVoltar={() => setPasso(2)}
             carregando={carregando}
           />
         )}
         {passo === 4 && (
           <Passo4
-            servicos={servicos}
-            setServicos={setServicos}
-            onProximo={salvarServicos}
-            onVoltar={() => setPasso(3)}
-            carregando={carregando}
-          />
-        )}
-        {passo === 5 && (
-          <Passo5
             profissionais={profissionais}
             setProfissionais={setProfissionais}
             servicosDisponiveis={servicosCriados}
             onFinalizar={salvarProfissionaisEFinalizar}
-            onVoltar={() => setPasso(4)}
+            onVoltar={() => setPasso(3)}
             carregando={carregando}
           />
         )}

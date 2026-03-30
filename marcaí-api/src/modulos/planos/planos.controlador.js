@@ -29,6 +29,7 @@ const listarPlanos = async (req, res, next) => {
 
 const criarPlano = async (req, res, next) => {
   try {
+    console.log('[Planos] POST /assinaturas body:', JSON.stringify(req.body))
     const dados = await planosServico.criarPlano(req.usuario.tenantId, req.body)
     res.status(201).json({ sucesso: true, dados })
   } catch (erro) {
@@ -48,6 +49,15 @@ const atualizarPlano = async (req, res, next) => {
 const removerPlano = async (req, res, next) => {
   try {
     const dados = await planosServico.removerPlano(req.usuario.tenantId, req.params.id)
+    res.json({ sucesso: true, dados })
+  } catch (erro) {
+    next(erro)
+  }
+}
+
+const togglePlanoAtivo = async (req, res, next) => {
+  try {
+    const dados = await planosServico.togglePlanoAtivo(req.usuario.tenantId, req.params.id)
     res.json({ sucesso: true, dados })
   } catch (erro) {
     next(erro)
@@ -163,6 +173,7 @@ module.exports = {
   criarPlano,
   atualizarPlano,
   removerPlano,
+  togglePlanoAtivo,
   listarAssinaturas,
   criarAssinatura,
   atualizarAssinatura,

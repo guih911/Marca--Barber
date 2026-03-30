@@ -488,10 +488,22 @@ const ConfigPlanos = () => {
                           <Pencil size={11} /> Editar
                         </button>
                         <button
+                          onClick={async () => {
+                            try {
+                              await api.post(`/api/planos/assinaturas/${plano.id}/toggle`)
+                              await carregar()
+                              setFeedback('sucesso', plano.ativo ? 'Plano desativado.' : 'Plano reativado.')
+                            } catch (e) { setFeedback('erro', e?.erro?.mensagem || 'Erro ao alterar.') }
+                          }}
+                          className={cn('px-3 py-1.5 rounded-lg border text-xs font-medium inline-flex items-center gap-1 transition-colors', plano.ativo ? 'border-amber-300 text-amber-600 hover:bg-amber-50' : 'border-green-300 text-green-600 hover:bg-green-50')}
+                        >
+                          {plano.ativo ? 'Desativar' : 'Ativar'}
+                        </button>
+                        <button
                           onClick={() => removerPlano(plano)}
                           className="px-3 py-1.5 rounded-lg border border-borda text-xs font-medium text-texto-sec hover:text-perigo inline-flex items-center gap-1 transition-colors"
                         >
-                          <Trash2 size={11} /> Remover
+                          <Trash2 size={11} /> Excluir
                         </button>
                       </div>
                     </div>

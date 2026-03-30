@@ -2,8 +2,10 @@ import { useState, useEffect } from 'react'
 import { Loader2, Save, CheckCircle2 } from 'lucide-react'
 import api from '../../servicos/api'
 import { diasSemana } from '../../lib/utils'
+import { useToast } from '../../contextos/ToastContexto'
 
 const ConfigHorarios = () => {
+  const toast = useToast()
   const [profissionais, setProfissionais] = useState([])
   const [selecionado, setSelecionado] = useState(null)
   const [horario, setHorario] = useState({})
@@ -65,12 +67,12 @@ const ConfigHorarios = () => {
     for (const [diaNum, config] of Object.entries(horario)) {
       if (!config?.ativo) continue
       if (config.inicio >= config.fim) {
-        alert(`Horário inválido: o início deve ser anterior ao fim (${diasSemana.find(d => d.numero === Number(diaNum))?.label || diaNum}).`)
+        toast(`Horário inválido: o início deve ser anterior ao fim (${diasSemana.find(d => d.numero === Number(diaNum))?.label || diaNum}).`, 'aviso')
         return
       }
       for (const intervalo of config.intervalos || []) {
         if (intervalo.inicio >= intervalo.fim) {
-          alert(`Intervalo inválido: o início deve ser anterior ao fim (${diasSemana.find(d => d.numero === Number(diaNum))?.label || diaNum}).`)
+          toast(`Intervalo inválido: o início deve ser anterior ao fim (${diasSemana.find(d => d.numero === Number(diaNum))?.label || diaNum}).`, 'aviso')
           return
         }
       }
@@ -81,6 +83,8 @@ const ConfigHorarios = () => {
       await api.patch(`/api/profissionais/${selecionado.id}`, { horarioTrabalho: horario })
       setSucesso(true)
       setTimeout(() => setSucesso(false), 3000)
+    } catch (e) {
+      toast('Erro ao salvar', 'erro')
     } finally {
       setSalvando(false)
     }

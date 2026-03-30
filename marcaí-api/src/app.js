@@ -31,6 +31,29 @@ const { iniciarCronAutomacoes } = require('./modulos/ia/automacoes.servico')
 
 const app = express()
 
+// ─── Rate limiter simples em memória ──────────────────────────────────────────
+const rateLimits = new Map()
+const rateLimit = (maxRequests, windowMs) => (req, res, next) => {
+  const key = `${req.ip}:${req.baseUrl || req.originalUrl}`
+  const now = Date.now()
+  const window = rateLimits.get(key) || { count: 0, resetAt: now + windowMs }
+  if (now > window.resetAt) { window.count = 0; window.resetAt = now + windowMs }
+  window.count++
+  rateLimits.set(key, window)
+  if (window.count > maxRequests) {
+    return res.status(429).json({ sucesso: false, erro: { mensagem: 'Muitas requisições. Aguarde.' } })
+  }
+  next()
+}
+
+// Limpa entradas expiradas a cada 5 minutos para não vazar memória
+setInterval(() => {
+  const now = Date.now()
+  for (const [key, window] of rateLimits) {
+    if (now > window.resetAt) rateLimits.delete(key)
+  }
+}, 5 * 60 * 1000)
+
 // Middlewares globais
 const origemPermitida = (origin, callback) => {
   // Em desenvolvimento, aceita qualquer origem localhost
@@ -38,8 +61,10 @@ const origemPermitida = (origin, callback) => {
     return callback(null, true)
   }
   const permitidas = (process.env.FRONTEND_URL || '').split(',').map(s => s.trim())
+  // Aceita também a versão punycode do domínio
+  permitidas.push('https://barber.xn--marca-3sa.com')
   if (permitidas.includes(origin)) return callback(null, true)
-  callback(new Error(`Origem nÃ£o permitida pelo CORS: ${origin}`))
+  callback(new Error(`Origem não permitida pelo CORS: ${origin}`))
 }
 
 app.use(
@@ -48,7 +73,7 @@ app.use(
     credentials: true,
   })
 )
-app.use(express.json())
+app.use(express.json({ limit: '1mb' }))
 app.use(express.urlencoded({ extended: true }))
 app.use(passport.initialize())
 
@@ -61,7 +86,7 @@ app.get('/health', (req, res) => {
 })
 
 // Rotas da API
-app.use('/api/auth', authRotas)
+app.use('/api/auth', rateLimit(5, 60 * 1000), authRotas)
 app.use('/api/tenants', tenantRotas)
 app.use('/api/servicos', servicosRotas)
 app.use('/api/profissionais', profissionaisRotas)
@@ -71,13 +96,13 @@ app.use('/api/disponibilidade', agendamentosRotas) // rota de disponibilidade in
 app.use('/api/conversas', conversasRotas)
 app.use('/api/dashboard', dashboardRotas)
 app.use('/api/planos', planosRotas)
-app.use('/api/ia', iaRotas)
+app.use('/api/ia', rateLimit(60, 60 * 1000), iaRotas)
 app.use('/api/fidelidade', fidelidadeRotas)
 app.use('/api/estoque', estoqueRotas)
 app.use('/api/comanda', comandaRotas)
 app.use('/api/pacotes', pacotesRotas)
 app.use('/api/comissoes', comissoesRotas)
-app.use('/api/public', publicRotas)
+app.use('/api/public', rateLimit(10, 60 * 1000), publicRotas)
 app.use('/api/caixa', caixaRotas)
 app.use('/api/galeria', galeriaRotas)
 app.use('/api/fila-espera', filaEsperaRotas)

@@ -112,12 +112,24 @@ const criar = async (tenantId, dados) => {
   })
 }
 
-const buscarOuCriarPorTelefone = async (tenantId, telefone, nome) => {
-  let cliente = await banco.cliente.findUnique({
+const buscarOuCriarPorTelefone = async (tenantId, telefone, nome, lidWhatsapp) => {
+  // 1. Se temos um LID, busca cliente por lidWhatsapp primeiro
+  let cliente = null
+  if (lidWhatsapp) {
+    cliente = await banco.cliente.findFirst({
+      where: { tenantId, lidWhatsapp },
+      orderBy: { atualizadoEm: 'desc' },
+    })
+    if (cliente) return cliente
+  }
+
+  // 2. Busca pelo telefone exato
+  cliente = await banco.cliente.findUnique({
     where: { tenantId_telefone: { tenantId, telefone } },
   })
 
   if (!cliente) {
+    // 3. Busca por variantes do telefone
     const variantes = gerarVariantesTelefone(telefone)
     if (variantes.length > 1) {
       cliente = await banco.cliente.findFirst({
@@ -131,11 +143,13 @@ const buscarOuCriarPorTelefone = async (tenantId, telefone, nome) => {
   }
 
   if (!cliente) {
-    // Novo cliente: sempre usa o telefone como placeholder de nome.
-    // O bot irá perguntar o nome preferido e cadastrarCliente o salvará depois.
+    // 4. Novo cliente
     cliente = await banco.cliente.create({
-      data: { tenantId, nome: telefone, telefone },
+      data: { tenantId, nome: telefone, telefone, lidWhatsapp },
     })
+  } else if (lidWhatsapp && !cliente.lidWhatsapp) {
+    // Salva o LID no cliente existente
+    await banco.cliente.update({ where: { id: cliente.id }, data: { lidWhatsapp } }).catch(() => {})
   }
 
   return cliente
@@ -163,6 +177,9 @@ const atualizar = async (tenantId, id, dados) => {
   if (dados.preferencias !== undefined) campos.preferencias = dados.preferencias
   if (dados.tags !== undefined) campos.tags = dados.tags
   if (dados.dataNascimento !== undefined) campos.dataNascimento = dados.dataNascimento ? new Date(dados.dataNascimento) : null
+  if (dados.alergias !== undefined) campos.alergias = dados.alergias || null
+  if (dados.instagram !== undefined) campos.instagram = dados.instagram || null
+  if (dados.frequenciaIdeal !== undefined) campos.frequenciaIdeal = dados.frequenciaIdeal != null ? Number(dados.frequenciaIdeal) : null
 
   return banco.cliente.update({ where: { id }, data: campos })
 }

@@ -20,6 +20,25 @@ const SeparadorData = ({ data }) => (
   </div>
 )
 
+// Formata conteúdo substituindo URLs brutas por links legíveis
+const formatarConteudo = (texto) => {
+  if (!texto) return ''
+  const partes = texto.split(/(https?:\/\/[^\s]+)/g)
+  return partes.map((parte, i) => {
+    if (/^https?:\/\//.test(parte)) {
+      const decoded = (() => { try { return decodeURIComponent(parte) } catch { return parte } })()
+      const isAgendamento = decoded.includes('/agendar') || decoded.includes('/agendamento')
+      return (
+        <a key={i} href={parte} target="_blank" rel="noopener noreferrer"
+          className="underline break-all">
+          {isAgendamento ? '\u{1F4C5} Link de agendamento' : decoded}
+        </a>
+      )
+    }
+    return parte
+  })
+}
+
 // Bolha de mensagem
 const Bolha = ({ mensagem, proximaDoMesmo }) => {
   const remetente = mensagem.remetente || ''
@@ -85,8 +104,8 @@ const Bolha = ({ mensagem, proximaDoMesmo }) => {
             : 'bg-green-500 text-white rounded-br-sm'
         )}>
           {ehIA
-            ? normalizarTextoCorrompido(mensagem.conteudo?.replace(/\*\*([^*]+)\*\*/g, '$1').replace(/\*([^*]+)\*/g, '$1'))
-            : normalizarTextoCorrompido(mensagem.conteudo)}
+            ? formatarConteudo(normalizarTextoCorrompido(mensagem.conteudo?.replace(/\*\*([^*]+)\*\*/g, '$1').replace(/\*([^*]+)\*/g, '$1')))
+            : formatarConteudo(normalizarTextoCorrompido(mensagem.conteudo))}
         </div>
         <span className="text-[10px] text-texto-sec mt-1">{formatarHora(mensagem.criadoEm)}</span>
       </div>
@@ -183,12 +202,12 @@ const ItemConversa = ({ conversa, ativa, onClick }) => {
             {Math.floor((Date.now() - new Date(conversa.atualizadoEm).getTime()) / 60000) > 60 ? '🔴 ' : ''}Aguardando há {tempoEspera(conversa.atualizadoEm)}
           </p>
         ) : (
-          <p className={cn('text-xs truncate flex items-center gap-1',
+          <p className={cn('text-xs flex items-start gap-1',
             ehEncerrada ? 'text-texto-sec/60' : 'text-texto-sec'
           )}>
-            {conversa.status === 'ATIVA' && <Bot size={10} className="text-primaria shrink-0" />}
-            {ehEncerrada && <CheckCheck size={10} className="text-gray-400 shrink-0" />}
-            <span className="truncate">{normalizarTextoCorrompido(ultimaMensagem?.conteudo || 'Sem mensagens')}</span>
+            {conversa.status === 'ATIVA' && <Bot size={10} className="text-primaria shrink-0 mt-0.5" />}
+            {ehEncerrada && <CheckCheck size={10} className="text-gray-400 shrink-0 mt-0.5" />}
+            <span className="line-clamp-2">{normalizarTextoCorrompido(ultimaMensagem?.conteudo || 'Sem mensagens')}</span>
           </p>
         )}
       </div>

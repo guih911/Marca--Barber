@@ -3,10 +3,12 @@ import { useNavigate } from 'react-router-dom'
 import { Loader2, Save, CheckCircle2, Bot, Send, Sparkles, Scissors, FlaskConical } from 'lucide-react'
 import api from '../../servicos/api'
 import { tomsDeVoz, opcoesAntecedencia, cn } from '../../lib/utils'
-import { Select } from '../../componentes/ui/select'
+import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '../../componentes/ui/select'
+import { useToast } from '../../contextos/ToastContexto'
 
 const ConfigIA = () => {
   const navigate = useNavigate()
+  const toast = useToast()
   const [config, setConfig] = useState({
     tomDeVoz: 'DESCONTRALIDO',
     mensagemBoasVindas: '',
@@ -42,6 +44,8 @@ const ConfigIA = () => {
       await api.patch('/api/tenants/meu/configuracao-ia', config)
       setSucesso(true)
       setTimeout(() => setSucesso(false), 3000)
+    } catch (e) {
+      toast('Erro ao salvar', 'erro')
     } finally {
       setSalvando(false)
     }
@@ -162,13 +166,13 @@ const ConfigIA = () => {
 
           <div>
             <label className="block text-sm font-medium text-texto mb-1.5">Antecedência mínima para cancelamento</label>
-            <Select
-              value={config.antecedenciaCancelar}
-              onChange={(e) => setConfig((p) => ({ ...p, antecedenciaCancelar: Number(e.target.value) }))}
-            >
-              {opcoesAntecedencia.map((o) => (
-                <option key={o.valor} value={o.valor}>{o.label} de antecedência</option>
-              ))}
+            <Select value={String(config.antecedenciaCancelar)} onValueChange={(v) => setConfig((p) => ({ ...p, antecedenciaCancelar: Number(v) }))}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {opcoesAntecedencia.map((o) => (
+                  <SelectItem key={o.valor} value={String(o.valor)}>{o.label} de antecedência</SelectItem>
+                ))}
+              </SelectContent>
             </Select>
           </div>
 

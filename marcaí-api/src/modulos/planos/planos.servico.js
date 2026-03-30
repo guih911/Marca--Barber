@@ -287,13 +287,31 @@ const removerPlano = async (tenantId, id) => {
     'membershipsAtivo',
     'Memberships estão desativados para este tenant'
   )
-  const plano = await banco.planoAssinatura.findFirst({ where: { id, tenantId } })
+  const plano = await banco.planoAssinatura.findFirst({
+    where: { id, tenantId },
+    include: { _count: { select: { assinaturas: { where: { status: { in: ['ATIVA', 'PAUSADA'] } } } } } },
+  })
   if (!plano) throw erroNaoEncontrado('Plano não encontrado')
 
-  return banco.planoAssinatura.update({
-    where: { id },
-    data: { ativo: false },
-  })
+  // Se tem assinantes ativos, apenas desativa
+  if (plano._count.assinaturas > 0) {
+    return banco.planoAssinatura.update({
+      where: { id },
+      data: { ativo: false },
+    })
+  }
+
+  // Sem assinantes: deleta de verdade
+  await banco.planoAssinaturaCredito.deleteMany({ where: { planoAssinaturaId: id } })
+  await banco.planoAssinatura.delete({ where: { id } })
+  return { removido: true }
+}
+
+const togglePlanoAtivo = async (tenantId, id) => {
+  await garantirFeatureAtiva(tenantId, 'membershipsAtivo', 'Memberships estão desativados')
+  const plano = await banco.planoAssinatura.findFirst({ where: { id, tenantId } })
+  if (!plano) throw erroNaoEncontrado('Plano não encontrado')
+  return banco.planoAssinatura.update({ where: { id }, data: { ativo: !plano.ativo } })
 }
 
 const listarAssinaturas = async (tenantId, filtros = {}) => {
@@ -695,6 +713,7 @@ module.exports = {
   criarPlano,
   atualizarPlano,
   removerPlano,
+  togglePlanoAtivo,
   listarAssinaturas,
   criarAssinatura,
   atualizarAssinatura,

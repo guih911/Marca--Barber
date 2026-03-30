@@ -4,7 +4,7 @@ import api from '../../servicos/api'
 import { useToast } from '../../contextos/ToastContexto'
 import ModalConfirmar from '../../componentes/ui/ModalConfirmar'
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001'
+const API_URL = import.meta.env.VITE_API_URL ?? ''
 
 const Galeria = () => {
   const toast = useToast()
@@ -158,10 +158,14 @@ const Galeria = () => {
       {carregando ? (
         <div className="flex justify-center py-16"><Loader2 size={28} className="animate-spin text-texto-sec" /></div>
       ) : fotos.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-20 text-center">
-          <ImageOff size={40} className="text-gray-300 mb-4" />
-          <p className="font-medium text-texto-sec">Nenhuma foto no portfólio</p>
-          <p className="text-sm text-texto-sec mt-1">Clique em "Adicionar foto" para começar</p>
+        <div className="flex flex-col items-center justify-center py-20 gap-4 text-center">
+          <div className="w-16 h-16 rounded-2xl bg-fundo border border-borda flex items-center justify-center">
+            <ImageOff size={28} className="text-texto-sec" />
+          </div>
+          <div>
+            <p className="text-base font-medium text-texto">Nenhuma foto no portfólio</p>
+            <p className="text-sm text-texto-sec mt-1">Clique em "Adicionar foto" para começar.</p>
+          </div>
         </div>
       ) : (
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">

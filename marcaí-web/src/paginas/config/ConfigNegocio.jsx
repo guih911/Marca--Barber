@@ -123,6 +123,8 @@ const ConfigNegocio = () => {
       atualizarTenant(tenantAtualizado)
       setSucesso(true)
       setTimeout(() => setSucesso(false), 3000)
+    } catch (e) {
+      toast('Erro ao salvar', 'erro')
     } finally {
       setSalvando(false)
     }

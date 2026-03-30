@@ -66,7 +66,7 @@ const ModalAdicionar = ({ onFechar, onSalvo }) => {
 
   const handleSalvar = async () => {
     if (!form.clienteId || !form.servicoId || !form.dataDesejada) {
-      toast.erro('Preencha cliente, serviço e data desejada.')
+      toast('Preencha cliente, serviço e data desejada.', 'erro')
       return
     }
     setSalvando(true)
@@ -78,10 +78,10 @@ const ModalAdicionar = ({ onFechar, onSalvo }) => {
       }
       if (form.profissionalId) body.profissionalId = form.profissionalId
       await api.post('/api/fila-espera', body)
-      toast.sucesso('Entrada adicionada à lista de espera.')
+      toast('Entrada adicionada à lista de espera.', 'sucesso')
       onSalvo()
     } catch {
-      toast.erro('Erro ao adicionar na lista de espera.')
+      toast('Erro ao adicionar na lista de espera.', 'erro')
     } finally {
       setSalvando(false)
     }
@@ -220,7 +220,7 @@ const ListaEspera = () => {
       const ordenada = [...lista].sort((a, b) => new Date(a.dataDesejada) - new Date(b.dataDesejada))
       setEntradas(ordenada)
     } catch {
-      toast.erro('Erro ao carregar a lista de espera.')
+      toast('Erro ao carregar a lista de espera.', 'erro')
       setEntradas([])
     } finally {
       setCarregando(false)
@@ -233,10 +233,10 @@ const ListaEspera = () => {
     setAcaoId(id)
     try {
       await api.patch(`/api/fila-espera/${id}/status`, { status: 'NOTIFICADO' })
-      toast.sucesso('Cliente notificado.')
+      toast('Cliente notificado.', 'sucesso')
       carregar()
     } catch {
-      toast.erro('Erro ao notificar cliente.')
+      toast('Erro ao notificar cliente.', 'erro')
     } finally {
       setAcaoId(null)
     }
@@ -246,11 +246,11 @@ const ListaEspera = () => {
     setAcaoId(id)
     try {
       await api.delete(`/api/fila-espera/${id}`)
-      toast.sucesso('Entrada removida.')
+      toast('Entrada removida.', 'sucesso')
       setConfirmandoId(null)
       carregar()
     } catch {
-      toast.erro('Erro ao remover entrada.')
+      toast('Erro ao remover entrada.', 'erro')
     } finally {
       setAcaoId(null)
     }

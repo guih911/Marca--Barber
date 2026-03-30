@@ -5,7 +5,7 @@ import { cn, obterIniciais, diasSemana } from '../../lib/utils'
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '../../componentes/ui/select'
 import useAuth from '../../hooks/useAuth'
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001'
+const API_URL = import.meta.env.VITE_API_URL ?? ''
 
 const ModalAusencia = ({ profissional, onFechar }) => {
   const [data, setData] = useState('')

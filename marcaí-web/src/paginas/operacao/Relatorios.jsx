@@ -294,13 +294,13 @@ const Relatorios = () => {
 
           {/* Evolução temporal */}
           {evolucao.length > 0 && (
-            <div className="bg-white rounded-2xl border border-borda shadow-sm p-5">
+            <div className="bg-white rounded-2xl border border-borda shadow-sm p-5 overflow-hidden">
               <p className="text-sm font-semibold text-texto mb-4">Evolução de receita no período</p>
               <ResponsiveContainer width="100%" height={200}>
                 <BarChart data={evolucao} margin={{ top: 5, right: 10, left: -15, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" vertical={false} />
                   <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#6B7280' }} tickLine={false} />
-                  <YAxis tick={{ fontSize: 11, fill: '#6B7280' }} tickLine={false} axisLine={false} tickFormatter={(v) => `R$${(v/100).toFixed(0)}`} />
+                  <YAxis tick={{ fontSize: 11, fill: '#6B7280' }} tickLine={false} axisLine={false} domain={[0, 'auto']} allowDecimals={false} tickFormatter={(v) => `R$ ${Math.round(v / 100)}`} />
                   <Tooltip content={<TooltipCustom />} formatter={(v) => formatarReais(v)} />
                   <Bar dataKey="receita" name="Receita" fill="#7C3AED" radius={[4, 4, 0, 0]} />
                 </BarChart>

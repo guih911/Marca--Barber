@@ -31,15 +31,17 @@ const CardMetrica = ({ titulo, valor, subtitulo, icone: Icone, cor }) => (
 )
 
 const CardMetricaCompacto = ({ titulo, valor, subtitulo, icone: Icone, cor }) => (
-  <div className="bg-white rounded-xl border border-borda px-4 py-3 shadow-sm flex items-center gap-3">
-    <div className={`p-2 rounded-lg ${cor} shrink-0`}>
-      <Icone size={15} className="text-white" />
+  <div className="bg-white rounded-2xl border border-borda p-5 shadow-sm">
+    <div className="flex items-start justify-between mb-3">
+      <div>
+        <p className="text-texto-sec text-sm font-medium">{titulo}</p>
+        <p className="text-2xl font-bold text-texto mt-1">{valor ?? '—'}</p>
+      </div>
+      <div className={`p-2.5 rounded-xl ${cor}`}>
+        <Icone size={20} className="text-white" />
+      </div>
     </div>
-    <div className="min-w-0">
-      <p className="text-[11px] text-texto-sec font-medium truncate">{titulo}</p>
-      <p className="text-base font-bold text-texto leading-tight">{valor ?? '—'}</p>
-      {subtitulo && <p className="text-[10px] text-texto-ter truncate">{subtitulo}</p>}
-    </div>
+    {subtitulo && <p className="text-xs text-texto-sec">{subtitulo}</p>}
   </div>
 )
 
@@ -67,7 +69,7 @@ const nomeCliente = (cliente) => {
 const CardAtalho = ({ titulo, subtitulo, rota, icone: Icone, cor }) => (
   <Link
     to={rota}
-    className="group bg-white rounded-2xl border border-borda p-4 shadow-sm hover:shadow-md hover:-translate-y-0.5 transition-all"
+    className="group bg-white rounded-2xl border border-borda p-4 shadow-sm hover:shadow-md hover:-translate-y-0.5 transition-all h-full flex flex-col"
   >
     <div className="flex items-start justify-between gap-3">
       <div>
@@ -78,7 +80,7 @@ const CardAtalho = ({ titulo, subtitulo, rota, icone: Icone, cor }) => (
         <Icone size={18} className="text-white" />
       </div>
     </div>
-    <div className="mt-4 flex items-center text-xs font-semibold text-primaria group-hover:text-primaria-escura">
+    <div className="mt-auto pt-4 flex items-center text-xs font-semibold text-primaria group-hover:text-primaria-escura">
       Abrir agora <ArrowRight size={13} className="ml-1" />
     </div>
   </Link>
@@ -234,14 +236,12 @@ const DashboardHome = () => {
             </div>
           ))}
         </div>
-        <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
           {[1, 2, 3, 4].map((i) => (
-            <div key={i} className="bg-white rounded-xl border border-borda px-4 py-3 shadow-sm animate-pulse flex items-center gap-3">
-              <div className="w-8 h-8 bg-borda rounded-lg shrink-0" />
-              <div className="flex-1">
-                <div className="h-3 bg-borda rounded w-3/4 mb-2" />
-                <div className="h-5 bg-borda rounded w-1/2" />
-              </div>
+            <div key={i} className="bg-white rounded-2xl border border-borda p-5 shadow-sm animate-pulse">
+              <div className="h-4 bg-borda rounded w-2/3 mb-3" />
+              <div className="h-8 bg-borda rounded w-1/2 mb-2" />
+              <div className="h-3 bg-borda rounded w-full" />
             </div>
           ))}
         </div>
@@ -469,8 +469,8 @@ const DashboardHome = () => {
         />
       </div>
 
-      {/* Linha 2 — Métricas secundárias (visão semanal, compactas) */}
-      <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
+      {/* Linha 2 — Métricas secundárias (visão semanal) */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
         <CardMetricaCompacto
           titulo="Agendamentos na Semana"
           valor={metricas?.agendamentosSemana}
@@ -546,7 +546,7 @@ const DashboardHome = () => {
           </div>
           <BadgeDollarSign size={16} className="text-primaria" />
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-3">
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-3 items-stretch">
           {atalhosRapidos.map((atalho) => (
             <CardAtalho key={atalho.rota} {...atalho} />
           ))}

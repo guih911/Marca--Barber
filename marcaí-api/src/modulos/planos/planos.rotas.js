@@ -32,17 +32,6 @@ router.put(
 router.get('/assinaturas', planosControlador.listarPlanos)
 router.post(
   '/assinaturas',
-  [
-    body('nome').trim().notEmpty().withMessage('nome é obrigatório'),
-    body('precoCentavos').optional().isInt({ min: 0 }),
-    body('cicloDias').optional().isInt({ min: 1, max: 3650 }),
-    body('ativo').optional().isBoolean(),
-    body('descricao').optional().isString(),
-    body('creditosPorServico').optional().isArray(),
-    body('creditosPorServico.*.servicoId').optional().isUUID(),
-    body('creditosPorServico.*.creditos').optional().isInt({ min: 1, max: 99 }),
-  ],
-  validar,
   planosControlador.criarPlano
 )
 router.patch(
@@ -50,13 +39,14 @@ router.patch(
   [
     param('id').isUUID().withMessage('id inválido'),
     body('nome').optional().trim().notEmpty(),
-    body('precoCentavos').optional().isInt({ min: 0 }),
-    body('cicloDias').optional().isInt({ min: 1, max: 3650 }),
+    body('precoCentavos').optional().toInt(),
+    body('cicloDias').optional().toInt(),
     body('ativo').optional().isBoolean(),
     body('descricao').optional().isString(),
+    body('diasPermitidos').optional().isArray(),
     body('creditosPorServico').optional().isArray(),
     body('creditosPorServico.*.servicoId').optional().isUUID(),
-    body('creditosPorServico.*.creditos').optional().isInt({ min: 1, max: 99 }),
+    body('creditosPorServico.*.creditos').optional().toInt(),
   ],
   validar,
   planosControlador.atualizarPlano
@@ -66,6 +56,12 @@ router.delete(
   [param('id').isUUID().withMessage('id inválido')],
   validar,
   planosControlador.removerPlano
+)
+router.post(
+  '/assinaturas/:id/toggle',
+  [param('id').isUUID().withMessage('id inválido')],
+  validar,
+  planosControlador.togglePlanoAtivo
 )
 
 router.get(

@@ -31,9 +31,9 @@ import ConfigUsuarios from './paginas/config/ConfigUsuarios'
 import ConfigIntegracoes from './paginas/config/ConfigIntegracoes'
 import ConfigRecursos from './paginas/config/ConfigRecursos'
 import ConfigPacotes from './paginas/config/ConfigPacotes'
+import ConfigPlanoSalao from './paginas/config/ConfigPlanoSalao'
 import ConfigIA from './paginas/config/ConfigIA'
 import TesteIA from './paginas/config/TesteIA'
-import ConfigPlanoSalao from './paginas/config/ConfigPlanoSalao'
 
 // Public
 import AgendaPublica from './paginas/public/AgendaPublica'
@@ -160,9 +160,9 @@ const App = () => {
         <Route path="operacao/estoque" element={<GuardaRecurso recurso="estoqueAtivo" nome="Estoque"><Estoque /></GuardaRecurso>} />
         <Route path="operacao/comissoes" element={<GuardaRecurso recurso="comissoesAtivo" nome="Comissões"><Comissoes /></GuardaRecurso>} />
         <Route path="operacao/comanda" element={<GuardaRecurso recurso="comandaAtivo" nome="Comanda Digital"><Comanda /></GuardaRecurso>} />
-        <Route path="operacao/caixa" element={<Caixa />} />
-        <Route path="operacao/galeria" element={<Galeria />} />
-        <Route path="operacao/lista-espera" element={<ListaEspera />} />
+        <Route path="operacao/caixa" element={<GuardaRecurso recurso="caixaAtivo" nome="Caixa"><Caixa /></GuardaRecurso>} />
+        <Route path="operacao/galeria" element={<GuardaRecurso recurso="galeriaAtivo" nome="Galeria"><Galeria /></GuardaRecurso>} />
+        <Route path="operacao/lista-espera" element={<GuardaRecurso recurso="listaEsperaAtivo" nome="Lista de Espera"><ListaEspera /></GuardaRecurso>} />
         <Route path="operacao/relatorios" element={<Relatorios />} />
 
         <Route path="config/planos" element={<Navigate to="/operacao/planos" replace />} />

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Loader2, Save, Star, Package, BarChart2, Gift, Archive, Smartphone, MessageSquare } from 'lucide-react'
+import { Loader2, Save, Star, Package, BarChart2, Gift, Archive, Smartphone, MessageSquare, Images, ClipboardList, Landmark } from 'lucide-react'
 import api from '../../servicos/api'
 import { useToast } from '../../contextos/ToastContexto'
 import useAuth from '../../hooks/useAuth'
@@ -71,6 +71,30 @@ const recursos = [
     descricao: 'Crie planos mensais com créditos de serviço. Clientes assinam e consomem os créditos a cada atendimento.',
     cor: 'text-teal-500',
     fundo: 'bg-teal-50',
+  },
+  {
+    chave: 'galeriaAtivo',
+    icone: Images,
+    titulo: 'Galeria',
+    descricao: 'Adicione fotos dos trabalhos realizados para mostrar aos clientes.',
+    cor: 'text-pink-500',
+    fundo: 'bg-pink-50',
+  },
+  {
+    chave: 'listaEsperaAtivo',
+    icone: ClipboardList,
+    titulo: 'Lista de espera',
+    descricao: 'Gerencie a fila de espera dos clientes que chegam sem agendamento.',
+    cor: 'text-indigo-500',
+    fundo: 'bg-indigo-50',
+  },
+  {
+    chave: 'caixaAtivo',
+    icone: Landmark,
+    titulo: 'Caixa',
+    descricao: 'Controle de entradas e saídas financeiras do estabelecimento.',
+    cor: 'text-emerald-500',
+    fundo: 'bg-emerald-50',
   },
 ]
 

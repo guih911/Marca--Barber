@@ -3,7 +3,7 @@
  * Provedores disponíveis: Meta Cloud API e whatsapp-web.js (QR Code)
  */
 
-const wwebjsManager = require('./wwebjs.manager')
+const wwebjsManager = require('./baileys.manager')
 
 // ─── Meta Cloud API ────────────────────────────────────────────────────────────
 // Docs: https://developers.facebook.com/docs/whatsapp/cloud-api/messages/text-messages
@@ -37,10 +37,10 @@ const enviarMeta = async (config, para, texto) => {
   return res.json()
 }
 
-// ─── WhatsApp Web.js (QR Code) ─────────────────────────────────────────────────
+// ─── whatsapp-web.js (QR Code via Chromium) ──────────────────────────────────
 const enviarWWebJS = async (config, para, texto) => {
   const { tenantId } = config
-  if (!tenantId) throw new Error('WWebJS: tenantId é obrigatório para envio')
+  if (!tenantId) throw new Error('whatsapp-web.js: tenantId é obrigatório para envio')
   return wwebjsManager.enviarMensagem(tenantId, para, texto)
 }
 

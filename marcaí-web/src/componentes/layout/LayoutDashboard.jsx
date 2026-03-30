@@ -14,11 +14,9 @@ import {
   CalendarDays,
   MessageSquareMore,
   Users,
-  BarChart2,
 } from 'lucide-react'
 import Sidebar from './Sidebar'
 import api from '../../servicos/api'
-import ModalRelatorios from '../ui/ModalRelatorios'
 
 const titulos = {
   '/dashboard': 'Painel',
@@ -40,6 +38,11 @@ const titulos = {
   '/config/recursos': 'Recursos do Sistema',
   '/config/usuarios': 'Usuários',
   '/config/integracoes': 'Integrações',
+  '/config/ia': 'Configuração da IA',
+  '/config/teste-ia': 'Teste da IA',
+  '/operacao/caixa': 'Caixa',
+  '/operacao/lista-espera': 'Lista de Espera',
+  '/operacao/galeria': 'Galeria',
 }
 
 const subtitulos = {
@@ -62,6 +65,11 @@ const subtitulos = {
   '/config/recursos': 'Ative ou desative funcionalidades do sistema',
   '/config/usuarios': 'Usuários com acesso ao painel',
   '/config/integracoes': 'Conecte o WhatsApp e outras integrações',
+  '/config/ia': 'Configurações de comportamento e personalidade da IA',
+  '/config/teste-ia': 'Simule conversas para testar a IA',
+  '/operacao/caixa': 'Controle de entradas e saídas financeiras',
+  '/operacao/lista-espera': 'Gerencie a fila de espera dos clientes',
+  '/operacao/galeria': 'Fotos dos trabalhos realizados',
 }
 
 const itensNavegacaoMobile = [
@@ -148,7 +156,6 @@ const LayoutDashboard = () => {
   const [deferredPrompt, setDeferredPrompt] = useState(null)
   const [instalando, setInstalando] = useState(false)
   const [appInstalado, setAppInstalado] = useState(false)
-  const [mostrarRelatorios, setMostrarRelatorios] = useState(false)
   const headerRef = useRef(null)
 
   useLayoutEffect(() => {
@@ -265,12 +272,12 @@ const LayoutDashboard = () => {
                 {compacto ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
               </button>
 
-              <div className="min-w-0">
+              <div className="min-w-0 max-w-2xl">
                 <div className="flex items-center gap-2">
                   <Sparkles size={14} className="text-primaria shrink-0" />
                   <h1 className="text-[15px] font-semibold text-texto truncate">{titulo}</h1>
                 </div>
-                {subtitulo && <p className="text-[11px] text-texto-sec hidden md:block">{subtitulo}</p>}
+                {subtitulo && <p className="text-[11px] text-texto-sec hidden md:block whitespace-nowrap">{subtitulo}</p>}
                 {subtituloCurto && <p className="text-[11px] text-texto-sec md:hidden truncate">{subtituloCurto}</p>}
               </div>
             </div>
@@ -286,14 +293,6 @@ const LayoutDashboard = () => {
                   <span className="hidden sm:inline">Instalar app</span>
                 </button>
               )}
-              <button
-                onClick={() => setMostrarRelatorios(true)}
-                className="inline-flex items-center gap-1.5 rounded-full border border-borda bg-white px-3 py-1.5 text-[11px] md:text-xs font-semibold text-texto hover:bg-fundo transition-colors"
-                title="Relatórios"
-              >
-                <BarChart2 size={13} className="text-primaria" />
-                <span className="hidden sm:inline">Relatórios</span>
-              </button>
               <StatusWhatsApp />
             </div>
           </div>
@@ -335,7 +334,6 @@ const LayoutDashboard = () => {
         </div>
       </nav>
 
-      {mostrarRelatorios && <ModalRelatorios onFechar={() => setMostrarRelatorios(false)} />}
     </div>
   )
 }

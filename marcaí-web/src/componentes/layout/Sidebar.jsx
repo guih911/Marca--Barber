@@ -21,7 +21,6 @@ import {
   FileText,
   Landmark,
   Images,
-  Bot,
   ClipboardList,
   BarChart3,
 } from 'lucide-react'
@@ -39,10 +38,10 @@ const todosItensOperacao = [
   { label: 'Comissões', icone: BarChart2, rota: '/operacao/comissoes', recurso: 'comissoesAtivo', plano: 'SALAO' },
   { label: 'Estoque', icone: Archive, rota: '/operacao/estoque', recurso: 'estoqueAtivo' },
   { label: 'Comanda', icone: FileText, rota: '/operacao/comanda', recurso: 'comandaAtivo' },
-  { label: 'Caixa', icone: Landmark, rota: '/operacao/caixa' },
-  { label: 'Lista de Espera', icone: ClipboardList, rota: '/operacao/lista-espera' },
+  { label: 'Caixa', icone: Landmark, rota: '/operacao/caixa', recurso: 'caixaAtivo' },
+  { label: 'Lista de Espera', icone: ClipboardList, rota: '/operacao/lista-espera', recurso: 'listaEsperaAtivo' },
   { label: 'Relatórios', icone: BarChart3, rota: '/operacao/relatorios' },
-  { label: 'Galeria', icone: Images, rota: '/operacao/galeria' },
+  { label: 'Galeria', icone: Images, rota: '/operacao/galeria', recurso: 'galeriaAtivo' },
 ]
 
 const todosItensConfiguracao = [
@@ -54,7 +53,6 @@ const todosItensConfiguracao = [
   { label: 'Recursos', icone: Settings2, rota: '/config/recursos' },
   { label: 'Integrações', icone: Puzzle, rota: '/config/integracoes' },
   { label: 'Usuários', icone: UserCog, rota: '/config/usuarios', plano: 'SALAO' },
-  { label: 'Don IA', icone: Bot, rota: '/config/ia' },
 ]
 
 const ItemNav = ({ item, compacto }) => (
@@ -189,7 +187,7 @@ const Sidebar = ({ compacto = false }) => {
             </div>
             <div className="flex-1 min-w-0">
               <p className="text-sm font-semibold text-white truncate leading-tight">{usuario?.nome}</p>
-              <p className="text-[11px] text-sidebar-texto truncate">{usuario?.email}</p>
+              <p className="text-[11px] text-sidebar-texto truncate" title={usuario?.email}>{usuario?.email}</p>
             </div>
             <button
               onClick={handleLogout}

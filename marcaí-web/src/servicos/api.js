@@ -1,4 +1,4 @@
-const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001'
+const BASE_URL = import.meta.env.VITE_API_URL ?? ''
 
 // Obtém o token do localStorage
 const obterToken = () => localStorage.getItem('accessToken')
@@ -72,7 +72,12 @@ export const apiFetch = async (caminho, opcoes = {}) => {
     }
   }
 
-  const dados = await resposta.json()
+  let dados
+  try {
+    dados = await resposta.json()
+  } catch {
+    dados = { erro: { mensagem: 'Resposta inesperada do servidor' }, status: resposta.status }
+  }
 
   if (!resposta.ok) {
     throw { status: resposta.status, ...dados }

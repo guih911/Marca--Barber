@@ -2,7 +2,7 @@ const iaServico = require('./ia.servico')
 const clientesServico = require('../clientes/clientes.servico')
 const conversasServico = require('../conversas/conversas.servico')
 const whatsappServico = require('./whatsapp.servico')
-const wwebjsManager = require('./wwebjs.manager')
+const wwebjsManager = require('./baileys.manager')
 const { iniciarCronLembretes } = require('./lembretes.servico')
 const { processarComandoAdmin, eNumeroAdministrador } = require('./admin-config.servico')
 const banco = require('../../config/banco')
@@ -27,7 +27,7 @@ const processarWebhookSerializado = (chave, fn) => {
 }
 
 // Lógica central compartilhada por todos os webhooks
-const processarWebhook = async ({ tenantId, telefone, mensagem, nome, canal = 'WHATSAPP', configWhatsApp, avatarUrl }) => {
+const processarWebhook = async ({ tenantId, telefone, mensagem, nome, canal = 'WHATSAPP', configWhatsApp, avatarUrl, lidWhatsapp }) => {
   // Ignora mensagens vazias ou sem telefone (proteção para todos os pontos de entrada)
   if (!mensagem?.trim() || !telefone?.trim()) return null
 
@@ -41,7 +41,7 @@ const processarWebhook = async ({ tenantId, telefone, mensagem, nome, canal = 'W
     }
   }
 
-  const cliente = await clientesServico.buscarOuCriarPorTelefone(tenantId, telefone, nome)
+  const cliente = await clientesServico.buscarOuCriarPorTelefone(tenantId, telefone, nome, lidWhatsapp)
   const conversa = await conversasServico.buscarOuCriarConversa(tenantId, cliente.id, canal)
 
   const telefoneAtual = normalizarTelefone(cliente.telefone)
@@ -59,6 +59,44 @@ const processarWebhook = async ({ tenantId, telefone, mensagem, nome, canal = 'W
   if (avatarSincronizado && avatarSincronizado !== cliente.avatarUrl) {
     await banco.cliente.update({ where: { id: cliente.id }, data: { avatarUrl: avatarSincronizado } }).catch(() => {})
     cliente.avatarUrl = avatarSincronizado
+  }
+
+  // Mensagem de boas-vindas automática — na primeira mensagem OU quando conversa ficou inativa por 2h+
+  const ultimaMsg = await banco.mensagem.findFirst({ where: { conversaId: conversa.id }, orderBy: { criadoEm: 'desc' }, select: { criadoEm: true } })
+  const minutosDesdeUltimaMsg = ultimaMsg ? (Date.now() - new Date(ultimaMsg.criadoEm).getTime()) / 60000 : Infinity
+  const conversaNova = !ultimaMsg // nenhuma mensagem = conversa nova
+  const conversaReativada = minutosDesdeUltimaMsg > 120 // 2h sem mensagem = nova sessão
+  if ((conversaNova || conversaReativada) && canal === 'WHATSAPP' && configWhatsApp) {
+    const tenant = await buscarTenant(tenantId)
+    const appUrl = process.env.APP_URL || 'https://app.marcai.com.br'
+    const hash = tenant.hashPublico || tenant.slug
+    const nomeCliente = cliente.nome && cliente.nome !== cliente.telefone ? cliente.nome : null
+    const primeiroNome = nomeCliente ? nomeCliente.split(' ')[0] : null
+    const h = parseInt(new Date().toLocaleString('pt-BR', { hour: 'numeric', hour12: false, timeZone: tenant.timezone || 'America/Sao_Paulo' }))
+    const saudacao = h < 12 ? 'Bom dia' : h < 18 ? 'Boa tarde' : 'Boa noite'
+
+    // Busca último serviço concluído para recomendar
+    const ultimoServico = await banco.agendamento.findFirst({
+      where: { tenantId, clienteId: cliente.id, status: 'CONCLUIDO' },
+      include: { servico: true, profissional: true },
+      orderBy: { inicioEm: 'desc' },
+    })
+
+    let boasVindas
+    if (primeiroNome && ultimoServico?.servico) {
+      // Cliente recorrente com histórico — recomenda último serviço
+      const profNome = ultimoServico.profissional?.nome?.split(' ')[0] || ''
+      boasVindas = `${saudacao}, ${primeiroNome}! 👋\n\nQue tal agendar seu próximo ${ultimoServico.servico.nome.toLowerCase()}?${profNome ? ` Da última vez foi com o ${profNome} e ficou show!` : ''} ✂️\n\nResponda "quero" que o Don agenda pra você, ou escolha pelo site:\n🗓️ ${appUrl}/b/${hash}`
+    } else if (primeiroNome) {
+      // Cliente conhecido sem histórico
+      boasVindas = `${saudacao}, ${primeiroNome}! 👋 Bem-vindo de volta à ${tenant.nome}.\n\nAgende pelo site ou responda aqui que o Don, nosso assistente de IA, te ajuda na hora. ✂️\n\n🗓️ ${appUrl}/b/${hash}`
+    } else {
+      // Cliente novo
+      boasVindas = `${saudacao}! 👋 Bem-vindo à ${tenant.nome}.\n\nAgende pelo site ou responda aqui que o Don, nosso assistente de IA, te ajuda na hora. ✂️\n\n🗓️ ${appUrl}/b/${hash}`
+    }
+
+    await whatsappServico.enviarMensagem(configWhatsApp, telefone, boasVindas, tenantId)
+    await banco.mensagem.create({ data: { conversaId: conversa.id, remetente: 'ia', conteudo: boasVindas } })
   }
 
   // Conversa em atendimento humano: só salva a mensagem, não processa IA
@@ -151,14 +189,14 @@ const webhookMeta = async (req, res, next) => {
   }
 }
 
-// ─── WhatsApp Web.js ───────────────────────────────────────────────────────────
+// ─── whatsapp-web.js (QR Code via Chromium) ──────────────────────────────────
 
 // POST /api/ia/wwebjs/iniciar — inicia sessão e retorna QR Code (base64 PNG)
 const iniciarWWebJS = async (req, res) => {
   try {
     const tenantId = req.usuario.tenantId
 
-    // Cria callback que processa mensagens recebidas (serializado por número — evita duplicatas)
+    // Registra callback para mensagens recebidas via cliente JS
     const onMensagem = async (telefone, texto, nome, avatarUrl) => {
       const tenant = await buscarTenant(tenantId)
       const chave = `${tenantId}:${telefone}`
@@ -170,8 +208,8 @@ const iniciarWWebJS = async (req, res) => {
       )
     }
 
-    // Inicia (ou reaproveita) sessão
-    wwebjsManager.iniciarSessao(tenantId, onMensagem)
+    // Cria/reaproveita sessão whatsapp-web.js
+    await wwebjsManager.iniciarSessao(tenantId, onMensagem)
 
     // Aguarda até 15s para o QR aparecer (ou já estar conectado)
     let tentativas = 0
@@ -221,7 +259,7 @@ const desconectarWWebJS = async (req, res) => {
   }
 }
 
-// ─── Startup: recarrega sessões WWebJS salvas no banco ────────────────────────
+// ─── Startup: recarrega sessões whatsapp-web.js salvas no disco ──────────────
 const inicializarSessoesWWebJS = async () => {
   try {
     const tenants = await banco.tenant.findMany({
@@ -236,24 +274,31 @@ const inicializarSessoesWWebJS = async () => {
     for (const tenant of tenants) {
       const tenantId = tenant.id
 
-      const onMensagem = async (telefone, texto, nome, avatarUrl) => {
-        const t = await buscarTenant(tenantId)
-        const chave = `${tenantId}:${telefone}`
-        await processarWebhookSerializado(chave, () =>
-          processarWebhook({
-            tenantId,
-            telefone,
-            mensagem: texto,
-            nome,
-            avatarUrl,
-            canal: 'WHATSAPP',
-            configWhatsApp: t.configWhatsApp,
-          })
-        )
+      const onMensagem = async (telefone, texto, nome, avatarUrl, lidWhatsapp) => {
+        console.log(`[Don] Processando mensagem de ${telefone}${lidWhatsapp ? ` (LID: ${lidWhatsapp})` : ''}: "${texto.substring(0, 50)}"`)
+        try {
+          const t = await buscarTenant(tenantId)
+          const chave = `${tenantId}:${telefone}`
+          await processarWebhookSerializado(chave, () =>
+            processarWebhook({
+              tenantId,
+              telefone,
+              mensagem: texto,
+              nome,
+              avatarUrl,
+              lidWhatsapp,
+              canal: 'WHATSAPP',
+              configWhatsApp: t.configWhatsApp,
+            })
+          )
+          console.log(`[Don] Resposta enviada para ${telefone}`)
+        } catch (err) {
+          console.error(`[Don] ERRO ao processar mensagem de ${telefone}:`, err.message, err.stack?.split('\n').slice(0, 3).join(' | '))
+        }
       }
 
-      wwebjsManager.iniciarSessao(tenantId, onMensagem)
-      console.log(`[WWebJS] Sessão iniciada para tenant "${tenant.nome}" (${tenantId})`)
+      await wwebjsManager.iniciarSessao(tenantId, onMensagem)
+      console.log(`[WWebJS] Sessão registrada para tenant "${tenant.nome}" (${tenantId})`)
     }
   } catch (err) {
     console.error('[WWebJS] Erro ao recarregar sessões:', err.message)

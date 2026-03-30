@@ -14,7 +14,7 @@ const router = Router()
 router.get('/webhook/meta/:tenantId', iaControlador.verificarWebhookMeta)
 router.post('/webhook/meta/:tenantId', iaControlador.webhookMeta)
 
-// ─── WhatsApp Web.js (requerem autenticação) ──────────────────────────────────
+// ─── WhatsApp Baileys (requerem autenticação) ────────────────────────────────
 // POST /api/ia/wwebjs/iniciar — inicia sessão e retorna QR Code
 router.post('/wwebjs/iniciar', autenticar, iaControlador.iniciarWWebJS)
 // POST /api/ia/wwebjs/status — verifica status da conexão

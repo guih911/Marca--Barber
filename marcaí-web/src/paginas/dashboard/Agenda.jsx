@@ -1,6 +1,6 @@
 ﻿import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ChevronLeft, ChevronRight, Plus, X, Loader2, Filter, Search, MessageSquare, UserPlus, Trash2, Send, Star, CheckCircle2, Ban, Megaphone, CalendarClock, UserX, Sparkles, Gift, Clock, ListChecks } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Plus, X, Loader2, Filter, MessageSquare, UserPlus, Trash2, Send, Star, CheckCircle2, Ban, Megaphone, CalendarClock, UserX, Sparkles, Gift, Clock, ListChecks } from 'lucide-react'
 import api from '../../servicos/api'
 import { cn, formatarHora, formatarTelefone, statusAgendamento } from '../../lib/utils'
 import { Button } from '../../componentes/ui/button'
@@ -285,6 +285,7 @@ const ModalDetalhes = ({ agendamento, onClose, onAcao, onRecarregar, produtos })
   const [finalizando, setFinalizando] = useState(false)
   const [mostrarNaoCompareceu, setMostrarNaoCompareceu] = useState(false)
   const [mostrarRemarcar, setMostrarRemarcar] = useState(false)
+  const [confirmarCancelar, setConfirmarCancelar] = useState(false)
   const [statusAtual, setStatusAtual] = useState(agendamento.status)
   const [presencaConfirmadaEm, setPresencaConfirmadaEm] = useState(agendamento.presencaConfirmadaEm)
   const [tipoCorteCliente, setTipoCorteCliente] = useState(agendamento.cliente?.tipoCortePreferido || '')
@@ -675,7 +676,7 @@ const ModalDetalhes = ({ agendamento, onClose, onAcao, onRecarregar, produtos })
                     <UserX size={13} /> Não compareceu
                   </Button>
                 )}
-                <Button tamanho="sm" variante="destructive" className={!presencaConfirmada ? 'col-span-2' : ''} onClick={() => executarAcao('cancelar')} disabled={carregandoAcao}>
+                <Button tamanho="sm" variante="destructive" className={!presencaConfirmada ? 'col-span-2' : ''} onClick={() => setConfirmarCancelar(true)} disabled={carregandoAcao}>
                   Cancelar
                 </Button>
               </div>
@@ -713,7 +714,7 @@ const ModalDetalhes = ({ agendamento, onClose, onAcao, onRecarregar, produtos })
                 tamanho="sm"
                 variante="outline"
                 className="gap-1.5"
-                onClick={() => { onClose(); navigate(`/operacao/comanda/${agendamento.id}`) }}
+                onClick={() => { onClose(); navigate('/operacao/comanda') }}
               >
                 <CheckCircle2 size={13} /> Ver comanda completa
               </Button>
@@ -783,6 +784,26 @@ const ModalDetalhes = ({ agendamento, onClose, onAcao, onRecarregar, produtos })
             }
           }}
         />
+      )}
+
+      {confirmarCancelar && (
+        <div className="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4" onClick={() => setConfirmarCancelar(false)}>
+          <div className="bg-white rounded-2xl w-full max-w-sm shadow-xl p-5 space-y-4" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-2.5">
+              <div className="w-8 h-8 rounded-full bg-red-100 flex items-center justify-center">
+                <Ban size={15} className="text-red-600" />
+              </div>
+              <h3 className="font-semibold text-texto text-sm">Cancelar agendamento</h3>
+            </div>
+            <p className="text-sm text-texto-sec">Tem certeza que deseja cancelar este agendamento? O cliente sera notificado.</p>
+            <div className="flex gap-2.5">
+              <Button variante="outline" className="flex-1" onClick={() => setConfirmarCancelar(false)}>Voltar</Button>
+              <Button variante="destructive" className="flex-1" onClick={() => { setConfirmarCancelar(false); executarAcao('cancelar') }} disabled={carregandoAcao}>
+                Sim, cancelar
+              </Button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )
@@ -884,7 +905,7 @@ const ModalRemarcar = ({ agendamento, onFechar, onConfirmar }) => {
         const res = await api.get(
           `/api/agendamentos/disponibilidade?profissionalId=${agendamento.profissionalId}&servicoId=${agendamento.servicoId}&data=${data}`
         )
-        setSlots(res.dados || [])
+        setSlots((res.dados || []).filter(s => s.disponivel !== false))
       } catch {
         toast('Erro ao buscar horários disponíveis', 'erro')
       } finally {
@@ -1915,7 +1936,6 @@ const PainelLateralAgenda = ({
   profissionais,
   profissionaisAtivos,
   onToggleProfissional,
-  onAbrirNovoAgendamento,
   className = '',
 }) => (
   <div className={cn('flex flex-col gap-5', className)}>
@@ -1924,13 +1944,6 @@ const PainelLateralAgenda = ({
     <div>
       <div className="flex items-center justify-between mb-2">
         <span className="text-xs font-semibold text-texto uppercase tracking-wide">Profissionais</span>
-        <button
-          onClick={onAbrirNovoAgendamento}
-          className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-gray-100 text-texto-sec"
-          title="Novo agendamento"
-        >
-          <Plus size={14} />
-        </button>
       </div>
       <div className="space-y-1.5">
         {profissionais.map((p, i) => {
@@ -2199,7 +2212,7 @@ const Agenda = () => {
         inicio = new Date(dataAtual.getFullYear(), dataAtual.getMonth(), 1)
         fim = new Date(dataAtual.getFullYear(), dataAtual.getMonth() + 1, 0, 23, 59, 59)
       }
-      const res = await api.get(`/api/agendamentos?inicio=${inicio.toISOString()}&fim=${fim.toISOString()}&limite=200`)
+      const res = await api.get(`/api/agendamentos?inicio=${inicio.toISOString()}&fim=${fim.toISOString()}&limite=200&status=AGENDADO,CONFIRMADO,CONCLUIDO,CANCELADO,NAO_COMPARECEU`)
       setAgendamentos(res.agendamentos || res.dados || [])
     } finally {
       setCarregando(false)
@@ -2353,15 +2366,7 @@ const Agenda = () => {
                 </Button>
               </div>
 
-              <div className="md:hidden rounded-xl border border-borda bg-fundo/70 px-3 py-2">
-                <p className="text-[11px] font-semibold uppercase tracking-wide text-texto-sec">Equipe</p>
-                <p className="text-sm font-medium text-texto mt-0.5">{resumoProfissionais}</p>
-              </div>
-
               <div className="flex flex-wrap items-center gap-2 lg:ml-auto">
-                <button title="Buscar" className="w-9 h-9 flex items-center justify-center rounded-xl hover:bg-gray-100 text-texto-sec transition-colors shrink-0">
-                  <Search size={16} />
-                </button>
                 <button
                   title="Cancelar período"
                   onClick={() => setMostrarCancelarPeriodo(true)}

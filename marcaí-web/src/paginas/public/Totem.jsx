@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { useParams } from 'react-router-dom'
 import { Loader2, CheckCircle2, Clock, User2, Scissors, ListChecks, ArrowLeft, Phone } from 'lucide-react'
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001'
+const API_URL = import.meta.env.VITE_API_URL ?? ''
 
 const apiFetch = async (path, opts = {}) => {
   const res = await fetch(`${API_URL}${path}`, {

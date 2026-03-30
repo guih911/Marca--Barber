@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react'
 import { useParams, useSearchParams } from 'react-router-dom'
-import { Loader2, Calendar, Clock, User, Scissors, CheckCircle2, ChevronLeft, Phone, UserCircle2 } from 'lucide-react'
+import { Loader2, Calendar, Clock, User, Scissors, ChevronLeft, Phone } from 'lucide-react'
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001'
+const API_URL = import.meta.env.VITE_API_URL ?? ''
 
 const apiFetch = async (path, opts = {}) => {
   const res = await fetch(`${API_URL}${path}`, {
@@ -47,8 +47,6 @@ const C = {
   bgCard: '#161616',
   bgSelected: '#1a1208',
   bgHeader: '#0a0a0a',
-  bgInput: '#1a1a1a',
-  bgSummary: '#161616',
   gold: '#B8894D',
   goldDim: 'rgba(184,137,77,0.15)',
   border: '#2a2a2a',
@@ -60,15 +58,40 @@ const C = {
   textOnGold: '#ffffff',
 }
 
+// ─── Máscara de telefone brasileiro ─────────────────────────────────────────
+const mascaraTelefone = (v) => {
+  const d = v.replace(/\D/g, '').slice(0, 11)
+  if (d.length <= 2) return `(${d}`
+  if (d.length <= 7) return `(${d.slice(0, 2)}) ${d.slice(2)}`
+  return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`
+}
+
+// ─── Agrupar slots por período ──────────────────────────────────────────────
+const agruparSlotsPorPeriodo = (slots) => {
+  const grupos = { manha: [], tarde: [], noite: [] }
+  for (const s of slots) {
+    const hora = new Date(s.inicio).toLocaleTimeString('pt-BR', { hour: '2-digit', timeZone: 'America/Sao_Paulo', hour12: false })
+    const h = parseInt(hora, 10)
+    if (h < 12) grupos.manha.push(s)
+    else if (h < 18) grupos.tarde.push(s)
+    else grupos.noite.push(s)
+  }
+  return grupos
+}
+
 // ─── Etapas ────────────────────────────────────────────────────────────────────
-// 1. Serviço → 2. Profissional → 3. Data/Hora → 4. Dados pessoais → 5. Confirmado
+// 1. Serviço → 2. Profissional → 3. Data/Hora → 4. Dados pessoais (novos) → WhatsApp
 
 const AgendaPublica = () => {
   const { slug } = useParams()
   const [searchParams] = useSearchParams()
 
-  const telParam = searchParams.get('tel') || searchParams.get('telefone') || ''
-  const nomeParam = searchParams.get('nome') || ''
+  // Cliente retornante? (tel + nome na URL)
+  const telUrl = searchParams.get('tel') || ''
+  const nomeUrl = searchParams.get('nome') || ''
+  const clienteRetornante = !!(telUrl && nomeUrl)
+
+  const totalEtapas = clienteRetornante ? 3 : 4
 
   const [carregando, setCarregando] = useState(true)
   const [erro, setErro] = useState(null)
@@ -81,15 +104,14 @@ const AgendaPublica = () => {
   const [profissionalId, setProfissionalId] = useState('')
   const [data, setData] = useState('')
   const [slot, setSlot] = useState(null)
-  const [nome, setNome] = useState(nomeParam)
-  const [telefone, setTelefone] = useState(telParam)
+
+  // Dados pessoais (novo cliente)
+  const [nomeCliente, setNomeCliente] = useState('')
+  const [telefoneCliente, setTelefoneCliente] = useState('')
 
   const [etapa, setEtapa] = useState(1)
   const [slots, setSlots] = useState([])
   const [carregandoSlots, setCarregandoSlots] = useState(false)
-  const [enviando, setEnviando] = useState(false)
-  const [confirmado, setConfirmado] = useState(null)
-  const [erroAgendamento, setErroAgendamento] = useState('')
 
   const dias = gerarDias(new Date(), 14)
 
@@ -104,6 +126,13 @@ const AgendaPublica = () => {
       .catch((e) => setErro(e.message || 'Barbearia não encontrada'))
       .finally(() => setCarregando(false))
   }, [slug])
+
+  // Auto-seleciona hoje ao entrar na etapa 3
+  useEffect(() => {
+    if (etapa === 3 && !data && dias.length > 0) {
+      setData(dias[0])
+    }
+  }, [etapa]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Carrega slots quando data, serviço e profissional estão definidos
   useEffect(() => {
@@ -122,30 +151,45 @@ const AgendaPublica = () => {
     ? profissionais.filter((p) => p.servicoIds.includes(servicoId))
     : profissionais
 
-  const servicoSel = servicos.find((s) => s.id === servicoId)
-  const profSel = profissionais.find((p) => p.id === profissionalId) ||
-    (slot ? profissionais.find((p) => p.id === slot.profissional?.id) : null)
+  const redirecionarWhatsApp = (slotEscolhido, nome, telefone) => {
+    const profEscolhido = profissionalId
+      ? profissionais.find((p) => p.id === profissionalId)
+      : slotEscolhido.profissional
+    const servicoEscolhido = servicos.find((s) => s.id === servicoId)
+    const dataFormatada = formatarDataExibicao(slotEscolhido.inicio)
+    const horaFormatada = formatarHora(slotEscolhido.inicio)
 
-  const confirmar = async () => {
-    setErroAgendamento('')
-    if (!nome.trim() || !telefone.trim()) {
-      setErroAgendamento('Preencha seu nome e telefone.')
-      return
+    const linhas = [
+      `Olá! Escolhi pelo site:`,
+      `Serviço: ${servicoEscolhido?.nome}`,
+      profEscolhido ? `Profissional: ${profEscolhido.nome}` : '',
+      `Data: ${dataFormatada} às ${horaFormatada}`,
+    ]
+
+    // Para novos clientes, inclui nome e telefone
+    if (!clienteRetornante && nome) {
+      linhas.push(`Nome: ${nome}`)
+      if (telefone) linhas.push(`Telefone: ${telefone}`)
     }
-    setEnviando(true)
-    try {
-      const pidFinal = profissionalId || slot?.profissional?.id
-      await apiFetch(`/api/public/${slug}/agendar`, {
-        method: 'POST',
-        body: JSON.stringify({ nome, telefone, servicoId, profissionalId: pidFinal, inicio: slot.inicio }),
-      })
-      setConfirmado({ slot, servico: servicoSel, profissional: profSel, nome })
-      setEtapa(5)
-    } catch (e) {
-      setErroAgendamento(e.message || 'Erro ao confirmar agendamento. Tente novamente.')
-    } finally {
-      setEnviando(false)
+
+    const mensagem = linhas.filter(Boolean).join('\n')
+    const numero = (tenant?.whatsappNumero || tenant?.telefone || '').replace(/\D/g, '')
+    const url = `https://wa.me/${numero}?text=${encodeURIComponent(mensagem)}`
+    window.open(url, '_blank')
+  }
+
+  const avancarAposSlot = () => {
+    if (clienteRetornante) {
+      redirecionarWhatsApp(slot, nomeUrl, telUrl)
+    } else {
+      setEtapa(4)
     }
+  }
+
+  const confirmarDadosPessoais = () => {
+    const telLimpo = telefoneCliente.replace(/\D/g, '')
+    const telComCodigo = telLimpo.length === 11 ? `55${telLimpo}` : telLimpo
+    redirecionarWhatsApp(slot, nomeCliente, telComCodigo)
   }
 
   // ─── Loading ─────────────────────────────────────────────────────────────────
@@ -171,6 +215,51 @@ const AgendaPublica = () => {
     )
   }
 
+  // ─── Render de seção de slots por período ────────────────────────────────────
+  const renderGrupoSlots = (titulo, slotsGrupo) => {
+    if (slotsGrupo.length === 0) return null
+    return (
+      <div style={{ marginBottom: 16 }}>
+        <p style={{ color: C.textSecondary, fontSize: 12, fontWeight: 600, marginBottom: 8, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+          {titulo}
+        </p>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
+          {slotsGrupo.map((s) => {
+            const sel = slot?.inicio === s.inicio && slot?.profissional?.id === s.profissional?.id
+            return (
+              <div
+                key={`${s.inicio}-${s.profissional?.id}`}
+                className="slot-pill"
+                onClick={() => setSlot(s)}
+                style={{
+                  background: sel ? C.bgSelected : C.bgCard,
+                  border: `1.5px solid ${sel ? C.gold : C.border}`,
+                  borderRadius: 12, padding: '10px 6px', cursor: 'pointer', textAlign: 'center',
+                }}
+              >
+                <p style={{ color: sel ? C.gold : C.textPrimary, fontWeight: 700, fontSize: 14, margin: 0 }}>
+                  {formatarHora(s.inicio)}
+                </p>
+                {!profissionalId && s.profissional && (
+                  <p style={{ color: C.textDim, fontSize: 11, margin: '3px 0 0' }}>
+                    {s.profissional.nome.split(' ')[0]}
+                  </p>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      </div>
+    )
+  }
+
+  // Encontrar próximo dia útil para sugestão
+  const proximoDiaUtil = () => {
+    const idx = dias.indexOf(data)
+    if (idx < 0 || idx >= dias.length - 1) return null
+    return dias[idx + 1]
+  }
+
   // ─── Render principal ────────────────────────────────────────────────────────
   return (
     <div style={{ minHeight: '100vh', background: C.bg, display: 'flex', flexDirection: 'column' }}>
@@ -181,28 +270,6 @@ const AgendaPublica = () => {
         .fade-in { animation: fadeIn 0.25s ease }
         @keyframes popIn { from { opacity: 0; transform: scale(0.7) } to { opacity: 1; transform: scale(1) } }
         .pop-in { animation: popIn 0.4s cubic-bezier(0.34,1.56,0.64,1) }
-        .agenda-input {
-          width: 100%;
-          background: ${C.bgInput};
-          border: 1px solid ${C.borderStrong};
-          border-radius: 12px;
-          padding: 13px 16px;
-          font-size: 14px;
-          color: ${C.textPrimary};
-          outline: none;
-          box-sizing: border-box;
-          transition: border-color 0.2s;
-          font-family: inherit;
-        }
-        .agenda-input::placeholder { color: ${C.textDim}; }
-        .agenda-input:focus { border-color: ${C.gold}; }
-        .agenda-input:-webkit-autofill,
-        .agenda-input:-webkit-autofill:hover,
-        .agenda-input:-webkit-autofill:focus {
-          -webkit-box-shadow: 0 0 0px 1000px ${C.bgInput} inset;
-          -webkit-text-fill-color: ${C.textPrimary};
-          caret-color: ${C.textPrimary};
-        }
         .slot-pill {
           transition: background 0.15s, border-color 0.15s, transform 0.1s;
         }
@@ -241,10 +308,10 @@ const AgendaPublica = () => {
       </div>
 
       {/* ── Barra de progresso ── */}
-      {etapa < 5 && (
+      {etapa <= totalEtapas && (
         <div style={{ background: C.bgHeader, borderBottom: `1px solid ${C.borderHeader}`, padding: '10px 20px' }}>
           <div style={{ maxWidth: 480, margin: '0 auto', display: 'flex', gap: 6, alignItems: 'center' }}>
-            {[1, 2, 3, 4].map((e) => (
+            {Array.from({ length: totalEtapas }, (_, i) => i + 1).map((e) => (
               <div key={e} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
                 <div style={{
                   width: 22, height: 22, borderRadius: '50%',
@@ -263,7 +330,7 @@ const AgendaPublica = () => {
             ))}
           </div>
           <div style={{ maxWidth: 480, margin: '6px auto 0', display: 'flex', gap: 6 }}>
-            {[1, 2, 3, 4].map((e) => (
+            {Array.from({ length: totalEtapas }, (_, i) => i + 1).map((e) => (
               <div key={e} style={{
                 flex: 1, height: 3, borderRadius: 4,
                 background: e <= etapa ? C.gold : C.border,
@@ -338,7 +405,7 @@ const AgendaPublica = () => {
             {/* Qualquer profissional */}
             <div
               className="card-sel"
-              onClick={() => { setProfissionalId(''); setEtapa(3) }}
+              onClick={() => { setProfissionalId(''); setData(''); setSlot(null); setEtapa(3) }}
               style={{
                 background: !profissionalId ? C.bgSelected : C.bgCard,
                 border: `1.5px solid ${!profissionalId ? C.gold : C.border}`,
@@ -355,7 +422,7 @@ const AgendaPublica = () => {
                 <div
                   key={p.id}
                   className="card-sel"
-                  onClick={() => { setProfissionalId(p.id); setEtapa(3) }}
+                  onClick={() => { setProfissionalId(p.id); setData(''); setSlot(null); setEtapa(3) }}
                   style={{
                     background: sel ? C.bgSelected : C.bgCard,
                     border: `1.5px solid ${sel ? C.gold : C.border}`,
@@ -413,6 +480,8 @@ const AgendaPublica = () => {
               {dias.map((d) => {
                 const dt = new Date(d + 'T12:00:00-03:00')
                 const sel = data === d
+                const dow = dt.getDay()
+                const isFimDeSemana = dow === 0 || dow === 6
                 return (
                   <div
                     key={d}
@@ -422,11 +491,11 @@ const AgendaPublica = () => {
                       flexShrink: 0, display: 'flex', flexDirection: 'column', alignItems: 'center',
                       padding: '8px 12px', borderRadius: 12, cursor: 'pointer', minWidth: 52,
                       background: sel ? C.gold : C.bgCard,
-                      border: `1.5px solid ${sel ? C.gold : C.border}`,
+                      border: `1.5px solid ${sel ? C.gold : isFimDeSemana ? C.border : 'rgba(184,137,77,0.3)'}`,
                     }}
                   >
                     <span style={{ fontSize: 10, fontWeight: 600, color: sel ? 'rgba(255,255,255,0.8)' : C.textDim, marginBottom: 2 }}>
-                      {DIAS_SEMANA[dt.getDay()]}
+                      {DIAS_SEMANA[dow]}
                     </span>
                     <span style={{ fontSize: 17, fontWeight: 800, color: sel ? '#fff' : C.textPrimary, lineHeight: 1.1 }}>
                       {dt.getDate()}
@@ -434,79 +503,73 @@ const AgendaPublica = () => {
                     <span style={{ fontSize: 10, color: sel ? 'rgba(255,255,255,0.7)' : C.textDim, marginTop: 2 }}>
                       {MESES[dt.getMonth()]}
                     </span>
+                    {!sel && !isFimDeSemana && (
+                      <div style={{ width: 4, height: 4, borderRadius: '50%', background: C.gold, marginTop: 3, opacity: 0.6 }} />
+                    )}
                   </div>
                 )
               })}
             </div>
 
             {/* Slots */}
-            {!data && (
-              <p style={{ textAlign: 'center', color: C.textDim, fontSize: 13, padding: '24px 0' }}>
-                Selecione uma data acima
-              </p>
-            )}
             {data && carregandoSlots && (
               <div style={{ display: 'flex', justifyContent: 'center', padding: '24px 0' }}>
                 <Loader2 size={24} className="spin" style={{ color: C.gold }} />
               </div>
             )}
-            {data && !carregandoSlots && slots.length === 0 && (
-              <div style={{ textAlign: 'center', padding: '24px 0' }}>
-                <p style={{ color: C.textSecondary, fontSize: 13, margin: 0 }}>Nenhum horário disponível nesta data.</p>
-                <p style={{ color: C.textDim, fontSize: 12, marginTop: 4 }}>Tente outro dia.</p>
-              </div>
-            )}
-            {data && !carregandoSlots && slots.length > 0 && (
-              <div>
-                <p style={{ color: C.textDim, fontSize: 12, marginBottom: 10, display: 'flex', alignItems: 'center', gap: 4 }}>
-                  <Clock size={12} style={{ color: C.gold }} />
-                  {slots.length} horário{slots.length !== 1 ? 's' : ''} disponível{slots.length !== 1 ? 'is' : ''}
-                </p>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
-                  {slots.map((s) => {
-                    const sel = slot?.inicio === s.inicio && slot?.profissional?.id === s.profissional?.id
-                    return (
-                      <div
-                        key={`${s.inicio}-${s.profissional?.id}`}
-                        className="slot-pill"
-                        onClick={() => setSlot(s)}
-                        style={{
-                          background: sel ? C.bgSelected : C.bgCard,
-                          border: `1.5px solid ${sel ? C.gold : C.border}`,
-                          borderRadius: 12, padding: '10px 6px', cursor: 'pointer', textAlign: 'center',
-                        }}
-                      >
-                        <p style={{ color: sel ? C.gold : C.textPrimary, fontWeight: 700, fontSize: 14, margin: 0 }}>
-                          {formatarHora(s.inicio)}
-                        </p>
-                        {!profissionalId && s.profissional && (
-                          <p style={{ color: C.textDim, fontSize: 11, margin: '3px 0 0' }}>
-                            {s.profissional.nome.split(' ')[0]}
-                          </p>
-                        )}
-                      </div>
-                    )
-                  })}
+            {data && !carregandoSlots && slots.length === 0 && (() => {
+              const proximo = proximoDiaUtil()
+              return (
+                <div style={{ textAlign: 'center', padding: '24px 0' }}>
+                  <p style={{ color: C.textSecondary, fontSize: 13, margin: 0 }}>Nenhum horário disponível nesta data.</p>
+                  {proximo ? (
+                    <p
+                      onClick={() => setData(proximo)}
+                      style={{ color: C.gold, fontSize: 13, marginTop: 8, cursor: 'pointer', textDecoration: 'underline' }}
+                    >
+                      Tentar {(() => {
+                        const dt = new Date(proximo + 'T12:00:00-03:00')
+                        return `${DIAS_SEMANA[dt.getDay()]}, ${dt.getDate()} de ${MESES[dt.getMonth()]}`
+                      })()}
+                    </p>
+                  ) : (
+                    <p style={{ color: C.textDim, fontSize: 12, marginTop: 4 }}>Tente outro dia.</p>
+                  )}
                 </div>
-                {slot && (
-                  <button
-                    onClick={() => setEtapa(4)}
-                    style={{
-                      width: '100%', marginTop: 16, background: C.gold, color: C.textOnGold,
-                      border: 'none', borderRadius: 12, padding: '13px', fontWeight: 700,
-                      fontSize: 15, cursor: 'pointer', fontFamily: 'inherit',
-                    }}
-                  >
-                    Continuar →
-                  </button>
-                )}
-              </div>
-            )}
+              )
+            })()}
+            {data && !carregandoSlots && slots.length > 0 && (() => {
+              const grupos = agruparSlotsPorPeriodo(slots)
+              return (
+                <div>
+                  <p style={{ color: C.textDim, fontSize: 12, marginBottom: 14, display: 'flex', alignItems: 'center', gap: 4 }}>
+                    <Clock size={12} style={{ color: C.gold }} />
+                    {slots.length} horário{slots.length !== 1 ? 's' : ''} disponível{slots.length !== 1 ? 'is' : ''}
+                  </p>
+                  {renderGrupoSlots('Manhã', grupos.manha)}
+                  {renderGrupoSlots('Tarde', grupos.tarde)}
+                  {renderGrupoSlots('Noite', grupos.noite)}
+                  {slot && (
+                    <button
+                      onClick={avancarAposSlot}
+                      style={{
+                        width: '100%', marginTop: 8, background: clienteRetornante ? '#25D366' : C.gold, color: '#fff',
+                        border: 'none', borderRadius: 12, padding: '13px', fontWeight: 700,
+                        fontSize: 15, cursor: 'pointer', fontFamily: 'inherit',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+                      }}
+                    >
+                      {clienteRetornante ? 'Confirmar pelo WhatsApp' : 'Continuar'}
+                    </button>
+                  )}
+                </div>
+              )
+            })()}
           </div>
         )}
 
-        {/* ════ Etapa 4: Dados pessoais ════ */}
-        {etapa === 4 && (
+        {/* ════ Etapa 4: Dados pessoais (apenas novos clientes) ════ */}
+        {etapa === 4 && !clienteRetornante && (
           <div className="fade-in">
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
               <button
@@ -520,200 +583,89 @@ const AgendaPublica = () => {
               >
                 <ChevronLeft size={18} style={{ color: C.textSecondary }} />
               </button>
-              <h2 style={{ color: C.textPrimary, fontWeight: 700, fontSize: 16, margin: 0 }}>Seus dados</h2>
+              <h2 style={{ color: C.textPrimary, fontWeight: 700, fontSize: 16, margin: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
+                <Phone size={18} style={{ color: C.gold }} />
+                Seus dados
+              </h2>
             </div>
 
-            {/* Resumo do agendamento */}
+            <p style={{ color: C.textDim, fontSize: 13, marginBottom: 20 }}>
+              Para confirmar seu agendamento, precisamos do seu nome e telefone.
+            </p>
+
+            {/* Nome */}
+            <label style={{ display: 'block', marginBottom: 16 }}>
+              <span style={{ color: C.textSecondary, fontSize: 12, fontWeight: 600, display: 'block', marginBottom: 6 }}>Nome</span>
+              <input
+                type="text"
+                value={nomeCliente}
+                onChange={(e) => setNomeCliente(e.target.value)}
+                placeholder="Seu nome"
+                style={{
+                  width: '100%', padding: '12px 14px', borderRadius: 12,
+                  background: C.bgCard, border: `1.5px solid ${C.border}`,
+                  color: C.textPrimary, fontSize: 14, fontFamily: 'inherit',
+                  outline: 'none', boxSizing: 'border-box',
+                }}
+                onFocus={(e) => { e.target.style.borderColor = C.gold }}
+                onBlur={(e) => { e.target.style.borderColor = C.border }}
+              />
+            </label>
+
+            {/* Telefone */}
+            <label style={{ display: 'block', marginBottom: 24 }}>
+              <span style={{ color: C.textSecondary, fontSize: 12, fontWeight: 600, display: 'block', marginBottom: 6 }}>Telefone</span>
+              <input
+                type="tel"
+                value={telefoneCliente}
+                onChange={(e) => setTelefoneCliente(mascaraTelefone(e.target.value))}
+                placeholder="(11) 99999-9999"
+                style={{
+                  width: '100%', padding: '12px 14px', borderRadius: 12,
+                  background: C.bgCard, border: `1.5px solid ${C.border}`,
+                  color: C.textPrimary, fontSize: 14, fontFamily: 'inherit',
+                  outline: 'none', boxSizing: 'border-box',
+                }}
+                onFocus={(e) => { e.target.style.borderColor = C.gold }}
+                onBlur={(e) => { e.target.style.borderColor = C.border }}
+              />
+            </label>
+
+            {/* Resumo */}
             <div style={{
               background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 14,
-              padding: '14px 16px', marginBottom: 18,
+              padding: '14px 16px', marginBottom: 20,
             }}>
-              <p style={{ color: C.gold, fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', margin: '0 0 10px' }}>
-                Resumo
+              <p style={{ color: C.textDim, fontSize: 11, fontWeight: 600, textTransform: 'uppercase', marginBottom: 8, letterSpacing: 0.5 }}>Resumo</p>
+              <p style={{ color: C.textPrimary, fontSize: 13, margin: '4px 0' }}>
+                {servicos.find((s) => s.id === servicoId)?.nome}
               </p>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <Scissors size={14} style={{ color: C.gold, flexShrink: 0 }} />
-                  <span style={{ color: C.textPrimary, fontSize: 13, fontWeight: 600, flex: 1 }}>{servicoSel?.nome}</span>
-                  {servicoSel?.precoCentavos != null && (
-                    <span style={{ color: C.gold, fontWeight: 700, fontSize: 13 }}>{formatarReais(servicoSel.precoCentavos)}</span>
-                  )}
-                </div>
-                {profSel && (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                    <User size={14} style={{ color: C.textDim, flexShrink: 0 }} />
-                    <span style={{ color: C.textSecondary, fontSize: 13 }}>{profSel.nome}</span>
-                  </div>
-                )}
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <Calendar size={14} style={{ color: C.textDim, flexShrink: 0 }} />
-                  <span style={{ color: C.textSecondary, fontSize: 13 }}>{formatarDataExibicao(slot.inicio)}</span>
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <Clock size={14} style={{ color: C.textDim, flexShrink: 0 }} />
-                  <span style={{ color: C.textSecondary, fontSize: 13 }}>{formatarHora(slot.inicio)}</span>
-                </div>
-              </div>
+              <p style={{ color: C.textSecondary, fontSize: 12, margin: '4px 0' }}>
+                {profissionalId
+                  ? profissionais.find((p) => p.id === profissionalId)?.nome
+                  : slot?.profissional?.nome || 'Qualquer profissional'}
+              </p>
+              {slot && (
+                <p style={{ color: C.textSecondary, fontSize: 12, margin: '4px 0' }}>
+                  {formatarDataExibicao(slot.inicio)} às {formatarHora(slot.inicio)}
+                </p>
+              )}
             </div>
-
-            {/* Campos */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginBottom: 18 }}>
-              <div>
-                <label style={{ color: C.textSecondary, fontSize: 12, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 5, marginBottom: 6 }}>
-                  <UserCircle2 size={13} style={{ color: C.gold }} /> Seu nome
-                </label>
-                <input
-                  type="text"
-                  value={nome}
-                  onChange={(e) => setNome(e.target.value)}
-                  placeholder="Como prefere ser chamado?"
-                  className="agenda-input"
-                />
-              </div>
-              <div>
-                <label style={{ color: C.textSecondary, fontSize: 12, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 5, marginBottom: 6 }}>
-                  <Phone size={13} style={{ color: C.gold }} /> WhatsApp
-                </label>
-                <input
-                  type="tel"
-                  value={telefone}
-                  onChange={(e) => setTelefone(e.target.value)}
-                  placeholder="(00) 00000-0000"
-                  className="agenda-input"
-                />
-              </div>
-            </div>
-
-            {erroAgendamento && (
-              <div style={{
-                background: 'rgba(220,38,38,0.1)', border: '1px solid rgba(220,38,38,0.3)',
-                borderRadius: 12, padding: '11px 14px', marginBottom: 14,
-              }}>
-                <p style={{ color: '#f87171', fontSize: 13, margin: 0 }}>{erroAgendamento}</p>
-              </div>
-            )}
 
             <button
-              onClick={confirmar}
-              disabled={enviando}
+              onClick={confirmarDadosPessoais}
+              disabled={!nomeCliente.trim() || telefoneCliente.replace(/\D/g, '').length < 10}
               style={{
-                width: '100%', background: enviando ? 'rgba(184,137,77,0.5)' : C.gold,
-                color: C.textOnGold, border: 'none', borderRadius: 12, padding: '13px',
-                fontWeight: 700, fontSize: 15, cursor: enviando ? 'not-allowed' : 'pointer',
-                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-                fontFamily: 'inherit', transition: 'background 0.2s',
+                width: '100%', background: (!nomeCliente.trim() || telefoneCliente.replace(/\D/g, '').length < 10) ? '#1a3d2a' : '#25D366',
+                color: '#fff', border: 'none', borderRadius: 12, padding: '13px', fontWeight: 700,
+                fontSize: 15, cursor: (!nomeCliente.trim() || telefoneCliente.replace(/\D/g, '').length < 10) ? 'not-allowed' : 'pointer',
+                fontFamily: 'inherit', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+                opacity: (!nomeCliente.trim() || telefoneCliente.replace(/\D/g, '').length < 10) ? 0.5 : 1,
+                transition: 'opacity 0.2s, background 0.2s',
               }}
             >
-              {enviando
-                ? <><Loader2 size={18} className="spin" /> Confirmando...</>
-                : 'Confirmar agendamento'
-              }
+              Confirmar pelo WhatsApp
             </button>
-          </div>
-        )}
-
-        {/* ════ Etapa 5: Confirmado ════ */}
-        {etapa === 5 && confirmado && (
-          <div className="fade-in" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', paddingTop: 16 }}>
-
-            {/* Ícone de sucesso */}
-            <div
-              className="pop-in"
-              style={{
-                width: 72, height: 72, borderRadius: '50%', marginBottom: 20,
-                background: 'rgba(34,197,94,0.12)', border: '2px solid rgba(34,197,94,0.4)',
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-              }}
-            >
-              <CheckCircle2 size={40} style={{ color: '#4ade80' }} />
-            </div>
-
-            <h2 style={{ color: C.textPrimary, fontWeight: 800, fontSize: 22, margin: '0 0 6px' }}>
-              Agendamento Confirmado!
-            </h2>
-            <p style={{ color: C.textDim, fontSize: 14, margin: '0 0 24px' }}>
-              Até lá, {confirmado.nome.split(' ')[0]}! ✂️
-            </p>
-
-            {/* Detalhes */}
-            <div style={{
-              background: C.bgCard, border: `1px solid ${C.border}`,
-              borderRadius: 16, padding: '16px', width: '100%', textAlign: 'left',
-              marginBottom: 20, boxSizing: 'border-box',
-            }}>
-              <p style={{ color: C.gold, fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', margin: '0 0 14px' }}>
-                Detalhes do agendamento
-              </p>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                  <div style={{
-                    width: 34, height: 34, borderRadius: 9, flexShrink: 0,
-                    background: C.goldDim, border: `1px solid rgba(184,137,77,0.3)`,
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  }}>
-                    <Scissors size={15} style={{ color: C.gold }} />
-                  </div>
-                  <div>
-                    <p style={{ color: C.textDim, fontSize: 11, margin: 0 }}>Serviço</p>
-                    <p style={{ color: C.textPrimary, fontWeight: 600, fontSize: 14, margin: '2px 0 0' }}>{confirmado.servico?.nome}</p>
-                  </div>
-                </div>
-                {confirmado.profissional && (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                    <div style={{
-                      width: 34, height: 34, borderRadius: 9, flexShrink: 0,
-                      background: '#1a1a1a', border: `1px solid ${C.border}`,
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    }}>
-                      <User size={15} style={{ color: C.textSecondary }} />
-                    </div>
-                    <div>
-                      <p style={{ color: C.textDim, fontSize: 11, margin: 0 }}>Profissional</p>
-                      <p style={{ color: C.textPrimary, fontWeight: 600, fontSize: 14, margin: '2px 0 0' }}>{confirmado.profissional.nome}</p>
-                    </div>
-                  </div>
-                )}
-                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                  <div style={{
-                    width: 34, height: 34, borderRadius: 9, flexShrink: 0,
-                    background: '#1a1a1a', border: `1px solid ${C.border}`,
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  }}>
-                    <Calendar size={15} style={{ color: C.textSecondary }} />
-                  </div>
-                  <div>
-                    <p style={{ color: C.textDim, fontSize: 11, margin: 0 }}>Data e hora</p>
-                    <p style={{ color: C.textPrimary, fontWeight: 600, fontSize: 14, margin: '2px 0 0' }}>
-                      {formatarDataExibicao(confirmado.slot.inicio)}, {formatarHora(confirmado.slot.inicio)}
-                    </p>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* CTA Don IA / WhatsApp */}
-            <div style={{
-              background: 'linear-gradient(135deg, #0d1f12 0%, #0a1a10 100%)',
-              border: '1.5px solid rgba(37,211,102,0.25)',
-              borderRadius: 16, padding: '16px 18px', width: '100%',
-              textAlign: 'left', boxSizing: 'border-box', marginBottom: 16,
-            }}>
-              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
-                <div style={{ fontSize: 24, flexShrink: 0, marginTop: 2 }}>💬</div>
-                <div>
-                  <p style={{ color: '#4ade80', fontWeight: 700, fontSize: 14, margin: '0 0 4px' }}>
-                    Precisa remarcar ou tem dúvidas?
-                  </p>
-                  <p style={{ color: 'rgba(200,255,200,0.7)', fontSize: 13, margin: 0, lineHeight: 1.5 }}>
-                    Converse com o <strong style={{ color: '#fff' }}>Don</strong>, nosso assistente no WhatsApp. Ele confirma, remarca e responde na hora!
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            <p style={{ color: C.textDim, fontSize: 11, margin: 0 }}>
-              Uma confirmação foi registrada. Você pode receber uma mensagem no WhatsApp.
-            </p>
           </div>
         )}
 

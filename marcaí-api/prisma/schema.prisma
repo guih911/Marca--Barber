@@ -109,6 +109,7 @@ model Tenant {
   id                   String    @id @default(uuid())
   nome                 String
   slug                 String    @unique
+  hashPublico          String?   @unique  // Hash curto para URL pública (ex: "a3f8b2c1")
   segmento             Segmento  @default(OUTRO)
   nicho                String?
   planoTenant          PlanoTenant @default(STARTER)
@@ -153,6 +154,9 @@ model Tenant {
   comissoesAtivo       Boolean   @default(false)  // Controle de comissões de profissionais
   pacotesAtivo         Boolean   @default(false)  // Pacotes/combos de serviços
   relatorioDiarioAtivo Boolean   @default(false)  // Relatório diário via WhatsApp para gestor
+  galeriaAtivo         Boolean   @default(false)  // Galeria de fotos
+  listaEsperaAtivo     Boolean   @default(false)  // Lista de espera
+  caixaAtivo           Boolean   @default(false)  // Caixa / financeiro
   ativo                Boolean   @default(true)
   criadoEm             DateTime  @default(now())
   atualizadoEm         DateTime  @updatedAt
@@ -262,6 +266,7 @@ model Cliente {
   tenantId     String
   nome         String
   telefone     String
+  lidWhatsapp  String?  // Linked ID do WhatsApp (mapeamento interno)
   email        String?
   avatarUrl    String?
   notas                String?

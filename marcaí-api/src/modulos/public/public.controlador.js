@@ -1,16 +1,23 @@
 const banco = require('../../config/banco')
 const disponibilidadeServico = require('../agendamentos/disponibilidade.servico')
 const agendamentosServico = require('../agendamentos/agendamentos.servico')
+const baileysManager = require('../ia/baileys.manager')
+const whatsappServico = require('../ia/whatsapp.servico')
 
 // GET /api/public/:slug/info
 const info = async (req, res, next) => {
   try {
-    const tenant = await banco.tenant.findUnique({
-      where: { slug: req.params.slug },
+    // Aceita slug ou hashPublico como identificador
+    const identificador = req.params.slug
+    const tenant = await banco.tenant.findFirst({
+      where: {
+        OR: [{ slug: identificador }, { hashPublico: identificador }],
+      },
       select: {
         id: true,
         nome: true,
         slug: true,
+        hashPublico: true,
         logoUrl: true,
         endereco: true,
         telefone: true,
@@ -46,7 +53,11 @@ const info = async (req, res, next) => {
     res.json({
       sucesso: true,
       dados: {
-        tenant: { id: tenant.id, nome: tenant.nome, slug: tenant.slug, logoUrl: tenant.logoUrl, endereco: tenant.endereco, telefone: tenant.telefone, linkMaps: tenant.linkMaps },
+        tenant: {
+          id: tenant.id, nome: tenant.nome, slug: tenant.slug, logoUrl: tenant.logoUrl,
+          endereco: tenant.endereco, telefone: tenant.telefone, linkMaps: tenant.linkMaps,
+          whatsappNumero: baileysManager.obterNumeroConectado(tenant.id) || null,
+        },
         servicos,
         profissionais: profissionais.map((p) => ({
           id: p.id,
@@ -64,8 +75,8 @@ const info = async (req, res, next) => {
 // GET /api/public/:slug/slots?servicoId=&profissionalId=&data=
 const slots = async (req, res, next) => {
   try {
-    const tenant = await banco.tenant.findUnique({
-      where: { slug: req.params.slug },
+    const tenant = await banco.tenant.findFirst({
+      where: { OR: [{ slug: req.params.slug }, { hashPublico: req.params.slug }] },
       select: { id: true, ativo: true },
     })
     if (!tenant || !tenant.ativo) {
@@ -77,11 +88,14 @@ const slots = async (req, res, next) => {
       return res.status(400).json({ sucesso: false, erro: { mensagem: 'servicoId e data são obrigatórios' } })
     }
 
-    const slotsDisponiveis = await disponibilidadeServico.verificarDisponibilidade(tenant.id, {
+    const todosSlots = await disponibilidadeServico.verificarDisponibilidade(tenant.id, {
       servicoId,
       profissionalId: profissionalId || undefined,
       data,
     })
+
+    // Filtra apenas slots realmente disponíveis para o endpoint público
+    const slotsDisponiveis = todosSlots.filter((slot) => slot.disponivel !== false)
 
     res.json({ sucesso: true, dados: slotsDisponiveis })
   } catch (erro) {
@@ -92,8 +106,8 @@ const slots = async (req, res, next) => {
 // POST /api/public/:slug/agendar
 const agendar = async (req, res, next) => {
   try {
-    const tenant = await banco.tenant.findUnique({
-      where: { slug: req.params.slug },
+    const tenant = await banco.tenant.findFirst({
+      where: { OR: [{ slug: req.params.slug }, { hashPublico: req.params.slug }] },
       select: { id: true, ativo: true, nome: true, configWhatsApp: true },
     })
     if (!tenant || !tenant.ativo) {
@@ -149,7 +163,7 @@ const checkIn = async (req, res, next) => {
       return res.status(400).json({ sucesso: false, erro: { mensagem: 'slug e telefone são obrigatórios' } })
     }
 
-    const tenant = await banco.tenant.findUnique({
+    const tenant = await banco.tenant.findFirst({
       where: { slug },
       select: { id: true, ativo: true },
     })
@@ -190,8 +204,8 @@ const checkIn = async (req, res, next) => {
 // GET /api/public/:slug/planos
 const planos = async (req, res, next) => {
   try {
-    const tenant = await banco.tenant.findUnique({
-      where: { slug: req.params.slug },
+    const tenant = await banco.tenant.findFirst({
+      where: { OR: [{ slug: req.params.slug }, { hashPublico: req.params.slug }] },
       select: { id: true, nome: true, slug: true, logoUrl: true, ativo: true },
     })
     if (!tenant || !tenant.ativo) {
@@ -215,8 +229,8 @@ const planos = async (req, res, next) => {
 // POST /api/public/:slug/assinar
 const assinar = async (req, res, next) => {
   try {
-    const tenant = await banco.tenant.findUnique({
-      where: { slug: req.params.slug },
+    const tenant = await banco.tenant.findFirst({
+      where: { OR: [{ slug: req.params.slug }, { hashPublico: req.params.slug }] },
       select: { id: true, nome: true, ativo: true },
     })
     if (!tenant || !tenant.ativo) {
@@ -230,6 +244,7 @@ const assinar = async (req, res, next) => {
 
     const plano = await banco.planoAssinatura.findFirst({
       where: { id: planoId, tenantId: tenant.id, ativo: true },
+      include: { creditos: { include: { servico: { select: { nome: true } } } } },
     })
     if (!plano) {
       return res.status(404).json({ sucesso: false, erro: { mensagem: 'Plano não encontrado' } })
@@ -269,6 +284,32 @@ const assinar = async (req, res, next) => {
         proximaCobrancaEm: proxCobranca,
       },
     })
+
+    // Envia confirmação via WhatsApp (não bloqueia a assinatura se falhar)
+    try {
+      const tenantWhats = await banco.tenant.findUnique({
+        where: { id: tenant.id },
+        select: { configWhatsApp: true },
+      })
+      const configWpp = tenantWhats?.configWhatsApp
+
+      if (configWpp && configWpp.provedor) {
+        const valorFormatado = (plano.precoCentavos / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
+        const resumoCreditos = plano.creditos
+          .map((c) => `${c.creditos}x ${c.servico.nome}`)
+          .join(', ')
+
+        const mensagem =
+          `✅ Plano ativado, ${cliente.nome}!\n\n` +
+          `Seu plano *${plano.nome}* está ativo. ` +
+          (resumoCreditos ? `Você tem ${resumoCreditos} por mês.\n\n` : '\n') +
+          `O pagamento de *${valorFormatado}* é feito na barbearia. Qualquer dúvida, é só responder aqui! 💈`
+
+        await whatsappServico.enviarMensagem(configWpp, cliente.telefone, mensagem, tenant.id)
+      }
+    } catch (errWhats) {
+      console.error('[Assinar] Erro ao enviar WhatsApp de confirmação:', errWhats.message)
+    }
 
     res.status(201).json({ sucesso: true, dados: { assinaturaId: assinatura.id, mensagem: 'Assinatura criada! O pagamento será cobrado no próximo atendimento.' } })
   } catch (erro) {
