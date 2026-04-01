@@ -2,6 +2,7 @@ const BASE_URL = import.meta.env.VITE_API_URL ?? ''
 
 // Obtém o token do localStorage
 const obterToken = () => localStorage.getItem('accessToken')
+const rotaAuthPublica = (caminho) => caminho === '/api/auth/login' || caminho === '/api/auth/cadastro' || caminho === '/api/auth/refresh'
 
 // Salva tokens
 export const salvarTokens = (accessToken, refreshToken) => {
@@ -59,7 +60,7 @@ export const apiFetch = async (caminho, opcoes = {}) => {
   let resposta = await fetch(url, { ...opcoes, headers: cabecalhos })
 
   // Se 401, tenta renovar o token e repetir
-  if (resposta.status === 401) {
+  if (resposta.status === 401 && !rotaAuthPublica(caminho)) {
     const novoToken = await renovarToken()
     if (novoToken) {
       cabecalhos['Authorization'] = `Bearer ${novoToken}`
@@ -67,7 +68,7 @@ export const apiFetch = async (caminho, opcoes = {}) => {
     } else {
       // Redireciona para login se não conseguiu renovar
       removerTokens()
-      window.location.href = '/login'
+      window.location.replace('/login')
       return null
     }
   }
@@ -109,6 +110,34 @@ export const api = {
     }),
 
   delete: (caminho) => apiFetch(caminho, { method: 'DELETE' }),
+
+  // Upload de arquivos (FormData) — não envia Content-Type para deixar o browser definir o boundary
+  upload: async (caminho, formData) => {
+    const url = `${BASE_URL}${caminho}`
+    const token = obterToken()
+    const cabecalhos = token ? { Authorization: `Bearer ${token}` } : {}
+
+    let resposta = await fetch(url, { method: 'POST', headers: cabecalhos, body: formData })
+
+    if (resposta.status === 401 && !rotaAuthPublica(caminho)) {
+      const novoToken = await renovarToken()
+      if (novoToken) {
+        cabecalhos['Authorization'] = `Bearer ${novoToken}`
+        resposta = await fetch(url, { method: 'POST', headers: cabecalhos, body: formData })
+      } else {
+        removerTokens()
+        window.location.replace('/login')
+        return null
+      }
+    }
+
+    let dados
+    try { dados = await resposta.json() }
+    catch { dados = { erro: { mensagem: 'Resposta inesperada do servidor' }, status: resposta.status } }
+
+    if (!resposta.ok) throw { status: resposta.status, ...dados }
+    return dados
+  },
 }
 
 export default api

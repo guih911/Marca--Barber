@@ -42,7 +42,8 @@ const verificarDisponibilidade = async (tenantId, { profissionalId, servicoId, d
 
   for (const prof of profissionais) {
     const infoServico = await obterServicoComDuracao(tenantId, prof.id, servicoId)
-    const slots = await gerarSlots(prof.id, infoServico.duracaoMinutos, data)
+    // Passa servicoId para que gerarSlots pule profissionais que não realizem o serviço
+    const slots = await gerarSlots(prof.id, infoServico.duracaoMinutos, data, undefined, servicoId)
     slots.forEach((slot) => {
       todosSlots.push({ ...slot, profissional: { id: prof.id, nome: prof.nome } })
     })
@@ -68,7 +69,7 @@ const verificarDisponibilidadeCombo = async (tenantId, { profissionalId, servico
     }
 
     const slotsPorEtapa = await Promise.all(
-      etapas.map((etapa) => gerarSlots(prof.id, etapa.duracaoMinutos, data))
+      etapas.map((etapa, i) => gerarSlots(prof.id, etapa.duracaoMinutos, data, undefined, ids[i]))
     )
 
     const mapasDisponiveis = slotsPorEtapa.map((slots) => new Map(

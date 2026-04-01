@@ -41,7 +41,8 @@ const obterResumoPorId = async (req, res, next) => {
 const registrarMovimentacao = async (req, res, next) => {
   try {
     const { tipo, valor, descricao } = req.body
-    const valorCentavos = valor ? Math.round(parseFloat(String(valor).replace(',', '.')) * 100) : 0
+    // Usa != null (cobre undefined e null) para evitar falso negativo com valor "0"
+    const valorCentavos = (valor != null && valor !== '') ? Math.round(parseFloat(String(valor).replace(',', '.')) * 100) : 0
     const mov = await caixaServico.registrarMovimentacao(req.usuario.tenantId, {
       tipo,
       valor: valorCentavos,

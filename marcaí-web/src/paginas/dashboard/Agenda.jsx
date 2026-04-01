@@ -1059,7 +1059,7 @@ const ModalNovoAgendamento = ({ dataInicial, preset, onClose, onSalvar }) => {
     setCarregando(true)
     try {
       let clienteRes = await api.get(`/api/clientes?busca=${form.clienteTelefone}&limite=1`)
-      let clienteId = clienteRes.clientes?.[0]?.id
+      let clienteId = clienteRes?.clientes?.[0]?.id
       if (!clienteId) {
         const novo = await api.post('/api/clientes', {
           nome: form.clienteNome || form.clienteTelefone,
@@ -1268,8 +1268,66 @@ const GradeSemana = ({ dataAtual, agendamentos, profissionaisFiltro, onClickAgen
   )
 }
 
+// Botões de ação rápida para a grade do dia (1-2 toques)
+const BotoesAcaoRapida = ({ ag, onAtualizar }) => {
+  const [carregando, setCarregando] = useState(null)
+  const toast = useToast()
+  const podeOperar = ['AGENDADO', 'CONFIRMADO'].includes(ag.status)
+  const presente = clientePresente(ag)
+
+  const acao = async (tipo, endpoint, body = {}) => {
+    setCarregando(tipo)
+    try {
+      await api.patch(endpoint, body)
+      toast(tipo === 'checkin' ? 'Check-in feito!' : (tipo === 'pix' || tipo === 'debito') ? 'Finalizado!' : 'Atualizado!', 'sucesso')
+      onAtualizar()
+    } catch (e) {
+      toast(e?.erro?.mensagem || 'Erro na operação', 'erro')
+    } finally {
+      setCarregando(null)
+    }
+  }
+
+  if (!podeOperar) return null
+
+  return (
+    <div className="flex gap-1.5 mt-2" onClick={(e) => e.stopPropagation()}>
+      {!presente && (
+        <button
+          onClick={() => acao('checkin', `/api/agendamentos/${ag.id}/confirmar-presenca`)}
+          disabled={carregando}
+          className="flex-1 py-1.5 px-2 text-xs font-semibold bg-green-500 hover:bg-green-600 text-white rounded-lg transition-colors disabled:opacity-50 flex items-center justify-center gap-1"
+        >
+          {carregando === 'checkin' ? <Loader2 size={12} className="animate-spin" /> : <CheckCircle2 size={12} />}
+          Chegou
+        </button>
+      )}
+      {presente && (
+        <button
+          onClick={() => acao('pix', `/api/agendamentos/${ag.id}/concluir`, { formaPagamento: 'PIX' })}
+          disabled={carregando}
+          className="flex-1 py-1.5 px-2 text-xs font-semibold bg-primaria hover:bg-primaria-escura text-white rounded-lg transition-colors disabled:opacity-50 flex items-center justify-center gap-1"
+        >
+          {carregando === 'pix' && <Loader2 size={12} className="animate-spin" />}
+          PIX
+        </button>
+      )}
+      {presente && (
+        <button
+          onClick={() => acao('debito', `/api/agendamentos/${ag.id}/concluir`, { formaPagamento: 'DEBITO' })}
+          disabled={carregando}
+          className="flex-1 py-1.5 px-2 text-xs font-semibold bg-yellow-500 hover:bg-yellow-600 text-white rounded-lg transition-colors disabled:opacity-50 flex items-center justify-center gap-1"
+        >
+          {carregando === 'debito' && <Loader2 size={12} className="animate-spin" />}
+          Debito
+        </button>
+      )}
+    </div>
+  )
+}
+
 // Vista de dia
-const GradeDia = ({ dataAtual, agendamentos, onClickAgendamento }) => {
+const GradeDia = ({ dataAtual, agendamentos, onClickAgendamento, onAtualizar }) => {
   const ags = agendamentos.filter((a) => {
     const dt = new Date(a.inicioEm)
     return dt.toDateString() === dataAtual.toDateString()
@@ -1286,25 +1344,29 @@ const GradeDia = ({ dataAtual, agendamentos, onClickAgendamento }) => {
         <div className="space-y-3">
           {ags.map((ag) => {
             const cor = coresPorStatus[ag.status] || coresPorStatus.AGENDADO
+            const podeOperar = ['AGENDADO', 'CONFIRMADO'].includes(ag.status)
             return (
-              <button key={ag.id} onClick={() => onClickAgendamento(ag)} className={cn('w-full text-left p-4 rounded-xl', cor.bg, 'hover:opacity-90 transition-opacity')}>
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex items-start gap-3 min-w-0">
-                    <AvatarPessoa pessoa={ag.cliente} tamanho="sm" className="border border-white/70" />
-                    <div className="min-w-0">
-                      <p className={cn('font-semibold truncate flex items-center gap-1.5', cor.texto)}>
-                        <span className="truncate">{ag.cliente?.nome}</span>
-                        {clientePresente(ag) && <span className="w-2 h-2 rounded-full bg-green-500 shrink-0" />}
-                      </p>
-                      <p className={cn('text-sm truncate', cor.texto, 'opacity-80')}>{ag.servico?.nome} - {ag.profissional?.nome}</p>
-                      {clientePresente(ag) && (
-                        <p className={cn('text-xs mt-1', cor.texto, 'opacity-80')}>Chegou às {formatarHora(ag.presencaConfirmadaEm)}</p>
-                      )}
+              <div key={ag.id} className={cn('w-full text-left p-4 rounded-xl', cor.bg, 'transition-opacity')}>
+                <button onClick={() => onClickAgendamento(ag)} className="w-full text-left hover:opacity-90">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex items-start gap-3 min-w-0">
+                      <AvatarPessoa pessoa={ag.cliente} tamanho="sm" className="border border-white/70" />
+                      <div className="min-w-0">
+                        <p className={cn('font-semibold truncate flex items-center gap-1.5', cor.texto)}>
+                          <span className="truncate">{ag.cliente?.nome}</span>
+                          {clientePresente(ag) && <span className="w-2 h-2 rounded-full bg-green-500 shrink-0" />}
+                        </p>
+                        <p className={cn('text-sm truncate', cor.texto, 'opacity-80')}>{ag.servico?.nome} - {ag.profissional?.nome}</p>
+                        {clientePresente(ag) && (
+                          <p className={cn('text-xs mt-1', cor.texto, 'opacity-80')}>Chegou às {formatarHora(ag.presencaConfirmadaEm)}</p>
+                        )}
+                      </div>
                     </div>
+                    <span className="text-sm font-medium shrink-0">{formatarHora(ag.inicioEm)}</span>
                   </div>
-                  <span className="text-sm font-medium shrink-0">{formatarHora(ag.inicioEm)}</span>
-                </div>
-              </button>
+                </button>
+                {podeOperar && <BotoesAcaoRapida ag={ag} onAtualizar={onAtualizar} />}
+              </div>
             )
           })}
         </div>
@@ -1544,7 +1606,7 @@ const ModalWalkIn = ({ onClose, onSalvar }) => {
     setCarregando(true)
     try {
       let clienteRes = await api.get(`/api/clientes?busca=${form.clienteTelefone}&limite=1`)
-      let clienteId = clienteRes.clientes?.[0]?.id
+      let clienteId = clienteRes?.clientes?.[0]?.id
       if (!clienteId) {
         const novo = await api.post('/api/clientes', {
           nome: form.clienteNome || form.clienteTelefone,
@@ -2305,7 +2367,7 @@ const Agenda = () => {
       onClickAgendamento={setModalDetalhe}
     />
   ) : visao === 'dia' ? (
-    <GradeDia dataAtual={dataAtual} agendamentos={agsFiltrados} onClickAgendamento={setModalDetalhe} />
+    <GradeDia dataAtual={dataAtual} agendamentos={agsFiltrados} onClickAgendamento={setModalDetalhe} onAtualizar={carregarAgendamentos} />
   ) : (
     <GradeMes dataAtual={dataAtual} agendamentos={agsFiltrados} onClickAgendamento={setModalDetalhe} />
   )

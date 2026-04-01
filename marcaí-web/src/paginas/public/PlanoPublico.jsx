@@ -1,8 +1,107 @@
 import { useEffect, useState } from 'react'
 import { useParams } from 'react-router-dom'
-import { CheckCircle2, ChevronRight, Crown, Scissors } from 'lucide-react'
+import { CheckCircle2, ChevronRight, Crown } from 'lucide-react'
 
 const API_URL = import.meta.env.VITE_API_URL ?? ''
+const MARCAI_LOGO = '/logo.svg'
+const PUBLIC_PLAN_STYLES = `
+  @keyframes spin { to { transform: rotate(360deg); } }
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  input[type="text"], input[type="tel"] {
+    background: #1a1a1a;
+    border: 1px solid #333;
+    color: #fff;
+    padding: 12px 14px;
+    border-radius: 10px;
+    width: 100%;
+    font-size: 15px;
+    outline: none;
+    transition: border-color 0.2s;
+    font-family: inherit;
+  }
+  input[type="text"]:focus, input[type="tel"]:focus { border-color: #B8894D; }
+  input::placeholder { color: #555; }
+  .public-plan-shell {
+    max-width: 520px;
+    margin: 0 auto;
+    padding: 0 16px;
+  }
+  .public-plan-header {
+    background: #0a0a0a;
+    border-bottom: 1px solid #222;
+    padding: 16px 20px;
+  }
+  .public-plan-header-shell {
+    max-width: 520px;
+    margin: 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+  .public-plan-logo {
+    width: 124px;
+    max-width: 42vw;
+    height: auto;
+    display: block;
+    object-fit: contain;
+    flex-shrink: 0;
+    filter: drop-shadow(0 10px 24px rgba(0, 0, 0, 0.35));
+  }
+  .public-plan-header-copy {
+    min-width: 0;
+  }
+  .public-plan-kicker {
+    color: #B8894D;
+    font-size: 12px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 6px;
+    font-weight: 600;
+  }
+  .public-plan-card-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
+    margin-bottom: 10px;
+  }
+  .public-plan-actions {
+    display: flex;
+    gap: 10px;
+  }
+  .public-plan-summary-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 6px;
+  }
+  .public-plan-payment-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    margin-bottom: 16px;
+  }
+  @media (max-width: 420px) {
+    .public-plan-header-shell {
+      flex-direction: column;
+      align-items: flex-start;
+    }
+    .public-plan-logo {
+      width: 110px;
+      max-width: 48vw;
+    }
+    .public-plan-card-head,
+    .public-plan-summary-row,
+    .public-plan-actions {
+      flex-direction: column;
+      align-items: stretch;
+    }
+    .public-plan-payment-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+`
 
 const FORMAS_PAGAMENTO = [
   { valor: 'DINHEIRO', label: 'Dinheiro' },
@@ -67,6 +166,30 @@ export default function PlanoPublico() {
     }
   }
 
+  const renderBrandHeader = (subtitle, description) => (
+    <div className="public-plan-header">
+      <div className="public-plan-header-shell">
+        <img
+          src={MARCAI_LOGO}
+          alt="Marcaí Barber"
+          className="public-plan-logo"
+        />
+        <div className="public-plan-header-copy">
+          <p className="public-plan-kicker">
+            <Crown size={12} />
+            {subtitle}
+          </p>
+          <p style={{ color: '#fff', fontWeight: 700, fontSize: 18, lineHeight: 1.2, marginBottom: 4 }}>
+            {tenant?.nome || 'Marcaí Barber'}
+          </p>
+          <p style={{ color: '#888', fontSize: 13, lineHeight: 1.45 }}>
+            {description}
+          </p>
+        </div>
+      </div>
+    </div>
+  )
+
   if (carregando) {
     return (
       <div style={{ minHeight: '100vh', background: '#111111', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -86,66 +209,35 @@ export default function PlanoPublico() {
 
   if (concluido) {
     return (
-      <div style={{ minHeight: '100vh', background: '#111111', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
-        <div style={{ textAlign: 'center', maxWidth: 400 }}>
+      <div style={{ minHeight: '100vh', background: '#111111', padding: '0 0 40px' }}>
+        <style>{PUBLIC_PLAN_STYLES}</style>
+        {renderBrandHeader('Plano Mensal', 'Sua assinatura foi confirmada e agora faz parte da experiência Marcaí.')}
+        <div className="public-plan-shell" style={{ paddingTop: 40 }}>
+          <div style={{ textAlign: 'center', maxWidth: 400, margin: '0 auto' }}>
           <CheckCircle2 size={64} color="#B8894D" style={{ margin: '0 auto 16px' }} />
           <h2 style={{ color: '#ffffff', fontSize: 22, fontWeight: 700, marginBottom: 8 }}>Assinatura Confirmada!</h2>
           <p style={{ color: '#B8894D', fontSize: 15, marginBottom: 12 }}>
             Você está no plano <strong>{planoSelecionado?.nome}</strong>.
           </p>
-          <p style={{ color: '#aaaaaa', fontSize: 14 }}>
+          <p style={{ color: '#aaaaaa', fontSize: 14, lineHeight: 1.6 }}>
             O valor de{' '}
             <strong style={{ color: '#B8894D' }}>{formatarPreco(planoSelecionado?.precoCentavos)}</strong>{' '}
             será cobrado no seu próximo atendimento no salão. Até lá! ✂️
           </p>
         </div>
       </div>
+      </div>
     )
   }
 
   return (
     <div style={{ minHeight: '100vh', background: '#111111', padding: '0 0 40px' }}>
-      <style>{`
-        @keyframes spin { to { transform: rotate(360deg); } }
-        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-        input[type="text"], input[type="tel"] {
-          background: #1a1a1a;
-          border: 1px solid #333;
-          color: #fff;
-          padding: 12px 14px;
-          border-radius: 10px;
-          width: 100%;
-          font-size: 15px;
-          outline: none;
-          transition: border-color 0.2s;
-          font-family: inherit;
-        }
-        input[type="text"]:focus, input[type="tel"]:focus { border-color: #B8894D; }
-        input::placeholder { color: #555; }
-      `}</style>
+      <style>{PUBLIC_PLAN_STYLES}</style>
 
       {/* Header */}
-      <div style={{ background: '#0a0a0a', borderBottom: '1px solid #222', padding: '16px 20px', display: 'flex', alignItems: 'center', gap: 12 }}>
-        {tenant?.logoUrl ? (
-          <img
-            src={tenant.logoUrl}
-            alt={tenant.nome}
-            style={{ width: 40, height: 40, borderRadius: 10, objectFit: 'cover' }}
-          />
-        ) : (
-          <div style={{ width: 40, height: 40, borderRadius: 10, background: '#B8894D22', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <Scissors size={20} color="#B8894D" />
-          </div>
-        )}
-        <div>
-          <p style={{ color: '#fff', fontWeight: 700, fontSize: 16 }}>{tenant?.nome}</p>
-          <p style={{ color: '#B8894D', fontSize: 12, display: 'flex', alignItems: 'center', gap: 4 }}>
-            <Crown size={10} /> Plano Mensal
-          </p>
-        </div>
-      </div>
+      {renderBrandHeader('Plano Mensal', 'Assinatura mensal com créditos para usar quando quiser.')}
 
-      <div style={{ maxWidth: 480, margin: '0 auto', padding: '0 16px' }}>
+      <div className="public-plan-shell">
         {/* Indicador de etapas */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '24px 0 20px' }}>
           {[1, 2, 3].map((s) => (
@@ -199,7 +291,7 @@ export default function PlanoPublico() {
                   transition: 'all 0.15s',
                 }}
               >
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10 }}>
+                <div className="public-plan-card-head">
                   <div>
                     <p style={{ color: '#fff', fontWeight: 700, fontSize: 17 }}>{plano.nome}</p>
                     {plano.descricao && (
@@ -283,7 +375,7 @@ export default function PlanoPublico() {
               />
             </div>
 
-            <div style={{ display: 'flex', gap: 10 }}>
+            <div className="public-plan-actions">
               <button
                 onClick={() => setEtapa(1)}
                 style={{
@@ -336,15 +428,15 @@ export default function PlanoPublico() {
             {/* Resumo */}
             <div style={{ background: '#161616', border: '1px solid #2a2a2a', borderRadius: 14, padding: 16, marginBottom: 16 }}>
               <p style={{ color: '#888', fontSize: 12, marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Resumo</p>
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+              <div className="public-plan-summary-row">
                 <span style={{ color: '#aaa', fontSize: 14 }}>Plano</span>
                 <span style={{ color: '#fff', fontWeight: 600, fontSize: 14 }}>{planoSelecionado?.nome}</span>
               </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+              <div className="public-plan-summary-row">
                 <span style={{ color: '#aaa', fontSize: 14 }}>Nome</span>
                 <span style={{ color: '#fff', fontSize: 14 }}>{nome}</span>
               </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <div className="public-plan-summary-row" style={{ marginBottom: 0 }}>
                 <span style={{ color: '#aaa', fontSize: 14 }}>Valor</span>
                 <span style={{ color: '#B8894D', fontWeight: 700, fontSize: 16 }}>{formatarPreco(planoSelecionado?.precoCentavos)}</span>
               </div>
@@ -352,7 +444,7 @@ export default function PlanoPublico() {
 
             {/* Preferência de pagamento (informativa, não enviada ao backend) */}
             <p style={{ color: '#aaa', fontSize: 13, marginBottom: 10 }}>Como prefere pagar no dia do atendimento?</p>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 16 }}>
+            <div className="public-plan-payment-grid">
               {FORMAS_PAGAMENTO.map((fp) => (
                 <div
                   key={fp.valor}
@@ -406,7 +498,7 @@ export default function PlanoPublico() {
               <p style={{ color: '#ef4444', fontSize: 13, marginBottom: 12, textAlign: 'center' }}>{erro}</p>
             )}
 
-            <div style={{ display: 'flex', gap: 10 }}>
+            <div className="public-plan-actions">
               <button
                 onClick={() => setEtapa(2)}
                 style={{

@@ -5,7 +5,6 @@ import {
   PanelLeftOpen,
   Wifi,
   WifiOff,
-  Sparkles,
   Menu,
   QrCode,
   Loader2,
@@ -28,17 +27,17 @@ const titulos = {
   '/operacao/fidelidade': 'Fidelidade',
   '/operacao/estoque': 'Estoque',
   '/operacao/comanda': 'Comanda Digital',
-  '/operacao/comissoes': 'Comissões',
-  '/operacao/relatorios': 'Relatórios',
+  '/operacao/comissoes': 'Comissoes',
+  '/operacao/relatorios': 'Relatorios',
   '/config/profissionais': 'Profissionais',
-  '/config/horarios': 'Horários',
-  '/config/negocio': 'Meu Negócio',
-  '/config/servicos': 'Serviços',
+  '/config/horarios': 'Horarios',
+  '/config/negocio': 'Meu Negocio',
+  '/config/servicos': 'Servicos',
   '/config/pacotes': 'Pacotes e Combos',
   '/config/recursos': 'Recursos do Sistema',
-  '/config/usuarios': 'Usuários',
-  '/config/integracoes': 'Integrações',
-  '/config/ia': 'Configuração da IA',
+  '/config/usuarios': 'Usuarios',
+  '/config/integracoes': 'Integracoes',
+  '/config/ia': 'Configuracao da IA',
   '/config/teste-ia': 'Teste da IA',
   '/operacao/caixa': 'Caixa',
   '/operacao/lista-espera': 'Lista de Espera',
@@ -46,34 +45,34 @@ const titulos = {
 }
 
 const subtitulos = {
-  '/dashboard': 'Visão geral da operação de hoje',
-  '/dashboard/agenda': 'Visualize e gerencie os horários do dia',
+  '/dashboard': 'Visao geral da operacao de hoje',
+  '/dashboard/agenda': 'Visualize e gerencie os horarios do dia',
   '/dashboard/mensagens': 'Conversas dos clientes via WhatsApp',
-  '/dashboard/agendamentos': 'Todos os agendamentos do seu negócio',
-  '/operacao/clientes': 'Cadastro e histórico dos seus clientes',
+  '/dashboard/agendamentos': 'Todos os agendamentos do seu negocio',
+  '/operacao/clientes': 'Cadastro e historico dos seus clientes',
   '/operacao/planos': 'Planos de assinatura e mensalidades',
   '/operacao/fidelidade': 'Programa de pontos e recompensas',
   '/operacao/estoque': 'Controle de produtos e insumos',
   '/operacao/comanda': 'Adicione produtos e extras ao atendimento do dia',
-  '/operacao/comissoes': 'Comissões e repasses dos profissionais',
-  '/operacao/relatorios': 'Análise financeira e de atendimentos',
-  '/config/profissionais': 'Cadastro e gestão dos profissionais',
-  '/config/horarios': 'Horários de trabalho por profissional',
-  '/config/servicos': 'Serviços avulsos e preços',
-  '/config/pacotes': 'Pacotes e combos de serviços',
-  '/config/negocio': 'Dados e configurações da barbearia',
+  '/operacao/comissoes': 'Comissoes e repasses dos profissionais',
+  '/operacao/relatorios': 'Analise financeira e de atendimentos',
+  '/config/profissionais': 'Cadastro e gestao dos profissionais',
+  '/config/horarios': 'Horarios de trabalho por profissional',
+  '/config/servicos': 'Servicos avulsos e precos',
+  '/config/pacotes': 'Pacotes e combos de servicos',
+  '/config/negocio': 'Dados e configuracoes da barbearia',
   '/config/recursos': 'Ative ou desative funcionalidades do sistema',
-  '/config/usuarios': 'Usuários com acesso ao painel',
-  '/config/integracoes': 'Conecte o WhatsApp e outras integrações',
-  '/config/ia': 'Configurações de comportamento e personalidade da IA',
+  '/config/usuarios': 'Usuarios com acesso ao painel',
+  '/config/integracoes': 'Conecte o WhatsApp e outras integracoes',
+  '/config/ia': 'Configuracoes de comportamento e personalidade da IA',
   '/config/teste-ia': 'Simule conversas para testar a IA',
-  '/operacao/caixa': 'Controle de entradas e saídas financeiras',
+  '/operacao/caixa': 'Controle de entradas e saidas financeiras',
   '/operacao/lista-espera': 'Gerencie a fila de espera dos clientes',
   '/operacao/galeria': 'Fotos dos trabalhos realizados',
 }
 
 const itensNavegacaoMobile = [
-  { label: 'Início', rota: '/dashboard', icone: House },
+  { label: 'Inicio', rota: '/dashboard', icone: House },
   { label: 'Agenda', rota: '/dashboard/agenda', icone: CalendarDays },
   { label: 'Mensagens', rota: '/dashboard/mensagens', icone: MessageSquareMore },
   { label: 'Clientes', rota: '/operacao/clientes', icone: Users },
@@ -127,14 +126,13 @@ const StatusWhatsApp = () => {
   }
 
   const visual = visualPorStatus[status] || visualPorStatus.desconectado
-
   const clicavel = status === 'aguardando_qr' || status === 'desconectado'
 
   return (
     <button
       onClick={clicavel ? () => navigate('/config/integracoes') : undefined}
       className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] md:text-xs font-semibold transition-colors ${visual.classe} ${clicavel ? 'cursor-pointer hover:opacity-80' : 'cursor-default'}`}
-      title={clicavel ? 'Ir para Integrações' : undefined}
+      title={clicavel ? 'Ir para Integracoes' : undefined}
     >
       {visual.icone}
       <span className="hidden sm:inline">{visual.label}</span>
@@ -170,7 +168,7 @@ const LayoutDashboard = () => {
     return () => obs.disconnect()
   }, [])
 
-  const titulo = titulos[location.pathname] || 'Marcaí Barber'
+  const titulo = titulos[location.pathname] || 'Marcai Barber'
   const subtitulo = subtitulos[location.pathname] || ''
 
   useEffect(() => {
@@ -234,7 +232,7 @@ const LayoutDashboard = () => {
   }
 
   return (
-    <div className="flex h-screen bg-fundo overflow-hidden">
+    <div className="flex h-dvh bg-fundo overflow-hidden">
       {menuMobileAberto && (
         <div
           className="fixed inset-0 bg-black/55 z-40 md:hidden"
@@ -273,10 +271,7 @@ const LayoutDashboard = () => {
               </button>
 
               <div className="min-w-0 max-w-2xl">
-                <div className="flex items-center gap-2">
-                  <Sparkles size={14} className="text-primaria shrink-0" />
-                  <h1 className="text-[15px] font-semibold text-texto truncate">{titulo}</h1>
-                </div>
+                <h1 className="text-[15px] font-semibold text-texto truncate">{titulo}</h1>
                 {subtitulo && <p className="text-[11px] text-texto-sec hidden md:block whitespace-nowrap">{subtitulo}</p>}
                 {subtituloCurto && <p className="text-[11px] text-texto-sec md:hidden truncate">{subtituloCurto}</p>}
               </div>
@@ -298,7 +293,7 @@ const LayoutDashboard = () => {
           </div>
         </header>
 
-        <main className="flex-1 overflow-y-auto">
+        <main className="flex-1 min-h-0 overflow-y-auto overscroll-contain">
           <div className="px-3 pb-[calc(5.5rem+env(safe-area-inset-bottom))] pt-3 md:p-6 md:pb-6 animate-fade-in">
             <Outlet />
           </div>
@@ -333,7 +328,6 @@ const LayoutDashboard = () => {
           </button>
         </div>
       </nav>
-
     </div>
   )
 }

@@ -3,12 +3,30 @@ const publicControlador = require('./public.controlador')
 
 const router = Router()
 
-// Rotas públicas — sem autenticação
+const validarIdentificador = (valor) => /^[a-zA-Z0-9\-_]+$/.test(valor || '')
+
+const validarSlug = (req, res, next) => {
+  if (!validarIdentificador(req.params.slug)) {
+    return res.status(400).json({ sucesso: false, erro: { mensagem: 'Identificador invalido' } })
+  }
+  next()
+}
+
+const validarHash = (req, res, next) => {
+  if (!validarIdentificador(req.params.hash)) {
+    return res.status(400).json({ sucesso: false, erro: { mensagem: 'Hash invalido' } })
+  }
+  next()
+}
+
 router.get('/check-in', publicControlador.checkIn)
-router.get('/:slug/info', publicControlador.info)
-router.get('/:slug/slots', publicControlador.slots)
-router.post('/:slug/agendar', publicControlador.agendar)
-router.get('/:slug/planos', publicControlador.planos)
-router.post('/:slug/assinar', publicControlador.assinar)
+router.get('/painel/:slug/:hash', validarSlug, validarHash, publicControlador.painelTv)
+router.get('/:slug/info', validarSlug, publicControlador.info)
+router.get('/:slug/slots', validarSlug, publicControlador.slots)
+router.post('/:slug/agendar', validarSlug, publicControlador.agendar)
+router.get('/:slug/planos', validarSlug, publicControlador.planos)
+router.post('/:slug/assinar', validarSlug, publicControlador.assinar)
+router.get('/:slug/meus-agendamentos', validarSlug, publicControlador.meusAgendamentos)
+router.get('/:slug/verificar-assinatura', validarSlug, publicControlador.verificarAssinatura)
 
 module.exports = router

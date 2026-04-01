@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   Loader2, Plus, Trash2, ChevronRight, ChevronLeft, Check,
@@ -183,6 +183,11 @@ const CICLOS = [
 ]
 
 const calcPreco = (base, desconto) => (base * (1 - desconto)).toFixed(2).replace('.', ',')
+const normalizarCicloCobranca = (ciclo) => ({
+  mensal: 'MENSAL',
+  semestral: 'SEMESTRAL',
+  anual: 'ANUAL',
+}[ciclo] || 'MENSAL')
 
 const Passo2 = ({ planoSelecionado, setPlanoSelecionado, cicloSelecionado, setCicloSelecionado, onProximo, onVoltar }) => {
   return (
@@ -351,8 +356,13 @@ const Passo3 = ({ servicos, setServicos, onProximo, onVoltar, carregando }) => {
 }
 
 // ─── Passo 4: Profissionais ───────────────────────────────────────────────────
-const Passo4 = ({ profissionais, setProfissionais, servicosDisponiveis, onFinalizar, onVoltar, carregando }) => {
-  const adicionar = () => setProfissionais((p) => [...p, { nome: '', email: '', telefone: '', servicos: [] }])
+const Passo4 = ({ planoSelecionado, profissionais, setProfissionais, servicosDisponiveis, onFinalizar, onVoltar, carregando }) => {
+  const limiteProfissionais = planoSelecionado === 'SOLO' ? 1 : Infinity
+  const atingiuLimiteProfissionais = profissionais.length >= limiteProfissionais
+  const adicionar = () => {
+    if (atingiuLimiteProfissionais) return
+    setProfissionais((p) => [...p, { nome: '', email: '', telefone: '', servicos: [] }])
+  }
   const remover = (i) => setProfissionais((p) => p.filter((_, idx) => idx !== i))
   const atualizar = (i, campo, valor) => setProfissionais((p) => p.map((pr, idx) => (idx === i ? { ...pr, [campo]: valor } : pr)))
   const toggleServico = (profIdx, servicoIdx) => {
@@ -418,9 +428,15 @@ const Passo4 = ({ profissionais, setProfissionais, servicosDisponiveis, onFinali
           </div>
         ))}
       </div>
-      <button onClick={adicionar} className="mt-3 w-full border-2 border-dashed border-borda hover:border-primaria rounded-xl py-3 text-sm text-texto-sec inline-flex items-center justify-center gap-2">
-        <Plus size={16} /> Adicionar profissional
-      </button>
+      {planoSelecionado === 'SOLO' && atingiuLimiteProfissionais ? (
+        <div className="mt-3 w-full rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-center text-sm font-medium text-amber-700">
+          Plano Solo permite apenas 1 profissional.
+        </div>
+      ) : (
+        <button onClick={adicionar} className="mt-3 w-full border-2 border-dashed border-borda hover:border-primaria rounded-xl py-3 text-sm text-texto-sec inline-flex items-center justify-center gap-2">
+          <Plus size={16} /> Adicionar profissional
+        </button>
+      )}
       <div className="flex gap-3 mt-6">
         <button onClick={onVoltar} className="flex-1 border border-borda text-texto-sec py-2.5 rounded-lg text-sm inline-flex items-center justify-center gap-1">
           <ChevronLeft size={16} /> Voltar
@@ -449,10 +465,15 @@ const Onboarding = () => {
 
   const [negocio, setNegocio] = useState({ nome: '', segmento: 'BELEZA', telefone: '', cidade: '', estado: '' })
   const [planoSelecionado, setPlanoSelecionado] = useState('SOLO')
-  const [cicloSelecionado, setCicloSelecionado] = useState('mensal')
+  const [cicloSelecionado, setCicloSelecionado] = useState('semestral')
   const [servicos, setServicos] = useState([{ nome: '', duracaoMinutos: 60, precoCentavos: '' }])
   const [profissionais, setProfissionais] = useState([{ nome: '', email: '', telefone: '', servicos: [] }])
   const [servicosCriados, setServicosCriados] = useState([])
+
+  useEffect(() => {
+    if (planoSelecionado !== 'SOLO') return
+    setProfissionais((prev) => prev.slice(0, 1))
+  }, [planoSelecionado])
 
   const salvarNegocio = async () => {
     setCarregando(true)
@@ -472,12 +493,13 @@ const Onboarding = () => {
   const confirmarPlano = async () => {
     setCarregando(true)
     setErro('')
+    const cicloCobranca = normalizarCicloCobranca(cicloSelecionado)
     try {
-      await api.patch('/api/tenants/meu', { planoContratado: planoSelecionado, cicloCobranca: cicloSelecionado })
+      await api.patch('/api/tenants/meu', { planoContratado: planoSelecionado, cicloCobranca })
     } catch {
       // ignora se o backend não suporta o campo — persiste só no localStorage
     } finally {
-      atualizarTenant({ planoContratado: planoSelecionado, cicloCobranca: cicloSelecionado })
+      atualizarTenant({ planoContratado: planoSelecionado, cicloCobranca })
       setCarregando(false)
       setPasso(3)
     }
@@ -510,7 +532,8 @@ const Onboarding = () => {
     setCarregando(true)
     setErro('')
     try {
-      for (const prof of profissionais) {
+      const profissionaisParaSalvar = planoSelecionado === 'SOLO' ? profissionais.slice(0, 1) : profissionais
+      for (const prof of profissionaisParaSalvar) {
         const horarioPadrao = {
           0: { ativo: false },
           1: { ativo: true, inicio: '09:00', fim: '18:00', intervalos: [] },
@@ -587,6 +610,7 @@ const Onboarding = () => {
         )}
         {passo === 4 && (
           <Passo4
+            planoSelecionado={planoSelecionado}
             profissionais={profissionais}
             setProfissionais={setProfissionais}
             servicosDisponiveis={servicosCriados}

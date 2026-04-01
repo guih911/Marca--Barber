@@ -1,5 +1,5 @@
 import * as RadixSelect from '@radix-ui/react-select'
-import { ChevronDown, Check } from 'lucide-react'
+import { ChevronDown, ChevronUp, Check } from 'lucide-react'
 import { cn } from '../../lib/utils'
 
 const Select = RadixSelect.Root
@@ -25,11 +25,29 @@ const SelectTrigger = ({ className, children, ...props }) => (
   </RadixSelect.Trigger>
 )
 
+const SelectScrollUpButton = ({ className, ...props }) => (
+  <RadixSelect.ScrollUpButton
+    className={cn('flex cursor-default items-center justify-center py-1 text-texto-sec', className)}
+    {...props}
+  >
+    <ChevronUp size={14} />
+  </RadixSelect.ScrollUpButton>
+)
+
+const SelectScrollDownButton = ({ className, ...props }) => (
+  <RadixSelect.ScrollDownButton
+    className={cn('flex cursor-default items-center justify-center py-1 text-texto-sec', className)}
+    {...props}
+  >
+    <ChevronDown size={14} />
+  </RadixSelect.ScrollDownButton>
+)
+
 const SelectContent = ({ className, children, position = 'popper', ...props }) => (
   <RadixSelect.Portal>
     <RadixSelect.Content
       className={cn(
-        'relative z-50 min-w-[8rem] overflow-hidden rounded-xl border border-borda bg-white shadow-lg',
+        'relative z-[100] min-w-[8rem] max-h-72 overflow-hidden rounded-xl border border-borda bg-white shadow-lg',
         'data-[state=open]:animate-in data-[state=closed]:animate-out',
         'data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0',
         'data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95',
@@ -38,16 +56,20 @@ const SelectContent = ({ className, children, position = 'popper', ...props }) =
         className
       )}
       position={position}
+      sideOffset={4}
+      avoidCollisions={false}
       {...props}
     >
+      <SelectScrollUpButton />
       <RadixSelect.Viewport
         className={cn(
-          'p-1',
-          position === 'popper' && 'h-[var(--radix-select-trigger-height)] w-full min-w-[var(--radix-select-trigger-width)]'
+          'p-1 max-h-72 overflow-y-auto',
+          position === 'popper' && 'w-full min-w-[var(--radix-select-trigger-width)]'
         )}
       >
         {children}
       </RadixSelect.Viewport>
+      <SelectScrollDownButton />
     </RadixSelect.Content>
   </RadixSelect.Portal>
 )
@@ -91,6 +113,8 @@ export {
   SelectGroup,
   SelectValue,
   SelectTrigger,
+  SelectScrollUpButton,
+  SelectScrollDownButton,
   SelectContent,
   SelectLabel,
   SelectItem,

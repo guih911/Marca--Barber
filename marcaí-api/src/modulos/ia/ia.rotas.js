@@ -6,64 +6,59 @@ const iaControlador = require('./ia.controlador')
 
 const router = Router()
 
-// ─── Webhooks por provedor (públicos, sem autenticação) ───────────────────────
-
 // Meta Cloud API
-// GET  /api/ia/webhook/meta/:tenantId  — verificação do webhook
-// POST /api/ia/webhook/meta/:tenantId  — mensagens recebidas
 router.get('/webhook/meta/:tenantId', iaControlador.verificarWebhookMeta)
 router.post('/webhook/meta/:tenantId', iaControlador.webhookMeta)
 
-// ─── WhatsApp Baileys (requerem autenticação) ────────────────────────────────
-// POST /api/ia/wwebjs/iniciar — inicia sessão e retorna QR Code
+// WhatsApp web / Baileys
 router.post('/wwebjs/iniciar', autenticar, iaControlador.iniciarWWebJS)
-// POST /api/ia/wwebjs/status — verifica status da conexão
 router.post('/wwebjs/status', autenticar, iaControlador.statusWWebJS)
-// POST /api/ia/wwebjs/desconectar — destrói a sessão
 router.post('/wwebjs/desconectar', autenticar, iaControlador.desconectarWWebJS)
 
-// ─── Webhook interno legado (body normalizado) ────────────────────────────────
-// POST /api/ia/webhook
+// Webhook interno
 router.post(
   '/webhook',
   [
-    body('telefone').notEmpty().withMessage('Telefone é obrigatório'),
-    body('mensagem').notEmpty().withMessage('Mensagem é obrigatória'),
+    body('telefone').notEmpty().withMessage('Telefone e obrigatorio'),
+    body('mensagem').notEmpty().withMessage('Mensagem e obrigatoria'),
   ],
   validar,
   iaControlador.webhook
 )
 
-// ─── Simular conversa (painel) ────────────────────────────────────────────────
-// POST /api/ia/simular
+// Simulacao simples do painel
 router.post(
   '/simular',
   autenticar,
-  [body('mensagem').notEmpty().withMessage('Mensagem é obrigatória')],
+  [body('mensagem').notEmpty().withMessage('Mensagem e obrigatoria')],
   validar,
   iaControlador.simular
 )
 
-// ─── Teste real do Don com cliente de teste ────────────────────────────────────
-// POST /api/ia/teste
+// Teste real do Don usando o fluxo completo
 router.post(
   '/teste',
   autenticar,
-  [body('mensagem').notEmpty().withMessage('Mensagem é obrigatória')],
+  [
+    body('mensagem').notEmpty().withMessage('Mensagem e obrigatoria'),
+    body('telefone').optional().isString(),
+    body('nome').optional().isString(),
+    body('lidWhatsapp').optional().isString(),
+  ],
   validar,
   iaControlador.testeCliente
 )
-// POST /api/ia/teste/resetar
-router.post('/teste/resetar', autenticar, iaControlador.resetarTesteCliente)
 
-// ─── Enviar link de agendamento via WhatsApp ──────────────────────────────────
-// POST /api/ia/enviar-link
+router.post('/teste/resetar', autenticar, iaControlador.resetarTesteCliente)
+router.post('/teste/suite', autenticar, iaControlador.suiteTesteCliente)
+
+// Envio de link de agendamento
 router.post(
   '/enviar-link',
   autenticar,
   [
-    body('clienteId').notEmpty().withMessage('clienteId é obrigatório'),
-    body('linkAgendamento').notEmpty().withMessage('linkAgendamento é obrigatório'),
+    body('clienteId').notEmpty().withMessage('clienteId e obrigatorio'),
+    body('linkAgendamento').notEmpty().withMessage('linkAgendamento e obrigatorio'),
   ],
   validar,
   iaControlador.enviarLinkAgendamento

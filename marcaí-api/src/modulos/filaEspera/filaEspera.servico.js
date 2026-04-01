@@ -3,6 +3,13 @@ const whatsappServico = require('../ia/whatsapp.servico')
 const OpenAI = require('openai')
 const configIA = require('../../config/ia')
 
+const normalizarTelefone = (telefone) => {
+  if (!telefone) return null
+  const digitos = String(telefone).replace(/\D/g, '')
+  if (!digitos) return null
+  return digitos.startsWith('55') && digitos.length >= 12 ? digitos : `55${digitos}`
+}
+
 const openai = new OpenAI({ apiKey: configIA.apiKey, baseURL: configIA.baseURL })
 
 /**
@@ -68,7 +75,8 @@ const notificarFilaParaSlot = async (tenantId, { servicoId, profissionalId, data
       },
     })
 
-    if (!entrada || !entrada.cliente?.telefone) return
+    const telNormalizado = normalizarTelefone(entrada?.cliente?.telefone)
+    if (!entrada || !telNormalizado) return
 
     const tenant = entrada.tenant
     const tz = tenant?.timezone || 'America/Sao_Paulo'
@@ -89,7 +97,7 @@ const notificarFilaParaSlot = async (tenantId, { servicoId, profissionalId, data
     if (tenant?.configWhatsApp) {
       await whatsappServico.enviarMensagem(
         tenant.configWhatsApp,
-        entrada.cliente.telefone,
+        telNormalizado,
         mensagem,
         tenantId
       )

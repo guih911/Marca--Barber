@@ -5,7 +5,7 @@ const ferramentas = [
     type: 'function',
     function: {
       name: 'verificarDisponibilidade',
-      description: 'Verifica os horários disponíveis de um profissional para um serviço de barbearia em uma data específica.',
+      description: 'Verifica os horários disponíveis de um profissional para um serviço de barbearia em uma data específica, já respeitando expediente, intervalos, buffer e antecedência mínima prática.',
       parameters: {
         type: 'object',
         properties: {
@@ -34,7 +34,7 @@ const ferramentas = [
     type: 'function',
     function: {
       name: 'verificarDisponibilidadeCombo',
-      description: 'Verifica o melhor encaixe sequencial para dois servicos no mesmo atendimento, como corte + barba, com o mesmo profissional e na mesma data.',
+      description: 'Verifica o melhor encaixe sequencial para dois servicos no mesmo atendimento, como corte + barba, com o mesmo profissional e na mesma data, respeitando expediente, intervalos, buffer e antecedência mínima prática.',
       parameters: {
         type: 'object',
         properties: {
@@ -272,6 +272,20 @@ const ferramentas = [
   {
     type: 'function',
     function: {
+      name: 'resgatarFidelidade',
+      description: 'Resgata os pontos de fidelidade do cliente quando ele atingiu a quantidade necessaria e pede para resgatar (ex: diz "RESGATAR", "quero resgatar", "usar meus pontos"). O proximo agendamento do servico do resgate sera gratuito.',
+      parameters: {
+        type: 'object',
+        properties: {
+          clienteId: { type: 'string', description: 'ID do cliente.' },
+        },
+        required: ['clienteId'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'ativarPlano',
       description: 'Ativa um plano mensal para o cliente diretamente pelo WhatsApp. Use apenas quando o cliente confirmar explicitamente que quer assinar o plano.',
       parameters: {
@@ -282,6 +296,20 @@ const ferramentas = [
           observacoes: { type: 'string', description: 'Observações opcionais sobre a assinatura.' },
         },
         required: ['clienteId', 'planoId'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'verificarCreditosPlano',
+      description: 'Verifica os créditos disponíveis do plano mensal do cliente. SEMPRE use esta ferramenta quando o cliente mencionar "plano", "pelo plano", "meu plano" ou "usar o plano" antes de agendar. Retorna os serviços disponíveis e créditos restantes.',
+      parameters: {
+        type: 'object',
+        properties: {
+          clienteId: { type: 'string', description: 'ID do cliente.' },
+        },
+        required: ['clienteId'],
       },
     },
   },

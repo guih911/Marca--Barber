@@ -48,7 +48,8 @@ const confirmarPresenca = async (req, res, next) => {
 
 const cancelar = async (req, res, next) => {
   try {
-    const ag = await agendamentosServico.cancelar(req.usuario.tenantId, req.params.id, req.body.motivo)
+    // Dashboard pode cancelar sem restrição de antecedência (regra só vale para cliente)
+    const ag = await agendamentosServico.cancelar(req.usuario.tenantId, req.params.id, req.body.motivo, { origem: 'DASHBOARD' })
     res.json({ sucesso: true, dados: ag })
   } catch (erro) {
     next(erro)

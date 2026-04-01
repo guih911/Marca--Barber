@@ -80,9 +80,23 @@ const salvarMensagemNaConversa = async (tenantId, clienteId, mensagem) => {
   }
 }
 
+const normalizarTelefone = (telefone) => {
+  if (!telefone) return null
+  const digitos = String(telefone).replace(/\D/g, '')
+  if (!digitos) return null
+  // Detecta LID do WhatsApp: mais de 13 dígitos sem DDI Brasil → não é telefone real
+  if (!digitos.startsWith('55') && digitos.length > 13) return null
+  const normalizado = digitos.startsWith('55') && digitos.length >= 12 ? digitos : `55${digitos}`
+  // Valida tamanho: telefone BR com DDI = 12 ou 13 dígitos (55 + 10 ou 11)
+  if (normalizado.length < 12 || normalizado.length > 13) return null
+  return normalizado
+}
+
 const enviarWhatsApp = async (tenant, telefone, mensagem) => {
   if (!tenant?.configWhatsApp) return
-  await whatsappServico.enviarMensagem(tenant.configWhatsApp, telefone, mensagem, tenant.id)
+  const telNormalizado = normalizarTelefone(telefone)
+  if (!telNormalizado) return
+  await whatsappServico.enviarMensagem(tenant.configWhatsApp, telNormalizado, mensagem, tenant.id)
 }
 
 const gerarMensagemIA = async (systemPrompt) => {
@@ -142,11 +156,8 @@ const enviarLembretes2h = async () => {
             `• Cliente: ${primeiroNome}\n• Serviço: ${ag.servico.nome}\n` +
             `• Profissional: ${ag.profissional.nome}\n• Horário: ${dataInteligente}\n` +
             `Máximo 3 linhas. NUNCA use * ou **. Use no máximo 1 emoji. Assine: — ${tenant.nome}`
-          ) || (
-            `${primeiroNome}, daqui a pouco!\n` +
-            `Seu ${ag.servico.nome} com ${ag.profissional.nome} é ${dataInteligente}.\n` +
-            `Te esperamos! — ${tenant.nome}`
           )
+          if (!mensagem) continue
 
           await enviarWhatsApp(tenant, ag.cliente.telefone, mensagem)
           await banco.agendamento.update({
@@ -209,10 +220,12 @@ const autoCancelarNaoConfirmados = async () => {
 
           // Notifica cliente
           if (ag.cliente?.telefone) {
-            const msg =
-              `${primeiroNome}, seu agendamento de ${ag.servico.nome} (${dataInteligente}) foi cancelado ` +
-              `pois não recebemos confirmação.\n\nQuer reagendar? Basta responder.\n— ${tenant.nome}`
-            await enviarWhatsApp(tenant, ag.cliente.telefone, msg)
+            const msg = await gerarMensagemIA(
+              `Você é Don, recepcionista da barbearia ${tenant.nome}. Tom: gentil e direto.\n` +
+              `Informe ${primeiroNome} que o agendamento de ${ag.servico.nome} (${dataInteligente}) foi cancelado automaticamente pois não recebemos confirmação.\n` +
+              `Convide a reagendar respondendo nesta conversa. Máximo 3 linhas. NUNCA use * ou **. Use no máximo 1 emoji. Assine: — ${tenant.nome}`
+            )
+            if (msg) await enviarWhatsApp(tenant, ag.cliente.telefone, msg)
           }
 
           // Notifica profissional
@@ -246,8 +259,6 @@ const autoCancelarNaoConfirmados = async () => {
 const enviarLembretesRetorno = async () => {
   try {
     const agora = new Date()
-    const inicioDia = new Date(agora); inicioDia.setHours(0, 0, 0, 0)
-    const fimDia = new Date(agora); fimDia.setHours(23, 59, 59, 999)
 
     const tenants = await banco.tenant.findMany({
       where: { ativo: true, configWhatsApp: { not: null } },
@@ -267,16 +278,21 @@ const enviarLembretesRetorno = async () => {
         include: { cliente: true, servico: true, profissional: true },
       })
 
+      // "Hoje" no timezone do tenant — evita envio no dia errado quando servidor está em UTC
+      const tz = tenant.timezone || 'America/Sao_Paulo'
+      const hojeStr = agora.toLocaleDateString('en-CA', { timeZone: tz })
+
       for (const ag of agendamentos) {
         if (!ag.servico.retornoEmDias || !ag.cliente?.telefone) continue
 
-        // Verifica se hoje é o dia correto para o retorno
-        const dataRetorno = new Date(ag.fimEm)
+        // Data de retorno calculada no timezone do tenant (ALTO 2: era calculada no TZ do servidor)
+        const fimEmStr = new Date(ag.fimEm).toLocaleDateString('en-CA', { timeZone: tz })
+        const [ano, mes, dia] = fimEmStr.split('-').map(Number)
+        const dataRetorno = new Date(ano, mes - 1, dia)
         dataRetorno.setDate(dataRetorno.getDate() + ag.servico.retornoEmDias)
-        dataRetorno.setHours(0, 0, 0, 0)
+        const dataRetornoStr = dataRetorno.toLocaleDateString('en-CA')
 
-        const hojeInicio = new Date(agora); hojeInicio.setHours(0, 0, 0, 0)
-        if (dataRetorno.getTime() !== hojeInicio.getTime()) continue
+        if (dataRetornoStr !== hojeStr) continue
 
         try {
           const primeiroNome = ag.cliente.nome?.split(' ')[0] || 'cliente'
@@ -295,10 +311,8 @@ const enviarLembretesRetorno = async () => {
               `Escreva uma mensagem lembrando que está na hora do retorno de ${ag.servico.nome}.\n` +
               `Cliente: ${primeiroNome}. Serviço foi há ${ag.servico.retornoEmDias} dias.\n` +
               `Sugira agendar. Máximo 3 linhas. NUNCA use * ou **. Use no máximo 1 emoji. Assine: — ${tenant.nome}`
-            ) || (
-              `${primeiroNome}, já faz ${ag.servico.retornoEmDias} dias desde o seu ${ag.servico.nome}.\n` +
-              `Que tal agendar para manter o resultado? Basta responder aqui.\n— ${tenant.nome}`
             )
+            if (!mensagem) continue
           }
 
           await enviarWhatsApp(tenant, ag.cliente.telefone, mensagem)
@@ -380,10 +394,8 @@ const reativarClientesSumidos = async () => {
             `Escreva uma mensagem de reativação para ${primeiroNome}, que não vem à barbearia há mais de 60 dias.\n` +
             `Último serviço: ${ultimoServico}.\n` +
             `Demonstre que sentimos falta, convide a voltar. Máximo 3 linhas. NUNCA use * ou **. Use no máximo 1 emoji. Assine: — ${tenant.nome}`
-          ) || (
-            `${primeiroNome}, sentimos sua falta.\n` +
-            `Faz um tempo que não nos vemos. Que tal agendar um ${ultimoServico}? Basta responder aqui.\n— ${tenant.nome}`
           )
+          if (!mensagem) continue
 
           await enviarWhatsApp(tenant, cliente.telefone, mensagem)
           await banco.cliente.update({
@@ -449,11 +461,8 @@ const enviarParabens = async () => {
             `Escreva uma mensagem de aniversário para ${primeiroNome}.\n` +
             `Inclua parabéns sinceros e ofereça um agendamento especial de aniversário.\n` +
             `Máximo 4 linhas. NUNCA use * ou **. Use no máximo 1 emoji. Assine: — ${tenant.nome}`
-          ) || (
-            `Feliz aniversário, ${primeiroNome}!\n` +
-            `Toda a equipe da ${tenant.nome} deseja um dia incrível.\n` +
-            `Que tal se presentear com um serviço especial hoje? Basta responder aqui.\n— ${tenant.nome}`
           )
+          if (!mensagem) continue
 
           await enviarWhatsApp(tenant, cliente.telefone, mensagem)
           await banco.cliente.update({
@@ -490,9 +499,14 @@ const enviarNpsPosAtendimento = async () => {
         where: {
           tenantId: tenant.id,
           status: 'CONCLUIDO',
-          fimEm: { gte: h2Atras, lte: h1Atras }, // fimEm é estável — não muda após o agendamento
-          feedbackNota: null, // ainda sem avaliação
-          npsEnviadoEm: null, // ainda não enviou NPS — evita duplicata
+          feedbackNota: null,   // ainda sem avaliação
+          npsEnviadoEm: null,   // ainda não enviou NPS — evita duplicata
+          // Usa concluidoEm (quando o barbeiro realmente finalizou) como referência principal.
+          // Fallback para fimEm em agendamentos antigos sem concluidoEm (retrocompatibilidade).
+          OR: [
+            { concluidoEm: { gte: h2Atras, lte: h1Atras } },
+            { concluidoEm: null, fimEm: { gte: h2Atras, lte: h1Atras } },
+          ],
         },
         include: { cliente: true, profissional: { select: { nome: true } }, servico: { select: { nome: true } } },
       })
@@ -501,12 +515,14 @@ const enviarNpsPosAtendimento = async () => {
         if (!ag.cliente?.telefone) continue
         try {
           const primeiroNome = ag.cliente.nome?.split(' ')[0] || 'cliente'
-          const msg =
-            `Olá, ${primeiroNome}.\n\n` +
-            `Espero que tenha gostado do ${ag.servico.nome} com ${ag.profissional.nome}.\n\n` +
-            `Como foi sua experiência? Responda com uma nota de 1 a 5\n` +
-            `(5 = Incrível, 1 = Precisa melhorar)\n\n` +
-            `— ${tenant.nome}`
+          const msg = await gerarMensagemIA(
+            `Você é Don, recepcionista da barbearia ${tenant.nome}. Tom: amigável e natural.\n` +
+            `Escreva uma pesquisa de satisfação pós-atendimento para ${primeiroNome}.\n` +
+            `Serviço: ${ag.servico.nome} com ${ag.profissional.nome}.\n` +
+            `Peça que responda com uma nota de 1 a 5 (5 = Incrível, 1 = Precisa melhorar).\n` +
+            `Máximo 4 linhas. NUNCA use * ou **. Use no máximo 1 emoji. Assine: — ${tenant.nome}`
+          )
+          if (!msg) continue
 
           await enviarWhatsApp(tenant, ag.cliente.telefone, msg)
           await salvarMensagemNaConversa(tenant.id, ag.clienteId, msg)

@@ -2,6 +2,7 @@ const { Router } = require('express')
 const { body } = require('express-validator')
 const passport = require('passport')
 const { google } = require('../../config/auth')
+const { autenticar } = require('../../middlewares/autenticacao')
 const authControlador = require('./auth.controlador')
 const authServico = require('./auth.servico')
 const { validar } = require('../../middlewares/validacao')
@@ -65,6 +66,8 @@ router.post(
   validar,
   authControlador.refresh
 )
+
+router.get('/me', autenticar, authControlador.meuPerfil)
 
 // GET /api/auth/google
 router.get('/google', passport.authenticate('google', { scope: ['profile', 'email'], session: false }))

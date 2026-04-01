@@ -30,13 +30,24 @@ const refresh = async (req, res, next) => {
   }
 }
 
+const meuPerfil = async (req, res, next) => {
+  try {
+    const resultado = await authServico.buscarMeuPerfil({
+      usuarioId: req.usuario.id,
+      tenantId: req.usuario.tenantId,
+    })
+    res.json({ sucesso: true, dados: resultado })
+  } catch (erro) {
+    next(erro)
+  }
+}
+
 const googleCallback = (req, res) => {
-  const { accessToken, refreshToken, usuario } = req.user
+  const { accessToken, refreshToken } = req.user
   const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173'
   const params = new URLSearchParams({
     accessToken,
     refreshToken,
-    onboardingCompleto: usuario.onboardingCompleto,
   })
   res.redirect(`${frontendUrl}/auth/callback?${params}`)
 }
@@ -61,4 +72,4 @@ const redefinirSenha = async (req, res, next) => {
   }
 }
 
-module.exports = { cadastrar, login, refresh, googleCallback, recuperarSenha, redefinirSenha }
+module.exports = { cadastrar, login, refresh, meuPerfil, googleCallback, recuperarSenha, redefinirSenha }

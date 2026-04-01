@@ -1,5 +1,31 @@
 const banco = require('../../config/banco')
 
+const normalizarPlanoContratado = (plano) => {
+  const valor = String(plano || '').trim().toUpperCase()
+  if (!valor) return undefined
+  if (!['SOLO', 'SALAO'].includes(valor)) {
+    throw { status: 400, mensagem: 'Plano contratado invalido.', codigo: 'PLANO_INVALIDO' }
+  }
+  return valor
+}
+
+const normalizarCicloCobranca = (ciclo) => {
+  if (ciclo == null || ciclo === '') return null
+
+  const valor = String(ciclo).trim().toUpperCase()
+  const mapa = {
+    MENSAL: 'MENSAL',
+    SEMESTRAL: 'SEMESTRAL',
+    ANUAL: 'ANUAL',
+  }
+
+  if (!mapa[valor]) {
+    throw { status: 400, mensagem: 'Ciclo de cobranca invalido.', codigo: 'CICLO_INVALIDO' }
+  }
+
+  return mapa[valor]
+}
+
 // Retorna o tenant do usuário logado
 const buscarMeu = async (tenantId) => {
   const tenant = await banco.tenant.findUnique({ where: { id: tenantId } })
@@ -35,8 +61,8 @@ const atualizar = async (tenantId, dados) => {
   if (dados.galeriaAtivo !== undefined) campos.galeriaAtivo = Boolean(dados.galeriaAtivo)
   if (dados.listaEsperaAtivo !== undefined) campos.listaEsperaAtivo = Boolean(dados.listaEsperaAtivo)
   if (dados.caixaAtivo !== undefined) campos.caixaAtivo = Boolean(dados.caixaAtivo)
-  if (dados.planoContratado !== undefined) campos.planoContratado = dados.planoContratado
-  if (dados.cicloCobranca !== undefined) campos.cicloCobranca = dados.cicloCobranca || null
+  if (dados.planoContratado !== undefined) campos.planoContratado = normalizarPlanoContratado(dados.planoContratado)
+  if (dados.cicloCobranca !== undefined) campos.cicloCobranca = normalizarCicloCobranca(dados.cicloCobranca)
 
   // Informações do negócio para IA e clientes
   if (dados.tiposPagamento !== undefined) campos.tiposPagamento = Array.isArray(dados.tiposPagamento) ? dados.tiposPagamento : null

@@ -82,9 +82,9 @@ export const segmentos = [
 ]
 
 export const tomsDeVoz = [
-  { valor: 'FORMAL', label: 'Premium', descricao: 'Tom refinado, profissional e objetivo.' },
-  { valor: 'DESCONTRALIDO', label: 'Direto', descricao: 'Casual, ágil e com energia de barbearia.' },
-  { valor: 'ACOLHEDOR', label: 'Consultivo', descricao: 'Empático, humano e focado em resolver.' },
+  { valor: 'ACOLHEDOR', label: 'Recepcionista humana', descricao: 'Mais calor humano, acolhimento e conversa de recepção bem treinada.' },
+  { valor: 'DESCONTRALIDO', label: 'Híbrido barbearia', descricao: 'Equilibra rapidez com personalidade. Bom padrão para WhatsApp no Brasil.' },
+  { valor: 'FORMAL', label: 'Autoatendimento rápido', descricao: 'Mais direto e operacional, no estilo fluxo rápido de atendimento digital.' },
 ]
 
 export const tiposPlanoServico = [

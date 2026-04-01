@@ -2,6 +2,31 @@ const banco = require('../../config/banco')
 const whatsappServico = require('../ia/whatsapp.servico')
 const filaEsperaServico = require('../filaEspera/filaEspera.servico')
 
+const garantirLimitePlanoSolo = async (tenantId, profissionalIgnoradoId = null) => {
+  const tenant = await banco.tenant.findUnique({
+    where: { id: tenantId },
+    select: { planoContratado: true },
+  })
+
+  if (!tenant || tenant.planoContratado !== 'SOLO') return
+
+  const ativos = await banco.profissional.count({
+    where: {
+      tenantId,
+      ativo: true,
+      ...(profissionalIgnoradoId ? { id: { not: profissionalIgnoradoId } } : {}),
+    },
+  })
+
+  if (ativos >= 1) {
+    throw {
+      status: 409,
+      mensagem: 'Plano Solo permite apenas 1 profissional ativo. Faca upgrade para o plano Salao para adicionar mais profissionais.',
+      codigo: 'LIMITE_PLANO_SOLO',
+    }
+  }
+}
+
 const listar = async (tenantId) => {
   return banco.profissional.findMany({
     where: { tenantId },
@@ -22,6 +47,8 @@ const buscarPorId = async (tenantId, id) => {
 }
 
 const criar = async (tenantId, dados) => {
+  await garantirLimitePlanoSolo(tenantId)
+
   return banco.profissional.create({
     data: {
       tenantId,
@@ -36,7 +63,11 @@ const criar = async (tenantId, dados) => {
 }
 
 const atualizar = async (tenantId, id, dados) => {
-  await verificarPropriedade(tenantId, id)
+  const profissionalAtual = await verificarPropriedade(tenantId, id)
+
+  if (dados.ativo === true && profissionalAtual.ativo === false) {
+    await garantirLimitePlanoSolo(tenantId, id)
+  }
 
   const campos = {}
   if (dados.nome !== undefined) campos.nome = dados.nome

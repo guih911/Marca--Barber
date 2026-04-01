@@ -16,6 +16,20 @@ const configIA = require('../../config/ia')
 const banco = require('../../config/banco')
 const whatsappServico = require('./whatsapp.servico')
 
+// Normaliza telefone para formato E.164 Brasil (ex: 11999999999 → 5511999999999)
+// Retorna null para telefones inválidos ou LIDs do WhatsApp (que não podem receber mensagens diretamente).
+const normalizarTelefone = (telefone) => {
+  if (!telefone) return null
+  const digitos = String(telefone).replace(/\D/g, '')
+  if (!digitos) return null
+  // Detecta LID do WhatsApp: não começa com 55 e tem mais de 13 dígitos (telefones BR têm 12-13 com código)
+  if (!digitos.startsWith('55') && digitos.length > 13) return null
+  const normalizado = digitos.startsWith('55') && digitos.length >= 12 ? digitos : `55${digitos}`
+  // Valida tamanho final: telefone BR com código = 12 ou 13 dígitos (55 + 10 ou 11)
+  if (normalizado.length < 12 || normalizado.length > 13) return null
+  return normalizado
+}
+
 const openai = new OpenAI({ apiKey: configIA.apiKey, baseURL: configIA.baseURL })
 
 // Formata data em pt-BR com timezone
@@ -42,21 +56,47 @@ const formatarDataInteligente = (data, tz) => {
 }
 
 /**
- * Gera mensagem de lembrete personalizada pela IA com base no histórico do cliente.
- * @param {boolean} maisde24h - true se o agendamento é mais de 24h no futuro
+ * Monta mensagem de lembrete com template fixo.
+ * @param {boolean} maisde24h - true → lembrete antecipado (1 dia antes); false → lembrete no dia
  */
-const gerarMensagemLembrete = async (tenant, ag, historicoMensagens, maisde24h = false) => {
+const gerarMensagemLembrete = async (tenant, ag, _historicoMensagens, maisde24h = false) => {
   const tz = tenant.timezone || 'America/Sao_Paulo'
-  const dataFmt = formatarDataInteligente(ag.inicioEm, tz)
-  const primeiroNome = ag.cliente.nome?.split(' ')[0] || 'cliente'
+  const dt = new Date(ag.inicioEm)
+  const dataFmt = dt.toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long', timeZone: tz })
+  const horaFmt = dt.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: tz })
+  const primeiroNome = ag.cliente.nome?.split(' ')[0] || null
+  const saudacao = primeiroNome ? `Olá, ${primeiroNome}! 👋` : `Olá! 👋`
 
-  // Extrai contexto do histórico (últimas 10 msgs de texto do cliente e da IA)
-  const resumoHistorico = historicoMensagens
-    .filter((m) => ['cliente', 'ia'].includes(m.remetente))
-    .slice(-10)
-    .map((m) => `${m.remetente === 'cliente' ? 'Cliente' : 'Don'}: ${m.conteudo}`)
-    .join('\n')
+  if (maisde24h) {
+    // Lembrete 1 dia antes
+    return (
+      `${saudacao}\n\n` +
+      `Aqui é o Don, assistente virtual da ${tenant.nome} 💈\n\n` +
+      `Passando para lembrar do seu horário agendado:\n\n` +
+      `📅 ${dataFmt}\n` +
+      `🕒 ${horaFmt}\n` +
+      `💇 ${ag.servico.nome}\n\n` +
+      `Caso precise reagendar, é só me avisar por aqui 👍\n\n` +
+      `Te esperamos!`
+    )
+  }
 
+  // Lembrete no dia (horas antes)
+  return (
+    `${saudacao}\n\n` +
+    `Seu atendimento na ${tenant.nome} 💈 está confirmado para hoje:\n\n` +
+    `🕒 ${horaFmt}\n` +
+    `💇 ${ag.servico.nome}\n\n` +
+    `Estamos te aguardando!\n\n` +
+    `Qualquer imprevisto, me avise por aqui.`
+  )
+}
+
+/**
+ * Gera mensagem de vencimento de plano mensal personalizada pela IA.
+ */
+const gerarMensagemVencimentoPlano = async (tenant, cliente, nomePlano, valorFmt) => {
+  const primeiroNome = cliente.nome?.split(' ')[0] || 'cliente'
   const tomDescricao = {
     FORMAL: 'elegante e refinada',
     DESCONTRALIDO: 'calorosa e simpática',
@@ -64,51 +104,65 @@ const gerarMensagemLembrete = async (tenant, ag, historicoMensagens, maisde24h =
   }
   const tom = tomDescricao[tenant.tomDeVoz] || 'calorosa e simpática'
 
-  // Para agendamentos com mais de 24h de antecedência, usa emojis numéricos no CTA
-  // para destacar visualmente no WhatsApp e aumentar taxa de resposta
-  const ctaConfirmacao = maisde24h
-    ? 'Responda 1️⃣ para confirmar ou 2️⃣ para cancelar.'
-    : 'Responda 1 para confirmar ou 2 para cancelar.'
-
   const prompt = `Você é Don, recepcionista virtual da barbearia ${tenant.nome}. Tom: ${tom}.
 
-DADOS DO AGENDAMENTO:
-• Cliente: ${ag.cliente.nome} (chame de ${primeiroNome})
-• Serviço: ${ag.servico.nome}
-• Profissional: ${ag.profissional.nome}
-• Data/hora: ${dataFmt}
-• Tipo de lembrete: ${maisde24h ? 'antecipado (>24h antes)' : 'próximo (<24h)'}
+DADOS:
+• Cliente: ${primeiroNome}
+• Plano: ${nomePlano}
+• Valor da renovação: ${valorFmt}
+• Vencimento: amanhã
 
-HISTÓRICO RECENTE:
-${resumoHistorico || '(sem histórico prévio)'}
-
-TAREFA: Escreva UMA mensagem de lembrete personalizada e natural.
+TAREFA: Escreva UMA mensagem lembrando que o plano vence amanhã e que a cobrança é presencialmente no próximo atendimento.
 Regras:
-1. Cumprimente pelo primeiro nome de forma adaptada ao histórico
-2. Lembre o agendamento (serviço, profissional, data/hora)
-3. Use EXATAMENTE este CTA no final: ${ctaConfirmacao}
-4. Máximo 4 linhas. NUNCA use * ou **. Máximo 1 emoji além do CTA.
-5. Tom ${maisde24h ? 'mais casual — há tempo' : 'direto — é breve'}.
-6. Assine como: "— ${tenant.nome}"`
+1. Use o primeiro nome do cliente de forma natural
+2. Mencione o nome do plano e o valor
+3. Deixe claro que o pagamento é feito pessoalmente na barbearia
+4. Máximo 3 linhas. NUNCA use * ou **. Máximo 1 emoji.
+5. Assine como: "— ${tenant.nome}"`
 
   try {
     const resposta = await openai.chat.completions.create({
       model: configIA.modelo,
-      max_tokens: 200,
+      max_tokens: 150,
       messages: [
         { role: 'system', content: prompt },
-        { role: 'user', content: 'Gere a mensagem de lembrete agora.' },
+        { role: 'user', content: 'Gere a mensagem agora.' },
       ],
     })
     return resposta.choices[0].message.content?.trim() || null
   } catch (err) {
-    console.error('[Lembretes] Erro ao gerar mensagem via IA:', err.message)
+    console.error('[Lembretes] Erro ao gerar mensagem de vencimento de plano:', err.message)
     return null
   }
 }
 
+/**
+ * Monta mensagem de confirmação de presença (1h antes) com template fixo.
+ */
+const gerarMensagemConfirmacao1h = async (tenant, ag, _historicoMensagens) => {
+  const tz = tenant.timezone || 'America/Sao_Paulo'
+  const horaFmt = new Date(ag.inicioEm).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: tz })
+  const primeiroNome = ag.cliente.nome?.split(' ')[0] || null
+  const saudacao = primeiroNome ? `Olá, ${primeiroNome}! 👋` : `Olá! 👋`
+
+  return (
+    `${saudacao}\n\n` +
+    `Seu atendimento na ${tenant.nome} 💈 está confirmado para hoje:\n\n` +
+    `🕒 ${horaFmt}\n` +
+    `💇 ${ag.servico.nome}\n\n` +
+    `Estamos te aguardando!\n\n` +
+    `Qualquer imprevisto, me avise por aqui.`
+  )
+}
+
 // ─── Helper: busca/cria conversa e envia mensagem com log ────────────────────
 const enviarMensagemComLog = async (tenant, ag, mensagem, campoMarca, labelLog) => {
+  const telefoneNorm = normalizarTelefone(ag.cliente?.telefone)
+  if (!telefoneNorm) {
+    console.warn(`[${labelLog}] Telefone inválido para cliente ${ag.clienteId} — pulando envio.`)
+    return false
+  }
+
   let conversa = await banco.conversa.findFirst({
     where: { tenantId: tenant.id, clienteId: ag.clienteId },
     orderBy: { atualizadoEm: 'desc' },
@@ -122,13 +176,14 @@ const enviarMensagemComLog = async (tenant, ag, mensagem, campoMarca, labelLog) 
 
   const resultadoEnvio = await whatsappServico.enviarMensagem(
     tenant.configWhatsApp,
-    ag.cliente.telefone,
+    telefoneNorm,
     mensagem,
     tenant.id
   )
 
-  if (resultadoEnvio === null) {
-    console.warn(`[${labelLog}] Envio retornou null para ${ag.cliente.telefone} — WhatsApp possivelmente desconectado.`)
+  // Verifica falha: null (WhatsApp desconectado) OU falsy (undefined/false de Baileys sem retorno explícito)
+  if (!resultadoEnvio) {
+    console.warn(`[${labelLog}] Envio falhou para ${telefoneNorm} — WhatsApp possivelmente desconectado. NÃO marcado como enviado.`)
     return false
   }
 
@@ -167,7 +222,7 @@ const enviarLembretes = async () => {
     // Busca todos os tenants ativos com WhatsApp configurado
     const tenants = await banco.tenant.findMany({
       where: { ativo: true, configWhatsApp: { not: null } },
-      select: { id: true, nome: true, configWhatsApp: true, timezone: true, tomDeVoz: true, lembreteMinutosAntes: true },
+      select: { id: true, nome: true, configWhatsApp: true, timezone: true, tomDeVoz: true, lembreteMinutosAntes: true, membershipsAtivo: true },
     })
 
     for (const tenant of tenants) {
@@ -189,7 +244,8 @@ const enviarLembretes = async () => {
           })
 
           for (const ag of agendamentos) {
-            if (!ag.cliente?.telefone) continue
+            const telefoneNorm = normalizarTelefone(ag.cliente?.telefone)
+            if (!telefoneNorm) continue
 
             // Smart skip: agendamento criado depois que a janela já teria começado
             const inicioJanelaMs = ag.inicioEm.getTime() - minutosAntes * 60 * 1000
@@ -218,22 +274,24 @@ const enviarLembretes = async () => {
                 orderBy: { criadoEm: 'asc' },
               })
 
-              const mensagemIA = await gerarMensagemLembrete(tenant, ag, historicoMensagens, maisde24h)
-
-              const primeiroNome = ag.cliente.nome?.split(' ')[0] || 'cliente'
-              const ctaFallback = maisde24h ? '1️⃣ Confirmar | 2️⃣ Cancelar' : 'Responda 1 para confirmar ou 2 para cancelar'
-              const mensagem = mensagemIA ||
-                `Oi, ${primeiroNome}! Lembrando do seu ${ag.servico.nome} com ${ag.profissional.nome} — ${dataFmt}.\n\n${ctaFallback}\n— ${tenant.nome}`
+              // Toda mensagem gerada pela IA — sem fallback de texto fixo.
+              // Se a IA falhar, o agendamento NÃO é marcado como enviado e será reprocessado.
+              const mensagem = await gerarMensagemLembrete(tenant, ag, historicoMensagens, maisde24h)
+              if (!mensagem) {
+                console.warn(`[Lembretes] IA não gerou mensagem para agendamento ${ag.id} — será reprocessado.`)
+                continue
+              }
 
               const resultadoEnvio = await whatsappServico.enviarMensagem(
                 tenant.configWhatsApp,
-                ag.cliente.telefone,
+                telefoneNorm,
                 mensagem,
                 tenant.id
               )
 
-              if (resultadoEnvio === null) {
-                console.warn(`[Lembretes] Envio retornou null para ${ag.cliente.telefone} — WhatsApp possivelmente desconectado. Será reprocessado.`)
+              // Check robusto: null OU undefined/false de Baileys sem retorno explícito
+              if (!resultadoEnvio) {
+                console.warn(`[Lembretes] Envio falhou para ${telefoneNorm} — WhatsApp possivelmente desconectado. NÃO marcado como enviado.`)
                 continue
               }
 
@@ -251,9 +309,9 @@ const enviarLembretes = async () => {
               })
               await banco.conversa.update({ where: { id: conversa.id }, data: { atualizadoEm: new Date() } })
 
-              console.log(`[Lembretes] Enviado para ${ag.cliente.telefone} — ${ag.servico.nome} em ${dataFmt} (${minutosAntes}min antes)`)
+              console.log(`[Lembretes] Enviado para ${telefoneNorm} — ${ag.servico.nome} em ${dataFmt} (${minutosAntes}min antes)`)
             } catch (errEnvio) {
-              console.error(`[Lembretes] Erro ao enviar para ${ag.cliente.telefone}:`, errEnvio.message)
+              console.error(`[Lembretes] Erro ao enviar para ${telefoneNorm}:`, errEnvio.message)
             }
           }
         }
@@ -278,7 +336,8 @@ const enviarLembretes = async () => {
         })
 
         for (const ag of agendamentosConfirmacao) {
-          if (!ag.cliente?.telefone) continue
+          const telefoneNorm = normalizarTelefone(ag.cliente?.telefone)
+          if (!telefoneNorm) continue
 
           // Só envia se foi criado com mais de 2h de antecedência
           const antecedenciaMs = ag.inicioEm.getTime() - ag.criadoEm.getTime()
@@ -288,25 +347,36 @@ const enviarLembretes = async () => {
           }
 
           // Não envia se o lembrete configurável já vai cobrir o mesmo período (evita mensagem dupla)
-          // Se lembreteMinutosAntes >= 60, o lembrete já cobrirá 1h antes — pula
           if ((tenant.lembreteMinutosAntes ?? 60) >= 60) {
-            console.log(`[Confirmacao1h] Lembrete configurado já cobre 1h antes para agendamento ${ag.id} — pulando para evitar duplicata.`)
+            console.log(`[Confirmacao1h] Lembrete configurado já cobre 1h antes para ${ag.id} — pulando para evitar duplicata.`)
             continue
           }
 
-          const tz = tenant.timezone || 'America/Sao_Paulo'
-          const dataFmt = formatarDataInteligente(ag.inicioEm, tz)
-          const primeiroNome = ag.cliente.nome?.split(' ')[0] || 'cliente'
-
-          const mensagem =
-            `Oi, ${primeiroNome}! Daqui a pouco é o seu ${ag.servico.nome} com ${ag.profissional.nome?.split(' ')[0] || ag.profissional.nome} — ${dataFmt}.\n\n` +
-            `Responda 1 para confirmar ou 2 para cancelar.\n` +
-            `— ${tenant.nome}`
-
           try {
+            let conversa = await banco.conversa.findFirst({
+              where: { tenantId: tenant.id, clienteId: ag.clienteId },
+              orderBy: { atualizadoEm: 'desc' },
+            })
+            if (!conversa) {
+              conversa = await banco.conversa.create({
+                data: { tenantId: tenant.id, clienteId: ag.clienteId, canal: 'WHATSAPP', status: 'ATIVA' },
+              })
+            }
+            const historicoMensagens = await banco.mensagem.findMany({
+              where: { conversaId: conversa.id },
+              orderBy: { criadoEm: 'asc' },
+            })
+
+            // Gerado pela IA — sem texto fixo
+            const mensagem = await gerarMensagemConfirmacao1h(tenant, ag, historicoMensagens)
+            if (!mensagem) {
+              console.warn(`[Confirmacao1h] IA não gerou mensagem para ${ag.id} — será reprocessado.`)
+              continue
+            }
+
             await enviarMensagemComLog(tenant, ag, mensagem, 'lembrete2hEnviadoEm', 'Confirmacao1h')
           } catch (errEnvio) {
-            console.error(`[Confirmacao1h] Erro ao enviar para ${ag.cliente.telefone}:`, errEnvio.message)
+            console.error(`[Confirmacao1h] Erro ao enviar para ${telefoneNorm}:`, errEnvio.message)
           }
         }
 
@@ -334,22 +404,34 @@ const enviarLembretes = async () => {
             })
 
             for (const assinatura of assinaturasFimAmanha) {
-              if (!assinatura.cliente?.telefone || !tenant.configWhatsApp) continue
+              const telefoneNorm = normalizarTelefone(assinatura.cliente?.telefone)
+              if (!telefoneNorm || !tenant.configWhatsApp) continue
               if (!assinatura.planoAssinatura) continue
 
-              const primeiroNome = assinatura.cliente.nome?.split(' ')[0] || 'cliente'
               const valorFmt = `R$${((assinatura.planoAssinatura.precoCentavos || 0) / 100).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`
 
-              const msg =
-                `Oi, ${primeiroNome}! Lembrando que seu plano *${assinatura.planoAssinatura.nome}* vence amanhã. ` +
-                `No próximo atendimento será cobrado *${valorFmt}*. ` +
-                `Qualquer dúvida, fale com a equipe. Até lá! 😊\n— ${tenant.nome}`
+              // Gerado pela IA — sem texto fixo
+              const msg = await gerarMensagemVencimentoPlano(
+                tenant,
+                assinatura.cliente,
+                assinatura.planoAssinatura.nome,
+                valorFmt
+              )
+
+              if (!msg) {
+                console.warn(`[PlanoMensal] IA não gerou mensagem de vencimento para ${telefoneNorm} — pulando.`)
+                continue
+              }
 
               try {
-                await whatsappServico.enviarMensagem(tenant.configWhatsApp, assinatura.cliente.telefone, msg, tenant.id)
-                console.log(`[PlanoMensal] Lembrete vencimento enviado para ${assinatura.cliente.telefone} — plano: ${assinatura.planoAssinatura.nome}`)
+                const resultado = await whatsappServico.enviarMensagem(tenant.configWhatsApp, telefoneNorm, msg, tenant.id)
+                if (!resultado) {
+                  console.warn(`[PlanoMensal] Envio falhou para ${telefoneNorm} — WhatsApp possivelmente desconectado.`)
+                  continue
+                }
+                console.log(`[PlanoMensal] Lembrete vencimento enviado para ${telefoneNorm} — plano: ${assinatura.planoAssinatura.nome}`)
               } catch (errEnvio) {
-                console.warn(`[PlanoMensal] Falha ao enviar lembrete vencimento para ${assinatura.cliente.telefone}:`, errEnvio.message)
+                console.warn(`[PlanoMensal] Falha ao enviar lembrete vencimento para ${telefoneNorm}:`, errEnvio.message)
               }
             }
           } catch (errPlano) {

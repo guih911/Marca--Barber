@@ -429,8 +429,33 @@ const DashboardHome = () => {
 
   return (
     <div className="space-y-4">
+      {/* Card em destaque — Faturamento do dia (visível de longe) */}
+      <div className="bg-gradient-to-br from-emerald-500 to-emerald-600 rounded-3xl p-6 text-white shadow-lg">
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-emerald-100 text-sm font-medium mb-1">Faturamento Hoje</p>
+            <p className="text-4xl md:text-5xl font-bold tracking-tight">
+              {formatarReais(financeiro?.receitaHojeCentavos)}
+            </p>
+            <p className="text-emerald-100 text-sm mt-2">
+              {financeiro?.atendimentosConcluidos ?? 0} atendimento{(financeiro?.atendimentosConcluidos ?? 0) !== 1 ? 's' : ''} · Ticket médio {formatarReais(financeiro?.ticketMedioCentavos)}
+            </p>
+          </div>
+          <div className="hidden sm:flex flex-col items-end gap-1">
+            <div className="bg-white/20 rounded-xl px-4 py-2 text-center">
+              <p className="text-xs text-emerald-100">Hoje</p>
+              <p className="text-lg font-bold">{metricas?.agendamentosHoje ?? 0}</p>
+            </div>
+            <div className="bg-white/20 rounded-xl px-4 py-2 text-center">
+              <p className="text-xs text-emerald-100">Próximo</p>
+              <p className="text-lg font-bold">{metricas?.proximoAgendamento ? formatarHora(metricas.proximoAgendamento.inicioEm) : '—'}</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
       {/* Linha 1 — Métricas primárias (operacional de hoje) */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 md:gap-4">
         <CardMetrica
           titulo="Próximo Horário"
           valor={metricas?.proximoAgendamento ? formatarHora(metricas.proximoAgendamento.inicioEm) : 'Nenhum'}
@@ -452,13 +477,6 @@ const DashboardHome = () => {
           icone={Calendar}
           cor="bg-primaria"
           subtitulo="No dia de hoje"
-        />
-        <CardMetrica
-          titulo="Receita Hoje"
-          valor={formatarReais(financeiro?.receitaHojeCentavos)}
-          icone={DollarSign}
-          cor="bg-emerald-500"
-          subtitulo={`${financeiro?.atendimentosConcluidos ?? 0} ${(financeiro?.atendimentosConcluidos ?? 0) === 1 ? 'atendimento concluído' : 'atendimentos concluídos'}`}
         />
         <CardMetrica
           titulo="Taxa de Confirmação"

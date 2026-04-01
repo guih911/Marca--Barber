@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Loader2, Save, CheckCircle2, Bell, CreditCard, Baby, MapPin, Phone, Star } from 'lucide-react'
+import { Loader2, Save, CheckCircle2, Bell, CreditCard, Baby, MapPin, Phone, Star, MonitorPlay, Copy, ExternalLink, ShieldCheck } from 'lucide-react'
 import api from '../../servicos/api'
 import { segmentos } from '../../lib/utils'
 import { useToast } from '../../contextos/ToastContexto'
@@ -49,6 +49,7 @@ const ConfigNegocio = () => {
   })
 
   const [configWhatsAppAtual, setConfigWhatsAppAtual] = useState({})
+  const [tenantPublico, setTenantPublico] = useState({ slug: '', hashPublico: '', nome: '' })
   const [carregando, setCarregando] = useState(true)
   const [salvando, setSalvando] = useState(false)
   const [sucesso, setSucesso] = useState(false)
@@ -58,6 +59,11 @@ const ConfigNegocio = () => {
       const t = res.dados || {}
       const cfg = t.configWhatsApp || {}
       setConfigWhatsAppAtual(cfg)
+      setTenantPublico({
+        slug: t.slug || '',
+        hashPublico: t.hashPublico || '',
+        nome: t.nome || '',
+      })
       setForm({
         nome: t.nome || '',
         segmento: t.segmento || 'BELEZA',
@@ -67,8 +73,8 @@ const ConfigNegocio = () => {
         timezone: t.timezone || 'America/Sao_Paulo',
         lembreteMinutosAntes: t.lembreteMinutosAntes ?? 60,
         exigirConfirmacaoPresenca: Boolean(t.exigirConfirmacaoPresenca),
-        numeroAdministrador: cfg.numeroAdministrador || '',
-        numeroDono: t.numeroDono || '',
+        numeroAdministrador: aplicarMascaraTelefone(cfg.numeroAdministrador || ''),
+        numeroDono: aplicarMascaraTelefone(t.numeroDono || ''),
         tiposPagamento: Array.isArray(t.tiposPagamento) ? t.tiposPagamento : [],
         cortaCabeloInfantil: Boolean(t.cortaCabeloInfantil),
         idadeMinimaCabeloInfantilMeses: t.idadeMinimaCabeloInfantilMeses != null ? String(t.idadeMinimaCabeloInfantilMeses) : '',
@@ -80,6 +86,27 @@ const ConfigNegocio = () => {
   }, [])
 
   const atualizar = (campo) => (e) => setForm((p) => ({ ...p, [campo]: e.target.value }))
+
+  const aplicarMascaraTelefone = (valor) => {
+    let d = valor.replace(/\D/g, '')
+    // Remove prefixo 55 (código do país) se vier do banco: ex. "5562993050931" → "62993050931"
+    if (d.startsWith('55') && d.length > 11) d = d.slice(2)
+    d = d.slice(0, 11)
+    if (d.length === 0) return ''
+    if (d.length <= 2) return `(${d}`
+    if (d.length <= 7) return `(${d.slice(0, 2)}) ${d.slice(2)}`
+    if (d.length <= 10) return `(${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}`
+    return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7, 11)}`
+  }
+
+  const atualizarTelefone = (campo) => (e) =>
+    setForm((p) => ({ ...p, [campo]: aplicarMascaraTelefone(e.target.value) }))
+
+  // Ao salvar, converte "(62) 99305-0931" → "+556299305093" para uso no WhatsApp
+  const limparTelefone = (v) => {
+    const d = (v || '').replace(/\D/g, '')
+    return d ? `+55${d}` : ''
+  }
 
   const toggleArray = (campo, valor) => {
     setForm((p) => {
@@ -107,9 +134,9 @@ const ConfigNegocio = () => {
         exigirConfirmacaoPresenca: Boolean(form.exigirConfirmacaoPresenca),
         configWhatsApp: {
           ...configWhatsAppAtual,
-          numeroAdministrador: form.numeroAdministrador?.trim() || null,
+          numeroAdministrador: limparTelefone(form.numeroAdministrador) || null,
         },
-        numeroDono: form.numeroDono,
+        numeroDono: limparTelefone(form.numeroDono),
         tiposPagamento: form.tiposPagamento,
         cortaCabeloInfantil: form.cortaCabeloInfantil,
         idadeMinimaCabeloInfantilMeses: form.idadeMinimaCabeloInfantilMeses !== '' ? Number(form.idadeMinimaCabeloInfantilMeses) : null,
@@ -120,6 +147,11 @@ const ConfigNegocio = () => {
       const resposta = await api.patch('/api/tenants/meu', corpo)
       const tenantAtualizado = resposta.dados || corpo
       setConfigWhatsAppAtual(tenantAtualizado.configWhatsApp || corpo.configWhatsApp)
+      setTenantPublico((anterior) => ({
+        slug: tenantAtualizado.slug || anterior.slug,
+        hashPublico: tenantAtualizado.hashPublico || anterior.hashPublico,
+        nome: tenantAtualizado.nome || corpo.nome || anterior.nome,
+      }))
       atualizarTenant(tenantAtualizado)
       setSucesso(true)
       setTimeout(() => setSucesso(false), 3000)
@@ -152,6 +184,32 @@ const ConfigNegocio = () => {
     const anos = Math.floor(m / 12)
     const resto = m % 12
     return resto > 0 ? `${anos} ano${anos !== 1 ? 's' : ''} e ${resto} mes${resto !== 1 ? 'es' : ''}` : `${anos} ano${anos !== 1 ? 's' : ''}`
+  }
+
+  const linkPainelTv = tenantPublico.slug && tenantPublico.hashPublico && typeof window !== 'undefined'
+    ? `${window.location.origin}/painel/${tenantPublico.slug}/${tenantPublico.hashPublico}`
+    : ''
+
+  const copiarLinkPainelTv = async () => {
+    if (!linkPainelTv) {
+      toast('O link do painel ainda não está disponível.', 'aviso')
+      return
+    }
+
+    try {
+      await navigator.clipboard.writeText(linkPainelTv)
+      toast('Link do painel copiado!', 'sucesso')
+    } catch {
+      toast('Não foi possível copiar o link do painel.', 'erro')
+    }
+  }
+
+  const abrirPainelTv = () => {
+    if (!linkPainelTv) {
+      toast('O link do painel ainda não está disponível.', 'aviso')
+      return
+    }
+    window.open(linkPainelTv, '_blank', 'noopener,noreferrer')
   }
 
   return (
@@ -207,6 +265,58 @@ const ConfigNegocio = () => {
                 <SelectItem value="America/Fortaleza">America/Fortaleza (BRT)</SelectItem>
               </SelectContent>
             </Select>
+          </div>
+        </div>
+
+        <div className="rounded-2xl border border-[#d8c2a2] bg-[linear-gradient(135deg,#fff9f2,#f6ede2)] p-6 shadow-sm space-y-4">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <div className="inline-flex items-center gap-2 rounded-full bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#9a6a2d] shadow-sm">
+                <MonitorPlay size={14} />
+                Painel TV
+              </div>
+              <h2 className="mt-3 text-base font-semibold text-texto">Link ao vivo da sua barbearia</h2>
+              <p className="mt-1 text-sm text-texto-sec">
+                Use este painel em uma TV ou monitor grande para acompanhar agenda do dia, proximos horarios e movimentacoes em tempo real.
+              </p>
+            </div>
+            <div className="hidden h-12 w-12 items-center justify-center rounded-2xl bg-[#b8894d]/10 text-[#9a6a2d] sm:flex">
+              <MonitorPlay size={22} />
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-white bg-white/80 p-4 shadow-sm">
+            <p className="text-xs font-medium uppercase tracking-[0.18em] text-[#9a6a2d]">URL do painel</p>
+            <p className="mt-2 break-all rounded-xl bg-[#1a1714] px-4 py-3 font-mono text-sm text-[#f6e7cf]">
+              {linkPainelTv || 'O link ficara disponivel assim que o hash publico estiver pronto.'}
+            </p>
+            <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-texto-sec">
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-[#eadbc7] bg-[#fff8ef] px-3 py-1.5">
+                <ShieldCheck size={14} className="text-[#9a6a2d]" />
+                Hash unico: {tenantPublico.hashPublico || 'gerando...'}
+              </span>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap gap-3">
+            <button
+              type="button"
+              onClick={copiarLinkPainelTv}
+              disabled={!linkPainelTv}
+              className="inline-flex items-center gap-2 rounded-xl bg-primaria px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-primaria-escura disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <Copy size={16} />
+              Copiar link
+            </button>
+            <button
+              type="button"
+              onClick={abrirPainelTv}
+              disabled={!linkPainelTv}
+              className="inline-flex items-center gap-2 rounded-xl border border-[#d8c2a2] bg-white px-4 py-2.5 text-sm font-medium text-texto transition-colors hover:bg-[#fff8ef] disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <ExternalLink size={16} />
+              Abrir painel
+            </button>
           </div>
         </div>
 
@@ -307,8 +417,8 @@ const ConfigNegocio = () => {
             <input
               type="tel"
               value={form.numeroDono}
-              onChange={atualizar('numeroDono')}
-              placeholder="+5511999999999"
+              onChange={atualizarTelefone('numeroDono')}
+              placeholder="(11) 99999-0000"
               className="w-full px-4 py-2.5 rounded-lg border border-borda focus:outline-none focus:ring-2 focus:ring-primaria/30 focus:border-primaria text-sm"
             />
             <p className="text-xs text-texto-sec mt-1">A IA envia esse número quando o cliente pedir para falar com o dono.</p>
@@ -317,8 +427,8 @@ const ConfigNegocio = () => {
           <div className="border-t border-borda pt-4">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm font-medium text-texto">Apresentação automática do salão</p>
-                <p className="text-xs text-texto-sec mt-0.5">Na primeira visita, a IA apresenta a equipe, serviços e diferenciais — só 1 vez, não vira spam.</p>
+                <p className="text-sm font-medium text-texto">Card de boas-vindas</p>
+                <p className="text-xs text-texto-sec mt-0.5">Na 1ª mensagem de cada conversa, envia automaticamente horários, diferenciais e link de agendamento.</p>
               </div>
               <button
                 type="button"
@@ -331,7 +441,16 @@ const ConfigNegocio = () => {
           </div>
 
           <div className="border-t border-borda pt-4">
-            {campo('Número administrador (WhatsApp)', 'numeroAdministrador', 'tel', '+5511999999999')}
+            <div>
+              <label className="block text-sm font-medium text-texto mb-1.5">Número administrador (WhatsApp)</label>
+              <input
+                type="tel"
+                value={form.numeroAdministrador}
+                onChange={atualizarTelefone('numeroAdministrador')}
+                placeholder="(11) 99999-0000"
+                className="w-full px-4 py-2.5 rounded-lg border border-borda focus:outline-none focus:ring-2 focus:ring-primaria/30 focus:border-primaria text-sm"
+              />
+            </div>
             <p className="text-xs text-texto-sec mt-1">Número que recebe alertas e notificações do sistema.</p>
           </div>
         </div>

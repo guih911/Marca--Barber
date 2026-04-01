@@ -3,6 +3,15 @@ import { Link, useNavigate } from 'react-router-dom'
 import { Eye, EyeOff, Loader2 } from 'lucide-react'
 import LayoutAuth from '../../componentes/layout/LayoutAuth'
 import useAuth from '../../hooks/useAuth'
+import { useToast } from '../../contextos/ToastContexto'
+
+const obterMensagemErroLogin = (erro) => {
+  if (erro?.erro?.codigo === 'CREDENCIAIS_INVALIDAS') {
+    return 'E-mail ou senha incorretos. Verifique os dados e tente novamente.'
+  }
+
+  return erro?.erro?.mensagem || 'Erro ao fazer login. Tente novamente.'
+}
 
 const Login = () => {
   const [email, setEmail] = useState('')
@@ -11,6 +20,7 @@ const Login = () => {
   const [carregando, setCarregando] = useState(false)
   const [erro, setErro] = useState('')
   const { login } = useAuth()
+  const toast = useToast()
   const navigate = useNavigate()
 
   const handleSubmit = async (e) => {
@@ -18,7 +28,7 @@ const Login = () => {
     setErro('')
 
     if (!email || !senha) {
-      setErro('Preencha todos os campos')
+      setErro('Preencha todos os campos.')
       return
     }
 
@@ -31,7 +41,15 @@ const Login = () => {
         navigate('/dashboard')
       }
     } catch (e) {
-      setErro(e?.erro?.mensagem || 'Erro ao fazer login. Tente novamente.')
+      const mensagem = obterMensagemErroLogin(e)
+
+      if (e?.erro?.codigo === 'CREDENCIAIS_INVALIDAS') {
+        setErro('')
+        toast(mensagem, 'erro')
+        return
+      }
+
+      setErro(mensagem)
     } finally {
       setCarregando(false)
     }
@@ -47,8 +65,9 @@ const Login = () => {
       <form onSubmit={handleSubmit} className="space-y-5">
         {/* Campo email */}
         <div>
-          <label className="block text-sm font-medium text-texto mb-1.5">E-mail</label>
+          <label htmlFor="login-email" className="block text-sm font-medium text-texto mb-1.5">E-mail</label>
           <input
+            id="login-email"
             type="email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
@@ -59,9 +78,10 @@ const Login = () => {
 
         {/* Campo senha */}
         <div>
-          <label className="block text-sm font-medium text-texto mb-1.5">Senha</label>
+          <label htmlFor="login-senha" className="block text-sm font-medium text-texto mb-1.5">Senha</label>
           <div className="relative">
             <input
+              id="login-senha"
               type={mostrarSenha ? 'text' : 'password'}
               value={senha}
               onChange={(e) => setSenha(e.target.value)}
@@ -78,12 +98,8 @@ const Login = () => {
           </div>
         </div>
 
-        {/* Lembrar + Esqueceu */}
-        <div className="flex items-center justify-between">
-          <label className="flex items-center gap-2 cursor-pointer">
-            <input type="checkbox" className="w-4 h-4 rounded border-borda accent-primaria" />
-            <span className="text-sm text-texto-sec">Lembrar de mim</span>
-          </label>
+        {/* Recuperação de senha */}
+        <div className="flex justify-end">
           <Link to="/recuperar-senha" className="text-sm text-primaria hover:text-primaria-escura transition-colors">
             Esqueceu a senha?
           </Link>

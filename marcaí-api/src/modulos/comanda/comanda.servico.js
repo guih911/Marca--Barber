@@ -76,7 +76,15 @@ const enviarReciboWhatsApp = async (tenantId, agendamentoId) => {
     select: { configWhatsApp: true, nome: true, comandaAtivo: true },
   })
 
-  if (!tenant?.comandaAtivo || !tenant?.configWhatsApp || !ag.cliente?.telefone) return
+  if (!tenant?.comandaAtivo) {
+    throw { status: 403, mensagem: 'Módulo Comanda não está ativo', codigo: 'RECURSO_INATIVO' }
+  }
+  if (!tenant?.configWhatsApp) {
+    throw { status: 422, mensagem: 'WhatsApp não está conectado. Conecte em Configurações > Integrações.', codigo: 'WHATSAPP_NAO_CONFIGURADO' }
+  }
+  if (!ag.cliente?.telefone) {
+    throw { status: 400, mensagem: 'Cliente não possui telefone cadastrado', codigo: 'CLIENTE_SEM_TELEFONE' }
+  }
 
   const totalCentavos = calcularTotal(ag)
   const primeiroNome = ag.cliente.nome?.split(' ')[0] || 'cliente'

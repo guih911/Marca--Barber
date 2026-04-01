@@ -46,22 +46,46 @@ const normalizarNumero = (telefone = '') => String(telefone || '').replace(/\D/g
  * @returns {string|null} - Número real (ex: "5562993050931") ou null
  */
 const resolverLIDParaTelefone = async (sock, lid) => {
+  const lidUser = lid.replace('@lid', '')
+
+  // Tentativa 1: USyncQuery (protocolo nativo do WhatsApp para LID → número)
   try {
-    const lidUser = lid.replace('@lid', '')
     const query = new USyncQuery()
       .withContactProtocol(new USyncContactProtocol())
       .withUser(new USyncUser().withLid(lidUser))
 
     const result = await sock.executeUSyncQuery(query)
-    if (result?.list?.[0]?.id) {
-      const phoneJid = result.list[0].id
-      const phone = phoneJid.replace('@s.whatsapp.net', '')
-      console.log(`[Baileys] LID resolvido: ${lidUser} → ${phone}`)
-      return phone
+    const item = result?.list?.[0]
+    // A estrutura do resultado pode variar entre versões do Baileys
+    const phoneJid = item?.id || item?.phone || item?.contact?.id
+    if (phoneJid) {
+      // Remove sufixo @s.whatsapp.net e dispositivo (ex: :4)
+      const phone = String(phoneJid).replace('@s.whatsapp.net', '').replace(/:.*/, '')
+      if (/^\d{10,15}$/.test(phone)) {
+        console.log(`[Baileys] LID resolvido via USync: ${lidUser} → ${phone}`)
+        return phone
+      }
     }
   } catch (err) {
-    console.error(`[Baileys] Erro ao resolver LID ${lid}:`, err.message)
+    console.warn(`[Baileys] USync falhou para ${lid}: ${err.message}`)
   }
+
+  // Tentativa 2: sock.contacts (cache interno do Baileys populado por contacts.upsert)
+  try {
+    const contacts = sock?.contacts || {}
+    for (const [jid, contact] of Object.entries(contacts)) {
+      if (!jid.endsWith('@s.whatsapp.net')) continue
+      const cLid = String(contact.lid || '').replace('@lid', '')
+      if (cLid === lidUser) {
+        const phone = jid.replace('@s.whatsapp.net', '').replace(/:.*/, '')
+        if (/^\d{10,15}$/.test(phone)) {
+          console.log(`[Baileys] LID resolvido via sock.contacts: ${lidUser} → ${phone}`)
+          return phone
+        }
+      }
+    }
+  } catch {}
+
   return null
 }
 
@@ -109,28 +133,28 @@ const iniciarSessao = async (tenantId, onMensagem) => {
     sessao.sock = sock
 
     // Mapeia LIDs → números reais via contatos
-    sock.ev.on('contacts.upsert', (contacts) => {
-      for (const c of contacts) {
-        if (c.lid && c.id?.endsWith('@s.whatsapp.net')) {
-          const lid = c.lid.replace('@lid', '')
-          const phone = c.id.replace('@s.whatsapp.net', '')
-          lidToPhone.set(`${tenantId}:${lid}`, phone)
-          jidMap.set(`${tenantId}:${phone}`, c.lid)
-          console.log(`[Baileys] LID mapeado: ${lid} → ${phone}`)
+    const processarContatoLID = (c) => {
+      // Formato padrão: c.lid = "215139643039792@lid", c.id = "5562993050931@s.whatsapp.net"
+      const lidJid = c.lid || c.lidJid || c.linkedId
+      const phoneJid = c.id || c.jid || c.phoneJid
+      if (!lidJid || !phoneJid) return
+      if (!String(phoneJid).endsWith('@s.whatsapp.net')) return
+      const lid = String(lidJid).replace('@lid', '').replace(/:.*/, '')
+      const phone = String(phoneJid).replace('@s.whatsapp.net', '').replace(/:.*/, '')
+      if (!/^\d{10,15}$/.test(phone) || !/^\d+$/.test(lid)) return
+      if (lidToPhone.get(`${tenantId}:${lid}`) !== phone) {
+        lidToPhone.set(`${tenantId}:${lid}`, phone)
+        jidMap.set(`${tenantId}:${phone}`, lidJid)
+        // Também indexa o LID com prefixo 55 para lookups de lembretes/automações
+        if (!lid.startsWith('55')) {
+          jidMap.set(`${tenantId}:55${lid}`, lidJid)
         }
+        console.log(`[Baileys] LID mapeado: ${lid} → ${phone}`)
       }
-    })
+    }
 
-    sock.ev.on('contacts.update', (contacts) => {
-      for (const c of contacts) {
-        if (c.lid && c.id?.endsWith('@s.whatsapp.net')) {
-          const lid = c.lid.replace('@lid', '')
-          const phone = c.id.replace('@s.whatsapp.net', '')
-          lidToPhone.set(`${tenantId}:${lid}`, phone)
-          jidMap.set(`${tenantId}:${phone}`, c.lid)
-        }
-      }
-    })
+    sock.ev.on('contacts.upsert', (contacts) => { contacts.forEach(processarContatoLID) })
+    sock.ev.on('contacts.update', (contacts) => { contacts.forEach(processarContatoLID) })
 
     // Salva credenciais quando atualizadas
     sock.ev.on('creds.update', saveCreds)
@@ -191,7 +215,15 @@ const iniciarSessao = async (tenantId, onMensagem) => {
           || msg.message?.imageMessage?.caption
           || msg.message?.videoMessage?.caption
           || ''
-        if (!texto) continue
+
+        // Mensagens de mídia sem legenda — envia marcador para a IA responder adequadamente
+        const ehAudio = !!(msg.message?.audioMessage || msg.message?.pttMessage)
+        const ehFigurinha = !!msg.message?.stickerMessage
+        const ehDocumento = !!(msg.message?.documentMessage || msg.message?.documentWithCaptionMessage)
+
+        if (!texto && !ehAudio && !ehFigurinha && !ehDocumento) continue
+
+        const textoFinal = texto || (ehAudio ? '[ÁUDIO]' : ehFigurinha ? '[FIGURINHA]' : '[DOCUMENTO]')
 
         const jid = msg.key.remoteJid
         const nome = msg.pushName || ''
@@ -204,19 +236,38 @@ const iniciarSessao = async (tenantId, onMensagem) => {
         } else if (jid.endsWith('@lid')) {
           const lidId = jid.replace('@lid', '')
           lidOriginal = lidId
-          // 1. Cache local
-          const mapeado = lidToPhone.get(`${tenantId}:${lidId}`)
-          if (mapeado) {
-            numero = mapeado
-          } else {
-            // 2. Resolve via USync (protocolo real do WhatsApp)
-            const resolved = await resolverLIDParaTelefone(sock, jid)
-            if (resolved) {
-              numero = resolved
-              lidToPhone.set(`${tenantId}:${lidId}`, numero)
+
+          // 0. senderPn (Baileys v7+) — campo mais direto: número real no próprio evento
+          const senderPn = msg.key?.senderPn
+            ? String(msg.key.senderPn).replace('@s.whatsapp.net', '').replace(/:.*/, '')
+            : null
+          if (senderPn && /^\d{10,15}$/.test(senderPn)) {
+            numero = senderPn
+            lidToPhone.set(`${tenantId}:${lidId}`, numero)
+            console.log(`[Baileys] LID resolvido via senderPn: ${lidId} → ${numero}`)
+          }
+
+          if (!numero) {
+            // 1. Cache local
+            const mapeado = lidToPhone.get(`${tenantId}:${lidId}`)
+            if (mapeado) {
+              numero = mapeado
             } else {
-              // 3. Último recurso: usa LID como identificador
-              numero = lidId
+              // 2. Resolve via USync com até 3 tentativas (contacts.upsert pode chegar logo depois)
+              for (let tentativa = 0; tentativa < 3; tentativa++) {
+                if (tentativa > 0) await new Promise((r) => setTimeout(r, 1200))
+                // Re-verifica cache (contacts.upsert pode ter chegado no intervalo)
+                const cached = lidToPhone.get(`${tenantId}:${lidId}`)
+                if (cached) { numero = cached; break }
+                const resolved = await resolverLIDParaTelefone(sock, jid)
+                if (resolved) {
+                  numero = resolved
+                  lidToPhone.set(`${tenantId}:${lidId}`, numero)
+                  break
+                }
+              }
+              // 3. Último recurso: usa LID como identificador temporário
+              if (!numero) numero = lidId
             }
           }
         } else {
@@ -226,22 +277,26 @@ const iniciarSessao = async (tenantId, onMensagem) => {
         const telefone = numero ? `+${numero}` : ''
         if (!telefone) continue
 
-        console.log(`[Baileys] Mensagem de ${telefone} (${jid}): "${texto.substring(0, 50)}" — tenant ${tenantId}`)
+        console.log(`[Baileys] Mensagem de ${telefone} (${jid}): "${textoFinal.substring(0, 50)}" — tenant ${tenantId}`)
 
         // Salva mapeamento número → JID para envio
         jidMap.set(`${tenantId}:${numero}`, jid)
+        // Se o número não tem prefixo 55 (LID ou número sem código), indexa também com 55 para lookups de lembretes
+        if (!numero.startsWith('55')) {
+          jidMap.set(`${tenantId}:55${numero}`, jid)
+        }
 
         // Debounce: acumula mensagens rápidas
         const pendingKey = `${tenantId}:${jid}`
         const existing = pendingMessages.get(pendingKey) || { texts: [], meta: {} }
 
         clearTimeout(existing.timeout)
-        existing.texts.push(texto)
+        existing.texts.push(textoFinal)
         existing.meta = { telefone, nome, lidOriginal }
 
         existing.timeout = setTimeout(async () => {
           pendingMessages.delete(pendingKey)
-          const textoFinal = existing.texts.join('\n')
+          const textoParaEnviar = existing.texts.join('\n')
           const cb = sessoes.get(tenantId)?.onMensagem
 
           // Foto de perfil (melhor esforço)
@@ -252,7 +307,7 @@ const iniciarSessao = async (tenantId, onMensagem) => {
 
           if (cb) {
             try {
-              await cb(existing.meta.telefone, textoFinal, existing.meta.nome, fotoPerfil, existing.meta.lidOriginal)
+              await cb(existing.meta.telefone, textoParaEnviar, existing.meta.nome, fotoPerfil, existing.meta.lidOriginal)
             } catch (err) {
               console.error(`[Baileys] Erro ao processar mensagem:`, err.message)
             }
@@ -298,8 +353,13 @@ const obterNumeroConectado = (tenantId) => {
 
 /**
  * Envia mensagem de texto via sessão do tenant.
+ * @param {string} tenantId
+ * @param {string} para - Número do destinatário (qualquer formato)
+ * @param {string} texto - Texto da mensagem
+ * @param {string} [lidJid] - JID LID opcional (ex: "215139643039792@lid") para usuários LID
+ *   Usado como fallback quando o jidMap não tem entrada (ex: após restart do servidor).
  */
-const enviarMensagem = async (tenantId, para, texto) => {
+const enviarMensagem = async (tenantId, para, texto, lidJid = null) => {
   const sessao = sessoes.get(tenantId)
   if (!sessao || sessao.status !== STATUS.CONECTADO || !sessao.sock) {
     throw new Error('WhatsApp não está conectado. Escaneie o QR Code primeiro.')
@@ -307,9 +367,21 @@ const enviarMensagem = async (tenantId, para, texto) => {
 
   const numero = normalizarNumero(para)
 
-  // Usa JID real mapeado (pode ser @lid) ou fallback para @s.whatsapp.net
-  const jidReal = jidMap.get(`${tenantId}:${numero}`) || `${numero}@s.whatsapp.net`
+  // Prioridade: 1) jidMap (populado quando cliente envia mensagem), 2) lidJid (vem do banco),
+  // 3) fallback @s.whatsapp.net (funciona para contas não-LID)
+  let jidReal = jidMap.get(`${tenantId}:${numero}`)
+  if (!jidReal && lidJid) {
+    // Normaliza: aceita só o número LID ou o JID completo
+    jidReal = lidJid.includes('@') ? lidJid : `${lidJid}@lid`
+    // Também popula o jidMap para próximas chamadas desta sessão
+    jidMap.set(`${tenantId}:${numero}`, jidReal)
+    console.log(`[Baileys] JID resolvido via lidJid do banco: ${numero} → ${jidReal}`)
+  }
+  if (!jidReal) {
+    jidReal = `${numero}@s.whatsapp.net`
+  }
 
+  console.log(`[Baileys] Enviando para ${jidReal} — tenant ${tenantId}`)
   return await sessao.sock.sendMessage(jidReal, { text: texto })
 }
 

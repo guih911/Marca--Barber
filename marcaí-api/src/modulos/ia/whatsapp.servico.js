@@ -39,9 +39,9 @@ const enviarMeta = async (config, para, texto) => {
 
 // ─── whatsapp-web.js (QR Code via Chromium) ──────────────────────────────────
 const enviarWWebJS = async (config, para, texto) => {
-  const { tenantId } = config
+  const { tenantId, lidJid } = config
   if (!tenantId) throw new Error('whatsapp-web.js: tenantId é obrigatório para envio')
-  return wwebjsManager.enviarMensagem(tenantId, para, texto)
+  return wwebjsManager.enviarMensagem(tenantId, para, texto, lidJid || null)
 }
 
 const obterFotoPerfilWWebJS = async (config, para) => {
@@ -54,11 +54,12 @@ const obterFotoPerfilWWebJS = async (config, para) => {
 /**
  * Envia mensagem usando o provedor configurado no tenant.
  * @param {Object} configWhatsApp - Objeto armazenado em Tenant.configWhatsApp
- * @param {string} para - Número de destino (E.164, ex: +5511999999999)
+ * @param {string} para - Número de destino (ex: +5511999999999 ou 5511999999999)
  * @param {string} texto - Texto da mensagem
  * @param {string} [tenantId] - Necessário para o provedor wwebjs
+ * @param {string} [lidJid] - JID LID do cliente (ex: "215139643039792@lid") para garantir entrega a usuários LID
  */
-const enviarMensagem = async (configWhatsApp, para, texto, tenantId) => {
+const enviarMensagem = async (configWhatsApp, para, texto, tenantId, lidJid = null) => {
   if (!configWhatsApp || !configWhatsApp.provedor) {
     console.warn('[WhatsApp] configWhatsApp não configurada — resposta não enviada')
     return null
@@ -71,14 +72,14 @@ const enviarMensagem = async (configWhatsApp, para, texto, tenantId) => {
       case 'meta':
         return await enviarMeta(configWhatsApp, para, texto)
       case 'wwebjs':
-        return await enviarWWebJS({ ...configWhatsApp, tenantId }, para, texto)
+        return await enviarWWebJS({ ...configWhatsApp, tenantId, lidJid }, para, texto)
       default:
         console.warn(`[WhatsApp] Provedor desconhecido: ${provedor}`)
         return null
     }
   } catch (err) {
-    console.error(`[WhatsApp] Erro ao enviar mensagem (${provedor}):`, err.message)
-    return null
+    console.error(`[WhatsApp] Erro ao enviar mensagem (${provedor}) para ${para}:`, err.message)
+    throw err
   }
 }
 

@@ -116,28 +116,23 @@ const Sidebar = ({ compacto = false }) => {
         compacto ? 'w-16' : 'w-64'
       )}
     >
-      <div className={cn('flex items-center border-b border-sidebar-borda py-[18px] shrink-0', compacto ? 'justify-center px-2' : 'gap-3 px-4')}>
-        <div className="w-10 h-10 gradient-barber rounded-2xl flex items-center justify-center shrink-0 shadow-primaria">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
-            <path d="M7 3h10c2.2 0 4 1.8 4 4v10c0 2.2-1.8 4-4 4H7c-2.2 0-4-1.8-4-4V7c0-2.2 1.8-4 4-4Z" stroke="white" strokeWidth="1.8" opacity="0.9" />
-            <path d="M7 9h10M8 15h8" stroke="white" strokeWidth="1.8" strokeLinecap="round" />
-            <circle cx="8" cy="5.5" r="1" fill="white" />
-            <circle cx="12" cy="5.5" r="1" fill="white" />
-            <circle cx="16" cy="5.5" r="1" fill="white" />
-          </svg>
+      {compacto ? (
+        <img
+          src="/logo.svg"
+          alt="Marcaí Barber"
+          style={{ width: 44, height: 44, objectFit: 'contain', display: 'block', margin: '8px auto' }}
+        />
+      ) : (
+        <div style={{ width: '100%', height: 116, flexShrink: 0, overflow: 'hidden', marginTop: 7, marginBottom: 20 }}>
+          <img
+            src="/logo.svg"
+            alt="Marcaí Barber"
+            style={{ width: '100%', height: 180, objectFit: 'contain', objectPosition: 'left top', display: 'block', transform: 'translateY(-18px)' }}
+          />
         </div>
-        {!compacto && (
-          <div className="leading-tight">
-            <div className="flex items-center gap-2">
-              <span className="font-display text-white text-2xl tracking-[0.12em]">Marcaí</span>
-              <Crown size={14} className="text-primaria-brilho" />
-            </div>
-            <p className="text-[10px] uppercase tracking-[0.28em] text-sidebar-texto">Barber</p>
-          </div>
-        )}
-      </div>
+      )}
 
-      <nav className={cn('flex-1 overflow-y-auto sidebar-scroll py-4 space-y-0.5', compacto ? 'px-0' : 'px-2')}>
+      <nav className={cn('flex-1 overflow-y-auto overscroll-contain sidebar-scroll pb-4 space-y-0.5', compacto ? 'px-0' : 'px-2')}>
         {!compacto && <p className="px-3 mb-2 text-[10px] font-semibold uppercase tracking-[0.28em] text-sidebar-texto/60">Operação</p>}
         {itensOperacao.map((item) => (
           <ItemNav key={item.rota} item={item} compacto={compacto} />

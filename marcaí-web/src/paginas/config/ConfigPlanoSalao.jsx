@@ -29,6 +29,11 @@ const ConfigPlanoSalao = () => {
   const plano = tenant?.planoContratado || 'SALAO'
   const isSolo = plano === 'SOLO'
   const features = isSolo ? FEATURES_SOLO : FEATURES_SALAO
+  const cicloLabel = {
+    MENSAL: 'Mensal',
+    SEMESTRAL: 'Semestral',
+    ANUAL: 'Anual',
+  }[tenant?.cicloCobranca] || tenant?.cicloCobranca
 
   useEffect(() => {
     api.get('/api/profissionais?ativo=true')
@@ -64,7 +69,7 @@ const ConfigPlanoSalao = () => {
 
         {tenant?.cicloCobranca && (
           <p className="mt-3 text-sm text-texto-sec">
-            Ciclo: <span className="font-medium text-texto">{tenant.cicloCobranca === 'MENSAL' ? 'Mensal' : 'Anual'}</span>
+            Ciclo: <span className="font-medium text-texto">{cicloLabel}</span>
           </p>
         )}
       </div>

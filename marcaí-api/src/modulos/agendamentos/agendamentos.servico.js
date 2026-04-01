@@ -1,5 +1,6 @@
 const banco = require('../../config/banco')
 const { adicionarMinutos } = require('../../utils/formatarData')
+const { gerarSlots, validarJanelaTempo } = require('../../utils/gerarSlots')
 const filaEsperaServico = require('../filaEspera/filaEspera.servico')
 const whatsappServico = require('../ia/whatsapp.servico')
 const planosServico = require('../planos/planos.servico')
@@ -9,34 +10,95 @@ const configIA = require('../../config/ia')
 
 const openaiAgendamentos = new OpenAI({ apiKey: configIA.apiKey, baseURL: configIA.baseURL })
 
-// Envia confirmação WhatsApp ao cliente (melhor esforço — não falha o agendamento)
-const notificarClienteConfirmacao = async (tenantId, ag) => {
+// Envia mensagem pós-visita para cliente de walk-in (melhor esforço)
+const notificarClienteWalkIn = async (tenantId, ag) => {
   try {
     const tenant = await banco.tenant.findUnique({ where: { id: tenantId } })
     if (!tenant?.configWhatsApp || !ag.cliente?.telefone) return
 
-    const tz = tenant.timezone || 'America/Sao_Paulo'
-    const dataFmt = new Date(ag.inicioEm).toLocaleString('pt-BR', {
-      weekday: 'long', day: 'numeric', month: 'long',
-      hour: '2-digit', minute: '2-digit', timeZone: tz,
-    })
-    const primeiroNome = ag.cliente.nome?.split(' ')[0] || 'cliente'
+    const appUrl = process.env.APP_URL || 'https://app.marcai.com.br'
+    const linkSlug = tenant.hashPublico || tenant.slug
+    const linkAg = `${appUrl}/b/${linkSlug}`
+
+    const primeiroNome = ag.cliente.nome?.split(' ')[0] || null
+    const saudacao = primeiroNome ? `Fala, ${primeiroNome}! 👋` : `Fala! 👋`
+    const NOME_IA = 'Don'
 
     const mensagem =
-      `Olá, ${primeiroNome}! 😊\n` +
-      `Seu agendamento está confirmado! ✅\n` +
-      `${ag.servico.nome} com ${ag.profissional.nome}\n` +
-      `${dataFmt}\n\n` +
-      `Para cancelar ou remarcar, é só falar aqui! ✨\n` +
-      `— ${tenant.nome}`
+      `${saudacao}\n` +
+      `Aqui é o ${NOME_IA}, assistente virtual da ${tenant.nome} 💈\n\n` +
+      `Valeu pela visita hoje — esperamos que tenha saído na régua ✂️🔥\n\n` +
+      `Na próxima, você pode garantir seu horário com antecedência e sem espera:\n` +
+      `🗓️ ${linkAg}\n\n` +
+      `Me chama aqui que eu cuido do seu agendamento rapidinho.\n\n` +
+      `Te aguardamos! 💈`
 
-    // Garante DDI Brasil no número antes de enviar
     const telNorm = ag.cliente.telefone.replace(/\D/g, '')
     const telEnvio = telNorm.startsWith('55') && telNorm.length >= 12 ? telNorm : `55${telNorm}`
     await whatsappServico.enviarMensagem(tenant.configWhatsApp, telEnvio, mensagem, tenantId)
-    console.log(`[Confirmação] Enviada para ${ag.cliente.telefone} — ${ag.servico.nome}`)
+    console.log(`[Walk-in] Mensagem pós-visita enviada para ${ag.cliente.telefone}`)
   } catch (err) {
-    console.warn(`[Confirmação] Falha ao enviar WhatsApp (sem impacto no agendamento):`, err.message)
+    console.warn(`[Walk-in] Falha ao enviar mensagem pós-visita (sem impacto):`, err.message)
+  }
+}
+
+// Envia confirmação WhatsApp ao cliente (melhor esforço — não falha o agendamento)
+// IMPORTANTE: Salva na conversa SEMPRE (mesmo se WhatsApp falhar) para manter histórico
+const notificarClienteConfirmacao = async (tenantId, ag) => {
+  try {
+    const tenant = await banco.tenant.findUnique({ where: { id: tenantId } })
+    if (!ag.cliente?.telefone) return
+
+    const tz = tenant?.timezone || 'America/Sao_Paulo'
+    const dt = new Date(ag.inicioEm)
+    const dataFmt = dt.toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long', timeZone: tz })
+    const horaFmt = dt.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: tz })
+    const primeiroNome = ag.cliente.nome?.split(' ')[0] || null
+    const saudacao = primeiroNome ? `Olá, ${primeiroNome}! 👋` : `Olá! 👋`
+
+    const appUrl = process.env.APP_URL || 'https://app.marcai.com.br'
+    const linkAg = `${appUrl}/b/${tenant?.hashPublico || tenant?.slug || 'agendar'}`
+
+    const mensagem =
+      `${saudacao}\n\n` +
+      `Aqui é o Don, assistente virtual da ${tenant?.nome || 'barbearia'} 💈\n\n` +
+      `Seu horário foi agendado com sucesso ✅\n\n` +
+      `📅 ${dataFmt} às ${horaFmt}\n\n` +
+      `Para os próximos agendamentos, você também pode escolher seu horário direto pelo sistema:\n` +
+      `🗓️ ${linkAg}`
+
+    // CRÍTICO: Salva na conversa SEMPRE (independente do WhatsApp funcionar)
+    try {
+      const conversasServico = require('../conversas/conversas.servico')
+      const conversa = await conversasServico.buscarOuCriarConversa(tenantId, ag.clienteId, 'WHATSAPP')
+      await banco.mensagem.createMany({
+        data: [
+          { conversaId: conversa.id, remetente: 'ia', conteudo: mensagem },
+          {
+            conversaId: conversa.id, remetente: 'sistema',
+            conteudo: `📅 Agendamento criado pelo painel — ${ag.servico?.nome || 'serviço'} em ${dataFmt} às ${horaFmt}`,
+          },
+        ],
+      })
+      await banco.conversa.update({ where: { id: conversa.id }, data: { atualizadoEm: new Date() } })
+    } catch (errConversa) {
+      console.warn('[Confirmação] Erro ao salvar na conversa:', errConversa.message)
+    }
+
+    // Tenta enviar via WhatsApp (não bloqueia se falhar)
+    if (tenant?.configWhatsApp) {
+      try {
+        const telNorm = ag.cliente.telefone.replace(/\D/g, '')
+        const telEnvio = telNorm.startsWith('55') && telNorm.length >= 12 ? telNorm : `55${telNorm}`
+        const lidJid = ag.cliente.lidWhatsapp ? `${ag.cliente.lidWhatsapp}@lid` : null
+        await whatsappServico.enviarMensagem(tenant.configWhatsApp, telEnvio, mensagem, tenantId, lidJid)
+        console.log(`[Confirmação] WhatsApp enviado para ${ag.cliente.telefone} — ${ag.servico?.nome}`)
+      } catch (errWpp) {
+        console.warn(`[Confirmação] Falha ao enviar WhatsApp (mensagem salva na conversa): ${errWpp.message}`)
+      }
+    }
+  } catch (err) {
+    console.error(`[Confirmação] Falha geral para ${ag.cliente?.telefone}:`, err.message)
   }
 }
 
@@ -47,6 +109,56 @@ const incluirRelacoes = {
 }
 
 const STATUS_OPERACIONAIS_ATIVOS = ['AGENDADO', 'CONFIRMADO']
+
+// Máquina de estados: define quais status podem ser origem de cada transição
+const TRANSICOES_VALIDAS = {
+  confirmar:         ['AGENDADO'],
+  confirmarPresenca: ['AGENDADO', 'CONFIRMADO'],
+  concluir:          ['AGENDADO', 'CONFIRMADO'],
+  cancelar:          ['AGENDADO', 'CONFIRMADO'],
+  remarcar:          ['AGENDADO', 'CONFIRMADO'],
+  naoCompareceu:     ['AGENDADO', 'CONFIRMADO'],
+}
+
+const garantirTransicaoValida = (operacao, statusAtual) => {
+  const permitidos = TRANSICOES_VALIDAS[operacao]
+  if (!permitidos || !permitidos.includes(statusAtual)) {
+    throw {
+      status: 422,
+      mensagem: `Operação '${operacao}' não permitida para agendamento com status '${statusAtual}'.`,
+      codigo: 'TRANSICAO_INVALIDA',
+    }
+  }
+}
+
+const obterDataIsoSaoPaulo = (data) => (
+  new Date(data).toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' })
+)
+
+// Validação pré-transação (UX — detecta erros óbvios antes de abrir tx)
+const validarInicioDentroDaDisponibilidadeReal = async ({ profissionalId, duracaoMinutos, inicioEm }) => {
+  const data = obterDataIsoSaoPaulo(inicioEm)
+  const inicioMs = new Date(inicioEm).getTime()
+  const slots = await gerarSlots(profissionalId, duracaoMinutos, data)
+
+  const slotValido = slots.some((slot) => (
+    slot.disponivel && new Date(slot.inicio).getTime() === inicioMs
+  ))
+
+  if (!slotValido) {
+    throw {
+      status: 422,
+      mensagem: 'Horario indisponivel na agenda real do profissional. Respeite expediente, intervalos, buffer e antecedencia minima.',
+      codigo: 'SLOT_INVALIDO',
+    }
+  }
+}
+
+// Validação dentro da transação usando `tx` — previne race condition de double booking.
+// Usa validarJanelaTempo que aceita qualquer Prisma client (banco ou tx).
+const validarJanelaTempoTx = async (tx, { profissionalId, duracaoMinutos, inicioEm, agendamentoExcluidoId }) => {
+  await validarJanelaTempo(tx, { profissionalId, duracaoMinutos, inicioEm, agendamentoExcluidoId })
+}
 
 const sincronizarAvataresClientes = async (tenantId, agendamentos = []) => {
   if (!Array.isArray(agendamentos) || agendamentos.length === 0) return agendamentos
@@ -101,13 +213,13 @@ const sincronizarAvataresClientes = async (tenantId, agendamentos = []) => {
   return agendamentos
 }
 
-const obterServicoComDuracaoTx = async (tx, tenantId, profissionalId, servicoId) => {
-  const profServico = await tx.profissionalServico.findFirst({
+const obterServicoComDuracaoFonte = async (fonte, tenantId, profissionalId, servicoId) => {
+  const profServico = await fonte.profissionalServico.findFirst({
     where: { profissionalId, servicoId },
     include: { servico: true },
   })
 
-  const servico = profServico?.servico || await tx.servico.findFirst({
+  const servico = profServico?.servico || await fonte.servico.findFirst({
     where: { id: servicoId, tenantId, ativo: true },
   })
 
@@ -118,6 +230,14 @@ const obterServicoComDuracaoTx = async (tx, tenantId, profissionalId, servicoId)
     duracaoMinutos: profServico?.duracaoCustom || servico.duracaoMinutos,
   }
 }
+
+const obterServicoComDuracao = async (tenantId, profissionalId, servicoId) => (
+  obterServicoComDuracaoFonte(banco, tenantId, profissionalId, servicoId)
+)
+
+const obterServicoComDuracaoTx = async (tx, tenantId, profissionalId, servicoId) => (
+  obterServicoComDuracaoFonte(tx, tenantId, profissionalId, servicoId)
+)
 
 const listar = async (tenantId, { status, profissionalId, clienteId, inicio, fim, limite = 50, pagina = 1, ordem, busca }) => {
   const pular = (Number(pagina) - 1) * Number(limite)
@@ -187,9 +307,19 @@ const criar = async (tenantId, dados) => {
   const servico = profServico?.servico || await banco.servico.findFirst({ where: { id: dados.servicoId, tenantId } })
   if (!servico) throw { status: 404, mensagem: 'Serviço não encontrado', codigo: 'NAO_ENCONTRADO' }
 
+  // Valida se o serviço está ativo
+  if (!servico.ativo) {
+    throw { status: 422, mensagem: 'Este serviço não está mais disponível.', codigo: 'SERVICO_INATIVO' }
+  }
+
   const duracao = profServico?.duracaoCustom || servico.duracaoMinutos
   const inicioEm = new Date(dados.inicio)
   const fimEm = adicionarMinutos(inicioEm, duracao)
+
+  // CRÍTICO: Não permite agendamento no passado
+  if (inicioEm < new Date()) {
+    throw { status: 422, mensagem: 'Não é possível agendar no passado.', codigo: 'HORARIO_PASSADO' }
+  }
 
   // Valida se o profissional está configurado para trabalhar nesse dia da semana
   const profParaValidacao = await banco.profissional.findUnique({
@@ -225,7 +355,6 @@ const criar = async (tenantId, dados) => {
       }
     }
   }
-  // Valida dias permitidos pelo plano mensal do cliente (se tiver assinatura ativa com restrição de dias)
   if (dados.clienteId) {
     const tenant = await banco.tenant.findUnique({ where: { id: tenantId }, select: { membershipsAtivo: true, timezone: true } })
     if (tenant?.membershipsAtivo) {
@@ -260,25 +389,63 @@ const criar = async (tenantId, dados) => {
 
   const origem = dados.origem || 'DASHBOARD'
   const clienteJaChegou = Boolean(dados.walkin)
-  const menosde24h = (new Date(inicioEm) - new Date()) < 24 * 60 * 60 * 1000
-  const statusInicial = clienteJaChegou || origem === 'WHATSAPP' || menosde24h ? 'CONFIRMADO' : 'AGENDADO'
+  // Status inicial: apenas walk-in e origem WHATSAPP entram como CONFIRMADO.
+  // Agendamentos criados pelo dashboard sempre iniciam como AGENDADO, independente do prazo,
+  // para que o auto-cancelamento por não-confirmação funcione corretamente.
+  const statusInicial = clienteJaChegou || origem === 'WHATSAPP' ? 'CONFIRMADO' : 'AGENDADO'
+  const profissionalAgenda = await banco.profissional.findUnique({
+    where: { id: dados.profissionalId },
+    select: { bufferMinutos: true },
+  })
+  const bufferMinutos = Number(profissionalAgenda?.bufferMinutos || 0)
 
-  // Verifica conflito dentro de transação (lock otimista)
+  // Verifica conflito dentro de transação (ground truth — previne race condition de double booking)
   return banco.$transaction(async (tx) => {
-    if (!dados.walkin) {
-      const conflito = await tx.agendamento.findFirst({
+    // Validação completa dentro da transação usando tx (CRÍTICO 3: sem race condition)
+    await validarJanelaTempoTx(tx, {
+      profissionalId: dados.profissionalId,
+      duracaoMinutos: duracao,
+      inicioEm,
+    })
+
+    // Walk-in também verifica conflito — cliente presencialmente não justifica dupla agenda
+    const conflito = await tx.agendamento.findFirst({
+      where: {
+        profissionalId: dados.profissionalId,
+        status: { notIn: ['CANCELADO', 'REMARCADO', 'NAO_COMPARECEU'] },
+        AND: [
+          { inicioEm: { lt: adicionarMinutos(fimEm, bufferMinutos) } },
+          { fimEm: { gt: adicionarMinutos(inicioEm, -bufferMinutos) } },
+        ],
+      },
+    })
+
+    if (conflito) {
+      throw {
+        status: 409,
+        mensagem: 'Horário indisponível: este profissional já tem um agendamento neste período',
+        codigo: 'CONFLITO_HORARIO',
+      }
+    }
+
+    // CRÍTICO: Valida conflito do CLIENTE (não só profissional)
+    // Cliente não pode ter 2 agendamentos sobrepostos (mesmo com profissionais diferentes)
+    if (dados.clienteId) {
+      const conflitoCliente = await tx.agendamento.findFirst({
         where: {
-          profissionalId: dados.profissionalId,
+          clienteId: dados.clienteId,
           status: { notIn: ['CANCELADO', 'REMARCADO', 'NAO_COMPARECEU'] },
-          AND: [{ inicioEm: { lt: fimEm } }, { fimEm: { gt: inicioEm } }],
+          AND: [
+            { inicioEm: { lt: fimEm } },
+            { fimEm: { gt: inicioEm } },
+          ],
         },
       })
-
-      if (conflito) {
+      if (conflitoCliente) {
         throw {
           status: 409,
-          mensagem: 'Horário indisponível: este profissional já tem um agendamento neste período',
-          codigo: 'CONFLITO_HORARIO',
+          mensagem: 'Você já tem um agendamento neste horário.',
+          codigo: 'CONFLITO_CLIENTE',
         }
       }
     }
@@ -302,9 +469,16 @@ const criar = async (tenantId, dados) => {
 
     return novoAg
   }).then((ag) => {
-    // Envia confirmação WhatsApp somente para agendamentos criados pelo painel (não pelo próprio WhatsApp, que já responde na conversa)
-    if (dados.origem !== 'WHATSAPP' && !dados.walkin) {
+    // Envia confirmação WhatsApp somente para agendamentos criados pelo painel.
+    // - WHATSAPP: a IA já confirma diretamente na conversa
+    // - LINK_PUBLICO: public.controlador.js envia a confirmação com formato próprio
+    // - walkin: envia mensagem pós-visita (abaixo)
+    if (dados.origem !== 'WHATSAPP' && dados.origem !== 'LINK_PUBLICO' && !dados.walkin) {
       notificarClienteConfirmacao(tenantId, ag)
+    }
+    // Walk-in: envia mensagem pós-visita com link de agendamento futuro
+    if (dados.walkin) {
+      notificarClienteWalkIn(tenantId, ag)
     }
     return ag
   })
@@ -316,19 +490,83 @@ const criarCombo = async (tenantId, dados) => {
     throw { status: 422, mensagem: 'Informe ao menos dois servicos para o combo.', codigo: 'COMBO_INVALIDO' }
   }
 
+  // Pré-validação básica fora da tx (expediente e antecedência mínima) usando validarJanelaTempo.
+  // Aceita qualquer posição de início (ex: 09:45 após 45 min), não apenas múltiplos de 30 min.
+  // A validação completa com lock acontece DENTRO da transação abaixo.
+  let inicioParaPreValidacao = new Date(dados.inicio)
+  for (const servicoId of servicoIds) {
+    const infoServico = await obterServicoComDuracao(tenantId, dados.profissionalId, servicoId)
+    await validarJanelaTempo(banco, {
+      profissionalId: dados.profissionalId,
+      duracaoMinutos: infoServico.duracaoMinutos,
+      inicioEm: inicioParaPreValidacao,
+    })
+    inicioParaPreValidacao = adicionarMinutos(inicioParaPreValidacao, infoServico.duracaoMinutos)
+  }
+
+  const profissionalAgenda = await banco.profissional.findUnique({
+    where: { id: dados.profissionalId },
+    select: { bufferMinutos: true },
+  })
+  const bufferMinutos = Number(profissionalAgenda?.bufferMinutos || 0)
+
+  // CRÍTICO: Não permite combo no passado
+  if (new Date(dados.inicio) < new Date()) {
+    throw { status: 422, mensagem: 'Não é possível agendar combo no passado.', codigo: 'HORARIO_PASSADO' }
+  }
+
   return banco.$transaction(async (tx) => {
     const criados = []
     let inicioAtual = new Date(dados.inicio)
+
+    // Calcula o fim total do combo para validar conflito do cliente
+    let fimTotalCombo = inicioAtual
+    for (const servicoId of servicoIds) {
+      const info = await obterServicoComDuracaoTx(tx, tenantId, dados.profissionalId, servicoId)
+      fimTotalCombo = adicionarMinutos(fimTotalCombo, info.duracaoMinutos)
+    }
+
+    // CRÍTICO: Valida conflito do CLIENTE para todo o período do combo
+    if (dados.clienteId) {
+      const conflitoCliente = await tx.agendamento.findFirst({
+        where: {
+          clienteId: dados.clienteId,
+          status: { notIn: ['CANCELADO', 'REMARCADO', 'NAO_COMPARECEU'] },
+          AND: [
+            { inicioEm: { lt: fimTotalCombo } },
+            { fimEm: { gt: inicioAtual } },
+          ],
+        },
+      })
+      if (conflitoCliente) {
+        throw {
+          status: 409,
+          mensagem: 'Você já tem um agendamento neste horário.',
+          codigo: 'CONFLITO_CLIENTE',
+        }
+      }
+    }
 
     for (const servicoId of servicoIds) {
       const infoServico = await obterServicoComDuracaoTx(tx, tenantId, dados.profissionalId, servicoId)
       const fimAtual = adicionarMinutos(inicioAtual, infoServico.duracaoMinutos)
 
+      // Validação completa com tx para cada serviço do combo (CRÍTICO 3 + CRÍTICO 1)
+      // Usa validarJanelaTempo que não exige que inicioAtual seja múltiplo de 30 min
+      await validarJanelaTempoTx(tx, {
+        profissionalId: dados.profissionalId,
+        duracaoMinutos: infoServico.duracaoMinutos,
+        inicioEm: inicioAtual,
+      })
+
       const conflito = await tx.agendamento.findFirst({
         where: {
           profissionalId: dados.profissionalId,
           status: { notIn: ['CANCELADO', 'REMARCADO', 'NAO_COMPARECEU'] },
-          AND: [{ inicioEm: { lt: fimAtual } }, { fimEm: { gt: inicioAtual } }],
+          AND: [
+            { inicioEm: { lt: adicionarMinutos(fimAtual, bufferMinutos) } },
+            { fimEm: { gt: adicionarMinutos(inicioAtual, -bufferMinutos) } },
+          ],
         },
       })
 
@@ -363,7 +601,7 @@ const criarCombo = async (tenantId, dados) => {
 
     return criados
   }).then((agendamentos) => {
-    if (dados.origem !== 'WHATSAPP' && agendamentos[0]) {
+    if (dados.origem !== 'WHATSAPP' && dados.origem !== 'LINK_PUBLICO' && agendamentos[0]) {
       notificarClienteConfirmacao(tenantId, agendamentos[0])
     }
     return agendamentos
@@ -396,18 +634,22 @@ const confirmarPresenca = async (tenantId, id) => {
   })
 }
 
-const cancelar = async (tenantId, id, motivo) => {
+const cancelar = async (tenantId, id, motivo, { origem = 'CLIENTE' } = {}) => {
   const agendamento = await verificarPropriedade(tenantId, id)
+  garantirTransicaoValida('cancelar', agendamento.status)
 
-  // Verifica antecedência mínima
-  const tenant = await banco.tenant.findUnique({ where: { id: tenantId } })
-  const horasRestantes = (agendamento.inicioEm - new Date()) / (1000 * 60 * 60)
+  // Verifica antecedência mínima APENAS para clientes (WhatsApp/link público)
+  // Dashboard/cabelereiro pode cancelar a qualquer momento
+  if (origem !== 'DASHBOARD') {
+    const tenant = await banco.tenant.findUnique({ where: { id: tenantId } })
+    const horasRestantes = (agendamento.inicioEm - new Date()) / (1000 * 60 * 60)
 
-  if (horasRestantes > 0 && horasRestantes < tenant.antecedenciaCancelar) {
-    throw {
-      status: 422,
-      mensagem: `Cancelamento exige ${tenant.antecedenciaCancelar}h de antecedência. Entre em contato com o estabelecimento.`,
-      codigo: 'ANTECEDENCIA_INSUFICIENTE',
+    if (horasRestantes > 0 && horasRestantes < tenant.antecedenciaCancelar) {
+      throw {
+        status: 422,
+        mensagem: `Cancelamento exige ${tenant.antecedenciaCancelar}h de antecedência. Entre em contato com o estabelecimento.`,
+        codigo: 'ANTECEDENCIA_INSUFICIENTE',
+      }
     }
   }
 
@@ -429,6 +671,7 @@ const cancelar = async (tenantId, id, motivo) => {
 
 const remarcar = async (tenantId, id, novoInicio) => {
   const agendamento = await verificarPropriedade(tenantId, id)
+  garantirTransicaoValida('remarcar', agendamento.status)
 
   const profServico = await banco.profissionalServico.findFirst({
     where: { profissionalId: agendamento.profissionalId, servicoId: agendamento.servicoId },
@@ -440,13 +683,76 @@ const remarcar = async (tenantId, id, novoInicio) => {
   const inicioEm = new Date(novoInicio)
   const fimEm = adicionarMinutos(inicioEm, duracao)
 
+  // CRÍTICO: Não permite remarcar para o passado
+  if (inicioEm < new Date()) {
+    throw { status: 422, mensagem: 'Não é possível remarcar para o passado.', codigo: 'HORARIO_PASSADO' }
+  }
+
+  // Valida dias permitidos do plano do cliente (se tiver assinatura ativa)
+  if (agendamento.clienteId) {
+    const tenant = await banco.tenant.findUnique({ where: { id: tenantId }, select: { membershipsAtivo: true, timezone: true } })
+    if (tenant?.membershipsAtivo) {
+      const assinaturaAtiva = await banco.assinaturaCliente.findFirst({
+        where: {
+          tenantId,
+          clienteId: agendamento.clienteId,
+          status: 'ATIVA',
+          OR: [{ fimEm: null }, { fimEm: { gte: new Date() } }],
+        },
+        include: { planoAssinatura: { select: { diasPermitidos: true, nome: true } } },
+        orderBy: { criadoEm: 'desc' },
+      })
+      if (assinaturaAtiva?.planoAssinatura?.diasPermitidos?.length > 0) {
+        const diasPermitidos = assinaturaAtiva.planoAssinatura.diasPermitidos
+        const tz = tenant.timezone || 'America/Sao_Paulo'
+        const dataStr = inicioEm.toLocaleDateString('en-CA', { timeZone: tz })
+        const dataBRT = new Date(`${dataStr}T12:00:00.000-03:00`)
+        const diaSemana = dataBRT.getDay()
+        if (!diasPermitidos.includes(diaSemana)) {
+          const NOMES_DIAS = ['Domingo', 'Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado']
+          const diasNomes = diasPermitidos.map((d) => NOMES_DIAS[d]).join(', ')
+          throw {
+            status: 422,
+            mensagem: `O plano "${assinaturaAtiva.planoAssinatura.nome}" não permite agendamentos em ${NOMES_DIAS[diaSemana]}. Dias permitidos: ${diasNomes}.`,
+            codigo: 'DIA_NAO_PERMITIDO_PLANO',
+          }
+        }
+      }
+    }
+  }
+
+  // Pré-validação fora da tx (UX / erro óbvio antecipado)
+  await validarJanelaTempo(banco, {
+    profissionalId: agendamento.profissionalId,
+    duracaoMinutos: duracao,
+    inicioEm,
+    agendamentoExcluidoId: id,
+  })
+
+  const profissionalAgenda = await banco.profissional.findUnique({
+    where: { id: agendamento.profissionalId },
+    select: { bufferMinutos: true },
+  })
+  const bufferMinutos = Number(profissionalAgenda?.bufferMinutos || 0)
+
   return banco.$transaction(async (tx) => {
+    // Validação dentro da tx (CRÍTICO 3: previne race condition)
+    await validarJanelaTempoTx(tx, {
+      profissionalId: agendamento.profissionalId,
+      duracaoMinutos: duracao,
+      inicioEm,
+      agendamentoExcluidoId: id,
+    })
+
     const conflito = await tx.agendamento.findFirst({
       where: {
         profissionalId: agendamento.profissionalId,
         id: { not: id },
         status: { notIn: ['CANCELADO', 'REMARCADO', 'NAO_COMPARECEU'] },
-        AND: [{ inicioEm: { lt: fimEm } }, { fimEm: { gt: inicioEm } }],
+        AND: [
+          { inicioEm: { lt: adicionarMinutos(fimEm, bufferMinutos) } },
+          { fimEm: { gt: adicionarMinutos(inicioEm, -bufferMinutos) } },
+        ],
       },
     })
 
@@ -476,28 +782,57 @@ const remarcar = async (tenantId, id, novoInicio) => {
 }
 
 const concluir = async (tenantId, id, formaPagamento) => {
-  const atual = await verificarPropriedade(tenantId, id)
   const tenant = await banco.tenant.findUnique({
     where: { id: tenantId },
     select: { exigirConfirmacaoPresenca: true, membershipsAtivo: true, comandaAtivo: true, configWhatsApp: true, nome: true, timezone: true },
   })
 
-  if (tenant?.exigirConfirmacaoPresenca && !atual.presencaConfirmadaEm) {
-    throw {
-      status: 422,
-      mensagem: 'Confirme a presença do cliente antes de finalizar o atendimento.',
-      codigo: 'PRESENCA_OBRIGATORIA',
-    }
-  }
+  // Usa transação para garantir idempotência (previne double-click)
+  const resultado = await banco.$transaction(async (tx) => {
+    const atual = await tx.agendamento.findFirst({ where: { id, tenantId } })
+    if (!atual) throw { status: 404, mensagem: 'Agendamento não encontrado', codigo: 'NAO_ENCONTRADO' }
 
-  let agendamento = await banco.agendamento.update({
-    where: { id },
-    data: { status: 'CONCLUIDO', formaPagamento: formaPagamento || null, concluidoEm: new Date(), presencaConfirmadaEm: atual.presencaConfirmadaEm || new Date() },
-    include: incluirRelacoes,
+    // IDEMPOTENTE: Se já está concluído, retorna sem fazer nada
+    if (atual.status === 'CONCLUIDO') {
+      return { agendamento: await tx.agendamento.findFirst({ where: { id }, include: incluirRelacoes }), jaConcluido: true }
+    }
+
+    // Máquina de estados: apenas AGENDADO e CONFIRMADO podem ser concluídos.
+    garantirTransicaoValida('concluir', atual.status)
+
+    if (tenant?.exigirConfirmacaoPresenca && !atual.presencaConfirmadaEm) {
+      throw {
+        status: 422,
+        mensagem: 'Confirme a presença do cliente antes de finalizar o atendimento.',
+        codigo: 'PRESENCA_OBRIGATORIA',
+      }
+    }
+
+    const agendamento = await tx.agendamento.update({
+      where: { id },
+      data: { status: 'CONCLUIDO', formaPagamento: formaPagamento || null, concluidoEm: new Date(), presencaConfirmadaEm: atual.presencaConfirmadaEm || new Date() },
+      include: incluirRelacoes,
+    })
+
+    return { agendamento, jaConcluido: false }
   })
 
-  // Somente na primeira conclusão: consome crédito de assinatura + registra pontos de fidelidade
-  if (atual.status !== 'CONCLUIDO') {
+  let agendamento = resultado.agendamento
+
+  // Só processa assinatura/fidelidade se NÃO era já concluído (primeira vez)
+  if (!resultado.jaConcluido) {
+    // Aviso de crédito esgotado
+    if (tenant?.membershipsAtivo && agendamento.clienteId) {
+      const assinatura = await banco.assinaturaCliente.findFirst({
+        where: { tenantId, clienteId: agendamento.clienteId, status: 'ATIVA' },
+        include: { creditos: { where: { servicoId: agendamento.servicoId } } },
+      })
+      const credito = assinatura?.creditos?.[0]
+      if (credito && credito.creditosRestantes <= 0) {
+        console.log(`[Concluir] Cliente ${agendamento.clienteId} sem créditos para ${agendamento.servicoId} — cobrança avulsa.`)
+      }
+    }
+
     // Assinatura mensal
     try {
       const credito = await planosServico.consumirCreditoAssinatura(tenantId, agendamento.clienteId, agendamento.servicoId)
@@ -506,12 +841,27 @@ const concluir = async (tenantId, id, formaPagamento) => {
       console.warn('[Assinatura] Falha ao consumir crédito (sem impacto na conclusão):', err.message)
     }
 
-    // Fidelidade — melhor esforço
+    // Fidelidade — verifica resgate pendente e registra pontos
+    try {
+      const resgate = await fidelidadeServico.verificarEAplicarResgatePendente(tenantId, agendamento.clienteId, id)
+      if (resgate.aplicado) {
+        // Aplica desconto de 100% (gratuito) — atualiza o agendamento com desconto
+        const precoServico = agendamento.servico?.precoCentavos || 0
+        await banco.agendamento.update({
+          where: { id },
+          data: { descontoCentavos: precoServico },
+        })
+        console.log(`[Fidelidade] Resgate aplicado - agendamento ${id} gratuito (${resgate.beneficio})`)
+      }
+    } catch (err) {
+      console.warn('[Fidelidade] Erro ao verificar resgate:', err.message)
+    }
+
+    // Registra pontos do atendimento (só se não foi resgate - senão seria ganhar ponto por resgate)
     fidelidadeServico.registrarPontosAtendimento(tenantId, agendamento.clienteId, id)
       .catch((err) => console.warn('[Fidelidade] Falha ao registrar pontos:', err.message))
 
     // ── Plano Mensal: cobrança na visita presencial ──────────────────────────
-    // Só processa se membershipsAtivo estiver ativo no tenant
     if (tenant?.membershipsAtivo) {
       processarCobrancaPlanoNaVisita(tenantId, agendamento, tenant)
         .catch((err) => console.warn('[PlanoMensal] Falha ao processar cobrança (sem impacto na conclusão):', err.message))
@@ -526,6 +876,7 @@ const concluir = async (tenantId, id, formaPagamento) => {
  * - Se proximaCobrancaEm é null (primeiro ciclo) ou já passou (renovação): cobra e atualiza.
  * - Se comandaAtivo: insere item de cobrança do plano na comanda do agendamento.
  * - Envia WhatsApp informando o cliente.
+ * - PROTEÇÃO: Usa update condicional para evitar cobrança duplicada em requests paralelos.
  */
 const processarCobrancaPlanoNaVisita = async (tenantId, agendamento, tenant) => {
   const assinatura = await banco.assinaturaCliente.findFirst({
@@ -547,11 +898,25 @@ const processarCobrancaPlanoNaVisita = async (tenantId, agendamento, tenant) => 
   const novaProxCobranca = new Date(hoje)
   novaProxCobranca.setDate(novaProxCobranca.getDate() + (plano.cicloDias || 30))
 
-  // Atualiza próxima cobrança
-  await banco.assinaturaCliente.update({
-    where: { id: assinatura.id },
+  // PROTEÇÃO contra cobrança duplicada: usa updateMany com where condicional
+  // Se outro request paralelo já atualizou proximaCobrancaEm, este retorna count: 0
+  const resultado = await banco.assinaturaCliente.updateMany({
+    where: {
+      id: assinatura.id,
+      // Só atualiza se proximaCobrancaEm ainda for o valor esperado (otimistic lock)
+      OR: [
+        { proximaCobrancaEm: null },
+        { proximaCobrancaEm: { lte: hoje } },
+      ],
+    },
     data: { proximaCobrancaEm: novaProxCobranca },
   })
+
+  // Se count = 0, outro request já processou a cobrança - não faz nada
+  if (resultado.count === 0) {
+    console.log(`[PlanoMensal] Cobrança já processada por outro request para cliente ${agendamento.clienteId}`)
+    return
+  }
 
   console.log(`[PlanoMensal] Renovação registrada: ${plano.nome} | Cliente: ${agendamento.clienteId} | Próxima: ${novaProxCobranca.toISOString()}`)
 
@@ -588,14 +953,17 @@ const processarCobrancaPlanoNaVisita = async (tenantId, agendamento, tenant) => 
 
 const naoCompareceu = async (tenantId, id, mensagemWhatsApp) => {
   const ag = await banco.agendamento.findFirst({ where: { id, tenantId }, include: { cliente: true } })
-  if (ag?.presencaConfirmadaEm) {
+  if (!ag) throw { status: 404, mensagem: 'Agendamento não encontrado', codigo: 'NAO_ENCONTRADO' }
+
+  garantirTransicaoValida('naoCompareceu', ag.status)
+
+  if (ag.presencaConfirmadaEm) {
     throw {
       status: 422,
       mensagem: 'Esse cliente ja teve a presenca confirmada. Use concluir ou remarcar.',
       codigo: 'PRESENCA_JA_CONFIRMADA',
     }
   }
-  if (!ag) throw { status: 404, mensagem: 'Agendamento não encontrado', codigo: 'NAO_ENCONTRADO' }
 
   const agAtualizado = await banco.agendamento.update({ where: { id }, data: { status: 'NAO_COMPARECEU' }, include: incluirRelacoes })
 
@@ -644,6 +1012,15 @@ const cancelarPeriodo = async (tenantId, { dataInicio, dataFim, mensagemWhatsApp
     where: { id: { in: agendamentos.map((a) => a.id) } },
     data: { status: 'CANCELADO' },
   })
+
+  // Notifica fila de espera para cada slot liberado (ALTO 3: era ignorado em cancelamento em massa)
+  for (const ag of agendamentos) {
+    filaEsperaServico.notificarFilaParaSlot(tenantId, {
+      servicoId: ag.servicoId,
+      profissionalId: ag.profissionalId,
+      dataHoraLiberada: ag.inicioEm,
+    }).catch((err) => console.warn('[CancelarPeriodo] Falha ao notificar fila:', err.message))
+  }
 
   if (mensagemWhatsApp) {
     const tenant = await banco.tenant.findUnique({ where: { id: tenantId } })
@@ -704,11 +1081,22 @@ const enviarPromocao = async (tenantId, { mensagem, filtro }) => {
     clientesIds = todos.map((c) => c.id)
   }
 
-  const clientes = await banco.cliente.findMany({
-    where: { id: { in: clientesIds }, telefone: { not: null } },
+  if (clientesIds.length === 0) {
+    return { enviados: 0, total: 0, mensagem: 'Nenhum cliente encontrado para o filtro selecionado' }
+  }
+
+  const clientesTodos = await banco.cliente.findMany({
+    where: { id: { in: clientesIds } },
   })
+  // Filtra clientes que têm telefone válido
+  const clientes = clientesTodos.filter(c => c.telefone && c.telefone.trim())
+
+  if (clientes.length === 0) {
+    return { enviados: 0, total: 0, mensagem: 'Nenhum cliente com telefone cadastrado' }
+  }
 
   let enviados = 0
+  let falhas = 0
   for (const cliente of clientes) {
     if (!cliente.telefone) continue
     const primeiroNome = cliente.nome?.split(' ')[0] || 'cliente'
@@ -718,10 +1106,11 @@ const enviarPromocao = async (tenantId, { mensagem, filtro }) => {
       enviados++
     } catch (err) {
       console.warn(`[Promoção] Falha para ${cliente.telefone}:`, err.message)
+      falhas++
     }
   }
 
-  return { enviados, total: clientes.length }
+  return { enviados, total: clientes.length, falhas }
 }
 
 /**
@@ -758,12 +1147,13 @@ Regras:
 - Comece com uma desculpa sincera e calorosa, usando {nome}.
 - Mencione o serviço ({servico}) e o horário ({data}) que foi cancelado.
 - Tom ${tentarRemarcar ? 'proativo — recupere o cliente' : 'informativo — gentil e claro'}.
-- Assine como: "— ${tenant?.nome || 'Equipe'}"`
+- Assine como: "— ${tenant?.nome || 'Equipe'}"
+- IMPORTANTE: Complete a mensagem inteira, não corte no meio de frases.`
 
   try {
     const resposta = await openaiAgendamentos.chat.completions.create({
       model: configIA.modelo,
-      max_tokens: 250,
+      max_tokens: 500,
       messages: [
         { role: 'system', content: prompt },
         { role: 'user', content: 'Gere a mensagem agora.' },

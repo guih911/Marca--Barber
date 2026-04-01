@@ -72,7 +72,22 @@
       "Bash(node -e \"require\\(''./src/modulos/comissoes/comissoes.servico''\\)\")",
       "Bash(node -e \"require\\(''./src/modulos/ia/ia.servico''\\)\")",
       "Bash(powershell -command \"Stop-Process -Name node -Force\")",
-      "Bash(time curl:*)"
+      "Bash(time curl:*)",
+      "Bash(node -e \":*)",
+      "Bash(node --check src/modulos/ia/baileys.manager.js)",
+      "Bash(node --check src/modulos/ia/lembretes.servico.js)",
+      "Bash(git checkout:*)",
+      "Bash(test:*)",
+      "Bash(node scripts/testar-ia-completo.js:*)",
+      "Bash(TENANT_ID=93c72a72-cf4f-4f0b-8423-3f9411a2853c node:*)",
+      "Bash(node scripts/teste-ia-completo.js:*)",
+      "Bash(DEBUG= node scripts/teste-ia-completo.js:*)",
+      "Bash(node scripts/testar-correcoes.js:*)",
+      "Bash(node -e:*)",
+      "Bash(node scripts/teste-rapido-ia.js:*)",
+      "Bash(wc:*)",
+      "Bash(find:*)",
+      "Bash(node scripts/teste-ia-exigente.js:*)"
     ]
   }
 }

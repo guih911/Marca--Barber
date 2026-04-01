@@ -80,9 +80,30 @@ app.use(passport.initialize())
 // Serve static uploaded files
 app.use('/uploads', express.static(path.join(__dirname, '../../uploads')))
 
-// Health check
-app.get('/health', (req, res) => {
-  res.json({ status: 'ok', versao: '1.0.0', ambiente: process.env.NODE_ENV })
+// Health check com validação do banco de dados
+app.get('/health', async (req, res) => {
+  const banco = require('./config/banco')
+  try {
+    // Verifica conexão com o banco
+    await banco.$queryRaw`SELECT 1`
+    res.json({
+      status: 'ok',
+      versao: '1.0.0',
+      ambiente: process.env.NODE_ENV,
+      banco: 'conectado',
+      timestamp: new Date().toISOString(),
+    })
+  } catch (erro) {
+    console.error('[Health] Falha na conexão com o banco:', erro.message)
+    res.status(503).json({
+      status: 'unhealthy',
+      versao: '1.0.0',
+      ambiente: process.env.NODE_ENV,
+      banco: 'desconectado',
+      erro: erro.message,
+      timestamp: new Date().toISOString(),
+    })
+  }
 })
 
 // Rotas da API
@@ -120,20 +141,32 @@ app.use(tratarErros)
 
 const PORTA = process.env.PORT || 3001
 
+// Flag para evitar duplicação de crons em múltiplas instâncias/reloads
+let cronsIniciados = false
+
 if (require.main === module) {
   app.listen(PORTA, () => {
-    console.log(`Servidor Don rodando na porta ${PORTA}`)
-    console.log(`Ambiente: ${process.env.NODE_ENV || 'development'}`)
-    console.log(`Frontend permitido: ${process.env.FRONTEND_URL || 'http://localhost:5173'}`)
+    console.log(`[Servidor] Don rodando na porta ${PORTA}`)
+    console.log(`[Servidor] Ambiente: ${process.env.NODE_ENV || 'development'}`)
+    console.log(`[Servidor] Frontend permitido: ${process.env.FRONTEND_URL || 'http://localhost:5173'}`)
 
     // Recarrega sessoes WhatsApp Web.js para tenants que ja tinham QR conectado
     inicializarSessoesWWebJS()
 
-    // Inicia cron de lembretes automaticos de agendamento (24h)
-    iniciarCronLembretes()
+    // Proteção contra duplicação de crons (importante para pm2/cluster)
+    if (!cronsIniciados) {
+      cronsIniciados = true
 
-    // Inicia automacoes enterprise (2h, auto-cancel, retorno, reativacao, parabens, fila)
-    iniciarCronAutomacoes()
+      // Inicia cron de lembretes automaticos de agendamento (24h)
+      iniciarCronLembretes()
+      console.log('[Cron] Lembretes iniciados')
+
+      // Inicia automacoes enterprise (2h, auto-cancel, retorno, reativacao, parabens, fila)
+      iniciarCronAutomacoes()
+      console.log('[Cron] Automações iniciadas')
+    } else {
+      console.log('[Cron] Crons já iniciados, ignorando duplicação')
+    }
   })
 }
 module.exports = app

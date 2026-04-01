@@ -61,7 +61,7 @@ const ConfigIA = () => {
       const res = await api.post('/api/ia/simular', { mensagem: msg })
       setHistoricoPreview((h) => [...h, { de: 'ia', conteudo: res.dados.resposta }])
     } catch {
-      setHistoricoPreview((h) => [...h, { de: 'ia', conteudo: 'Erro ao simular. Verifique a configuração da IA.' }])
+      setHistoricoPreview((h) => [...h, { de: 'ia', conteudo: 'Erro ao simular. Verifique a configuracao da IA.' }])
     } finally {
       setSimulando(false)
     }
@@ -72,22 +72,25 @@ const ConfigIA = () => {
   return (
     <div className="max-w-5xl space-y-6">
       <div className="rounded-[2rem] border border-borda bg-gradient-to-br from-[#111111] via-[#1d1916] to-[#2a2018] text-white p-6 md:p-8 shadow-card-lg relative overflow-hidden">
-        <div className="absolute inset-0 opacity-30" style={{ backgroundImage: 'radial-gradient(circle at top right, rgba(184,137,77,0.28), transparent 26%), radial-gradient(circle at bottom left, rgba(255,255,255,0.07), transparent 18%)' }} />
+        <div
+          className="absolute inset-0 opacity-30"
+          style={{ backgroundImage: 'radial-gradient(circle at top right, rgba(184,137,77,0.28), transparent 26%), radial-gradient(circle at bottom left, rgba(255,255,255,0.07), transparent 18%)' }}
+        />
         <div className="relative flex flex-col md:flex-row md:items-end md:justify-between gap-6">
           <div className="max-w-2xl">
             <div className="flex items-center gap-2 mb-3 text-primaria-brilho">
               <Scissors size={15} />
-              <span className="text-[11px] uppercase tracking-[0.28em] font-semibold">Recepção automatizada</span>
+              <span className="text-[11px] uppercase tracking-[0.28em] font-semibold">Recepcao automatizada</span>
             </div>
             <h1 className="font-display text-5xl md:text-6xl tracking-[0.14em] leading-none">DON IA</h1>
             <p className="text-sm md:text-base text-white/78 mt-3 max-w-xl">
-              Ajuste a personalidade do atendimento para a sua barbearia: tom, horário fora do expediente e regras de cancelamento.
+              Ajuste o estilo do Don para a sua operacao: mais recepcionista humana, mais hibrido de barbearia ou mais autoatendimento rapido.
             </p>
           </div>
           <div className="flex flex-col gap-3">
             <div className="rounded-2xl bg-white/8 border border-white/10 px-4 py-3">
               <p className="text-[11px] uppercase tracking-[0.24em] text-white/55">Objetivo</p>
-              <p className="text-sm font-semibold">Responder, agendar e vender retorno</p>
+              <p className="text-sm font-semibold">Responder bem, agendar com precisao e usar link so quando fizer sentido</p>
             </div>
             <button
               onClick={() => navigate('/config/teste-ia')}
@@ -104,11 +107,11 @@ const ConfigIA = () => {
         <form onSubmit={salvar} className="bg-white rounded-2xl border border-borda p-6 shadow-sm space-y-5">
           <div className="flex items-center gap-2">
             <Sparkles size={16} className="text-primaria" />
-            <h2 className="text-lg font-semibold text-texto">Configurações do Don</h2>
+            <h2 className="text-lg font-semibold text-texto">Configuracoes do Don</h2>
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-texto mb-3">Tom de voz</label>
+            <label className="block text-sm font-medium text-texto mb-3">Estilo de atendimento</label>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               {tomsDeVoz.map((tom) => (
                 <button
@@ -125,6 +128,10 @@ const ConfigIA = () => {
                 </button>
               ))}
             </div>
+            <p className="text-xs text-texto-sec mt-2">
+              Se quiser algo mais parecido com autoatendimento estilo Anota, use <strong>Autoatendimento rapido</strong>.
+              Se quiser parecer mais recepcionista humana no WhatsApp, use <strong>Recepcionista humana</strong>.
+            </p>
           </div>
 
           <div>
@@ -132,45 +139,45 @@ const ConfigIA = () => {
             <textarea
               value={config.mensagemBoasVindas}
               onChange={(e) => setConfig((p) => ({ ...p, mensagemBoasVindas: e.target.value }))}
-              placeholder="Bom dia! Aqui é o Don da Barbearia. Como posso te atender hoje?"
+              placeholder="Boa tarde! Aqui e o Don da barbearia. Como voce prefere ser chamado?"
               rows={3}
               className="w-full px-4 py-2.5 rounded-lg border border-borda focus:outline-none focus:ring-2 focus:ring-primaria/30 text-sm resize-none"
             />
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-texto mb-1.5">Mensagem fora do horário</label>
+            <label className="block text-sm font-medium text-texto mb-1.5">Mensagem fora do horario</label>
             <textarea
               value={config.mensagemForaHorario}
               onChange={(e) => setConfig((p) => ({ ...p, mensagemForaHorario: e.target.value }))}
-              placeholder="A barbearia está fechada agora. Me chama que eu retorno assim que a equipe abrir."
+              placeholder="A barbearia esta fechada agora. Me chama que eu continuo seu atendimento assim que abrir."
               rows={3}
               className="w-full px-4 py-2.5 rounded-lg border border-borda focus:outline-none focus:ring-2 focus:ring-primaria/30 text-sm resize-none"
             />
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-texto mb-1.5">Mensagem de retorno automática</label>
+            <label className="block text-sm font-medium text-texto mb-1.5">Mensagem de retorno automatica</label>
             <textarea
               value={config.mensagemRetorno}
               onChange={(e) => setConfig((p) => ({ ...p, mensagemRetorno: e.target.value }))}
-              placeholder={`{nome}, já faz {dias} dias desde o seu {servico}.\nQue tal agendar para manter o resultado? — {barbearia}`}
+              placeholder={`{nome}, ja faz {dias} dias desde o seu {servico}.\nQuer que eu veja um horario para manter o resultado? - {barbearia}`}
               rows={3}
               className="w-full px-4 py-2.5 rounded-lg border border-borda focus:outline-none focus:ring-2 focus:ring-primaria/30 text-sm resize-none"
             />
             <p className="text-xs text-texto-sec mt-1">
-              Variáveis: <code className="bg-fundo px-1 rounded">{'{nome}'}</code>, <code className="bg-fundo px-1 rounded">{'{servico}'}</code>, <code className="bg-fundo px-1 rounded">{'{dias}'}</code>, <code className="bg-fundo px-1 rounded">{'{barbearia}'}</code>.
-              Deixe vazio para geração automática pela IA.
+              Variaveis: <code className="bg-fundo px-1 rounded">{'{nome}'}</code>, <code className="bg-fundo px-1 rounded">{'{servico}'}</code>, <code className="bg-fundo px-1 rounded">{'{dias}'}</code>, <code className="bg-fundo px-1 rounded">{'{barbearia}'}</code>.
+              Deixe vazio para geracao automatica pela IA.
             </p>
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-texto mb-1.5">Antecedência mínima para cancelamento</label>
+            <label className="block text-sm font-medium text-texto mb-1.5">Antecedencia minima para cancelamento</label>
             <Select value={String(config.antecedenciaCancelar)} onValueChange={(v) => setConfig((p) => ({ ...p, antecedenciaCancelar: Number(v) }))}>
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
                 {opcoesAntecedencia.map((o) => (
-                  <SelectItem key={o.valor} value={String(o.valor)}>{o.label} de antecedência</SelectItem>
+                  <SelectItem key={o.valor} value={String(o.valor)}>{o.label} de antecedencia</SelectItem>
                 ))}
               </SelectContent>
             </Select>
@@ -198,7 +205,7 @@ const ConfigIA = () => {
             <h3 className="font-semibold text-texto flex items-center gap-2">
               <Bot size={16} className="text-primaria" /> Preview do Don
             </h3>
-            <p className="text-xs text-texto-sec mt-0.5">Simule uma conversa com a configuração atual da barbearia</p>
+            <p className="text-xs text-texto-sec mt-0.5">Simule uma conversa com a configuracao atual da barbearia</p>
           </div>
 
           <div className="flex-1 overflow-y-auto p-4 bg-fundo space-y-3">
@@ -234,7 +241,7 @@ const ConfigIA = () => {
                 value={mensagemPreview}
                 onChange={(e) => setMensagemPreview(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && enviarPreview()}
-                placeholder="Quero marcar corte e barba para sábado"
+                placeholder="Quero marcar corte e barba para sabado"
                 className="flex-1 px-4 py-2 border border-borda rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primaria/30"
               />
               <button

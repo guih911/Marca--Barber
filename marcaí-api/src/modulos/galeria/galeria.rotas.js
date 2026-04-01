@@ -1,11 +1,16 @@
 const path = require('path')
+const fs = require('fs')
 const { Router } = require('express')
 const multer = require('multer')
 const { autenticar } = require('../../middlewares/autenticacao')
 const galeriaControlador = require('./galeria.controlador')
 
+// Garante que o diretório de upload existe ao inicializar o módulo
+const uploadsDir = path.join(__dirname, '../../../../uploads/galeria')
+fs.mkdirSync(uploadsDir, { recursive: true })
+
 const storage = multer.diskStorage({
-  destination: path.join(__dirname, '../../../../uploads/galeria'),
+  destination: uploadsDir,
   filename: (req, file, cb) => {
     const ext = path.extname(file.originalname).toLowerCase() || '.jpg'
     cb(null, `galeria-${Date.now()}-${Math.random().toString(36).slice(2)}${ext}`)

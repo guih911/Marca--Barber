@@ -1,0 +1,41 @@
+# Dependências
+node_modules/
+
+# Ambiente
+.env
+.env.local
+.env.*.local
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# Build
+dist/
+build/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Prisma
+prisma/*.db
+prisma/*.db-journal
+
+# WhatsApp sessions
+.wwebjs_auth/
+.wwebjs_cache/
+baileys_auth_*/
+
+# Uploads temporários
+uploads/temp/
+
+# Coverage
+coverage/

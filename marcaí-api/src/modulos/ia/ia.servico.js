@@ -9,9 +9,10 @@ const whatsappServico = require('./whatsapp.servico')
 const filaEsperaServico = require('../filaEspera/filaEspera.servico')
 const fidelidadeServico = require('../fidelidade/fidelidade.servico')
 const planosServico = require('../planos/planos.servico')
+const { logClienteTrace, resumirCliente } = require('../../utils/clienteTrace')
 
 const openai = new OpenAI({ apiKey: configIA.apiKey, baseURL: configIA.baseURL })
-const NOME_IA = 'Don'
+const NOME_IA = 'Don Barber'
 
 /**
  * Remove blocos de raciocínio interno e frases de erro técnico que o modelo
@@ -90,6 +91,615 @@ const montarContextoBarbearia = (servicos = []) => {
     'Se o cliente pedir remarcar ou cancelar e não existir agendamento futuro, use buscarAgendamentosCliente; se vier vazio, chame verificarDisponibilidade imediatamente e ofereça um slot real na mesma resposta para não perder a venda.',
     'No fechamento, priorize uma sugestão por vez e sempre com linguagem masculina, direta e premium.',
   ].join('\n')
+}
+
+const montarPlaybookComercial = ({
+  tenant,
+  servicos = [],
+  produtosEstoque = [],
+  pacotes = [],
+  planosMensais = [],
+}) => {
+  const nomes = servicos.map((servico) => normalizarTextoIntencao(servico.nome))
+  const temCorte = nomes.some((nome) => nome.includes('corte'))
+  const temBarba = nomes.some((nome) => nome.includes('barba'))
+  const temSobrancelha = nomes.some((nome) => nome.includes('sobrancel'))
+  const temAcabamento = nomes.some((nome) => nome.includes('acabamento') || nome.includes('pezinho') || nome.includes('finaliz'))
+  const temProdutos = tenant.estoqueAtivo && produtosEstoque.some((produto) => Number(produto.quantidadeAtual || 0) > 0)
+  const temPacotes = tenant.pacotesAtivo && pacotes.length > 0
+  const temPlanos = tenant.membershipsAtivo && planosMensais.length > 0
+  const temFidelidade = tenant.fidelidadeAtivo
+
+  const sugestoesConsultivas = []
+  if (temCorte && temBarba) sugestoesConsultivas.push('Cliente pediu corte: sugira barba para fechar o visual, mas so depois de resolver o horario ou quando ele pedir orientacao.')
+  if (temBarba && temCorte) sugestoesConsultivas.push('Cliente pediu barba: sugira corte apenas se fizer sentido para alinhar o conjunto.')
+  if (temCorte && temSobrancelha) sugestoesConsultivas.push('Quando o cliente perguntar "o que combina?" ou quiser algo rapido, sobrancelha e um complemento elegante para o corte.')
+  if (temBarba && temAcabamento) sugestoesConsultivas.push('Se houver acabamento ativo no catalogo, use como complemento discreto para barba.')
+
+  const recursosAtivos = [
+    temPacotes ? 'pacotes/combo' : null,
+    temProdutos ? 'produtos' : null,
+    temFidelidade ? 'fidelidade' : null,
+    temPlanos ? 'planos mensais' : null,
+  ].filter(Boolean)
+
+  const recursosInativos = [
+    !temPacotes ? 'pacotes/combo' : null,
+    !temProdutos ? 'produtos' : null,
+    !temFidelidade ? 'fidelidade' : null,
+    !temPlanos ? 'planos mensais' : null,
+  ].filter(Boolean)
+
+  return [
+    '== PLAYBOOK COMERCIAL ==',
+    'Venda bem = agir como consultor de imagem masculina, nunca como telemarketing.',
+    'Regra de timing: primeiro resolva a necessidade principal. So venda antes do agendamento quando o cliente pedir preco, opiniao, vantagem, desconto ou "o que voce indica?".',
+    'Regra de intensidade: uma sugestao por vez, uma tentativa por item, zero insistencia depois de "nao", "so isso", "deixa assim", "ta bom".',
+    recursosAtivos.length
+      ? `Recursos comerciais ATIVOS hoje: ${recursosAtivos.join(', ')}.`
+      : 'Recursos comerciais ATIVOS hoje: apenas servicos do catalogo. Foque em complementariedade entre servicos e retorno futuro.',
+    recursosInativos.length
+      ? `Recursos INATIVOS ou vazios: ${recursosInativos.join(', ')}. Nao invente ofertas desses grupos e nao faça teaser do que nao existe.`
+      : 'Todos os grupos comerciais estao ativos.',
+    sugestoesConsultivas.length
+      ? `Matriz de consultoria:\n- ${sugestoesConsultivas.join('\n- ')}`
+      : 'Matriz de consultoria: se o catalogo estiver simples, use apenas orientacao objetiva e agendamento sem upsell forcado.',
+    'Gatilhos bons para vender com classe: cliente pediu opiniao, comparou valores, falou de evento/encontro/trabalho/fim de semana, ou acabou de confirmar um horario.',
+    'Gatilhos ruins: cliente com pressa, irritado, reclamando, sem entender o fluxo, ou ainda sem conseguir o horario principal.',
+    'Se nao houver recurso complementar real para oferecer, feche com seguranca e boa experiencia em vez de empurrar venda.',
+  ].join('\n')
+}
+
+const montarSecaoVendasInteligentes = ({
+  tenant,
+  servicos = [],
+  produtosEstoque = [],
+  pacotes = [],
+  planosMensais = [],
+}) => {
+  const nomes = servicos.map((servico) => normalizarTextoIntencao(servico.nome))
+  const temCorte = nomes.some((nome) => nome.includes('corte'))
+  const temBarba = nomes.some((nome) => nome.includes('barba'))
+  const temSobrancelha = nomes.some((nome) => nome.includes('sobrancel'))
+  const temAcabamento = nomes.some((nome) => nome.includes('acabamento') || nome.includes('pezinho') || nome.includes('finaliz'))
+  const temProdutos = tenant.estoqueAtivo && produtosEstoque.some((produto) => Number(produto.quantidadeAtual || 0) > 0)
+  const temPacotes = tenant.pacotesAtivo && pacotes.length > 0
+  const temPlanos = tenant.membershipsAtivo && planosMensais.length > 0
+  const temFidelidade = tenant.fidelidadeAtivo
+
+  const sugestoesServico = []
+  if (temCorte && temBarba) {
+    sugestoesServico.push('- Corte agendado: voce pode sugerir barba para fechar o visual, de forma curta e sem pressionar.')
+  }
+  if (temCorte && temSobrancelha) {
+    sugestoesServico.push('- Corte agendado e cliente pedindo opiniao: sobrancelha e um complemento rapido e elegante.')
+  }
+  if (temBarba && temAcabamento) {
+    sugestoesServico.push('- Barba agendada: acabamento pode entrar como ajuste final, se o cliente estiver aberto.')
+  }
+  if (temBarba && temCorte) {
+    sugestoesServico.push('- Barba agendada para evento ou fim de semana: corte pode ser sugerido se o cliente estiver montando o visual completo.')
+  }
+
+  const blocos = [
+    '### Pos-agendamento (vendas inteligentes)',
+    'Venda consultiva so depois que o principal estiver resolvido. Atendimento primeiro, oferta depois.',
+    'Ordem mental: resolver horario ou duvida -> confirmar -> so entao avaliar se cabe UMA sugestao complementar.',
+  ]
+
+  if (sugestoesServico.length > 0) {
+    blocos.push(
+      'Servico complementar:',
+      sugestoesServico.join('\n'),
+      '- Se nao houver aderencia clara, nao ofereca nada.'
+    )
+  } else {
+    blocos.push('Servico complementar: se o catalogo nao abrir margem para combinacao natural, nao force upsell.')
+  }
+
+  if (temPacotes) {
+    blocos.push(
+      'Combo/pacote:',
+      '- So ofereca pacote real cadastrado e apenas se ele melhorar o custo-beneficio do que o cliente ja pediu.',
+      '- Se o cliente comparar preco entre servicos avulsos, mostre o pacote existente com valor exato.'
+    )
+  } else {
+    blocos.push(
+      'Combo/pacote:',
+      '- Hoje nao ha pacote/combo ativo para oferecer.',
+      '- Se perguntarem por combo, seja transparente e some os servicos avulsos reais quando fizer sentido comparar.'
+    )
+  }
+
+  if (temProdutos) {
+    blocos.push(
+      'Produtos:',
+      '- Sugira no maximo 1 produto coerente com o servico feito.',
+      '- Produto so entra se o cliente demonstrar interesse em manutencao, acabamento ou durabilidade do visual.'
+    )
+  } else {
+    blocos.push(
+      'Produtos:',
+      '- Hoje nao ha produto de estoque ativo para o Don vender.',
+      '- Se perguntarem, seja transparente e nao invente pomada, oleo, balm ou kit.'
+    )
+  }
+
+  if (temFidelidade) {
+    blocos.push(
+      'Fidelidade:',
+      '- Pode mencionar acumulacao de pontos de forma breve, sem transformar a conversa em campanha.'
+    )
+  } else {
+    blocos.push('Fidelidade: nao ofereca programa de pontos se o recurso nao estiver ativo.')
+  }
+
+  if (temPlanos) {
+    blocos.push(
+      'Plano mensal:',
+      '- So mencione plano quando o cliente der gancho de frequencia, economia recorrente ou perguntar diretamente.',
+      '- No maximo 1 convite por conversa. Se houver interesse, use enviarLinkPlano.'
+    )
+  } else {
+    blocos.push(
+      'Plano mensal:',
+      '- Hoje nao ha plano mensal ativo para oferta.',
+      '- Se perguntarem, responda com transparencia e volte para a melhor opcao avulsa disponivel.'
+    )
+  }
+
+  blocos.push(
+    'Recorrencia inteligente:',
+    '- Depois de fechar bem o atendimento, voce pode sugerir retorno futuro de forma leve. Ex.: corte em 15 a 21 dias, barba em 10 a 14 dias.',
+    '',
+    'Regras de ouro das vendas:',
+    '- NUNCA insista apos recusa. "Nao", "so isso", "deixa assim", "ta bom" encerram a oferta na hora.',
+    '- Nao transforme pergunta de preco em palestra de venda. Responda objetivamente e, se couber, ofereca UMA alternativa melhor.',
+    '- Se o cliente estiver com pressa, irritado ou sem conseguir vaga, suspenda qualquer venda.',
+    '- Se nao houver recurso real para vender, ganhe no atendimento e nao na insistencia.'
+  )
+
+  return blocos.join('\n')
+}
+
+const PERFIS_ATENDIMENTO_IA = {
+  FORMAL: {
+    nome: 'CONCIERGE PREMIUM',
+    tonalidade: 'refinada, precisa e exclusiva — como o atendimento pessoal de uma barbearia de alto padrão.',
+    descricao: 'Cada cliente é tratado como VIP. Resoluções rápidas, sem rodeio, com classe.',
+    regras: [
+      '- Resolva em poucos passos, com linguagem precisa e elegante.',
+      '- Após o nome: triagem direta — "Vai ser corte, barba ou os dois, [nome]?"',
+      '- Nunca deixe o cliente esperando sem motivo: aja imediatamente.',
+      '- Direto não é frio — seja eficiente com calor humano.',
+      '- Trate cada interação como se o cliente estivesse na cadeira de uma barbearia top.',
+    ].join('\n'),
+  },
+  DESCONTRALIDO: {
+    nome: 'BARBEIRO DE CONFIANÇA',
+    tonalidade: 'descolada, segura e autêntica — como um barbeiro experiente que conhece todos pelo nome.',
+    descricao: 'Parece aquele barbeiro que você indica pros amigos: atende rápido, fala certo, deixa o cliente à vontade.',
+    regras: [
+      '- Fale como um profissional que entende do próprio ofício, não como chatbot.',
+      '- Use o nome do cliente com naturalidade — nem em todo turno, nem nunca.',
+      '- Combine agilidade com personalidade: barbearia é lugar de conversa objetiva.',
+      '- Venda consultiva só com gancho real — nunca empurre.',
+      '- Quando o cliente voltar, reconheça isso com leveza: "Boa, [nome], de volta!"',
+    ].join('\n'),
+  },
+  ACOLHEDOR: {
+    nome: 'CONSULTOR DE IMAGEM',
+    tonalidade: 'calorosa, consultiva e atenciosa — como um especialista que cuida do visual e do ego do cliente.',
+    descricao: 'Vai além do agendamento: cuida da experiência completa, como um barbeiro que é também consultor.',
+    regras: [
+      '- Reconheça o histórico e as preferências do cliente antes de sugerir qualquer coisa.',
+      '- Use o nome do cliente de forma natural e personalizada.',
+      '- Ofereça consultoria de visual quando o cliente pedir opinião ou mencionar evento/trabalho.',
+      '- Depois de agendar: reforce que vai ficar incrível — crie antecipação positiva.',
+      '- Nunca trate dois clientes da mesma forma: personalize cada atendimento.',
+    ].join('\n'),
+  },
+}
+
+const obterPerfilAtendimentoIA = (tomDeVoz = 'DESCONTRALIDO') => (
+  PERFIS_ATENDIMENTO_IA[String(tomDeVoz || 'DESCONTRALIDO').toUpperCase()] || PERFIS_ATENDIMENTO_IA.DESCONTRALIDO
+)
+
+const montarPerguntaPosNome = (nomeCliente = '', tomDeVoz = 'DESCONTRALIDO') => {
+  const primeiroNome = String(nomeCliente || '').trim().split(/\s+/)[0] || 'cliente'
+  const perfil = obterPerfilAtendimentoIA(tomDeVoz)
+
+  if (perfil.nome === 'CONCIERGE PREMIUM') {
+    return `${primeiroNome}, corte, barba ou os dois hoje?`
+  }
+
+  if (perfil.nome === 'CONSULTOR DE IMAGEM') {
+    return `Boa, ${primeiroNome}. Vai cuidar do corte, da barba ou vem completo hoje?`
+  }
+
+  return `Boa, ${primeiroNome}. Vai ser corte, barba ou os dois?`
+}
+
+const montarRespostaRapidaPreco = async (tenantId, mensagemNormalizada = '') => {
+  if (!/\b(quanto|preco|valor|fica quanto)\b/.test(mensagemNormalizada)) return null
+
+  const servicos = await banco.servico.findMany({
+    where: { tenantId, ativo: true },
+    select: { nome: true, precoCentavos: true },
+  })
+
+  const encontrarServico = (...termos) => servicos.find((servico) => {
+    const nome = normalizarTextoIntencao(servico.nome)
+    return termos.some((termo) => nome.includes(termo))
+  })
+
+  const corte = encontrarServico('corte')
+  const barba = encontrarServico('barba')
+  const sobrancelha = encontrarServico('sobrancel')
+
+  if (/\bcorte\b/.test(mensagemNormalizada) && /\bbarba\b/.test(mensagemNormalizada) && corte?.precoCentavos && barba?.precoCentavos) {
+    const total = Number(corte.precoCentavos || 0) + Number(barba.precoCentavos || 0)
+    return `O corte sai a ${formatarMoedaPrompt(corte.precoCentavos)} e a barba ${formatarMoedaPrompt(barba.precoCentavos)}. Juntos, fica ${formatarMoedaPrompt(total)}. Quer que eu veja um horario?`
+  }
+
+  if (/\bcorte\b/.test(mensagemNormalizada) && corte?.precoCentavos) {
+    return `O corte fica ${formatarMoedaPrompt(corte.precoCentavos)}. Quer que eu veja um horario?`
+  }
+
+  if (/\bbarba\b/.test(mensagemNormalizada) && barba?.precoCentavos) {
+    return `A barba fica ${formatarMoedaPrompt(barba.precoCentavos)}. Quer que eu veja um horario?`
+  }
+
+  if (/\bsobrancel/.test(mensagemNormalizada) && sobrancelha?.precoCentavos) {
+    return `A sobrancelha fica ${formatarMoedaPrompt(sobrancelha.precoCentavos)}. Quer que eu veja um horario?`
+  }
+
+  return null
+}
+
+const extrairPrimeiroNome = (nome = '') => (
+  String(nome || '').trim().split(/\s+/)[0] || 'cliente'
+)
+
+// Valida se o nome do WhatsApp é legível e usável no cumprimento
+// Retorna o nome se válido, null caso contrário
+const validarNomeWhatsApp = (nome) => {
+  if (!nome || typeof nome !== 'string') return null
+  const n = nome.trim()
+  if (!n || n.length > 50) return null
+  // Rejeita se o nome for o próprio telefone (só dígitos)
+  if (/^\d+$/.test(n)) return null
+  // Remove emojis e símbolos especiais, verifica o que sobra
+  const semEmojis = n.replace(/[\u{1F000}-\u{1FFFF}\u{2600}-\u{27FF}\u{FE00}-\u{FEFF}]/gu, '').trim()
+  // Se sobrar menos de 2 letras reais, o nome é inútil (só emojis/símbolos)
+  const apenasLetras = semEmojis.replace(/[^a-zA-ZÀ-ÿ]/g, '')
+  if (apenasLetras.length < 2) return null
+  // Rejeita nomes com mais de 40% de dígitos (ex: "User 12345678")
+  const digitCount = (n.match(/\d/g) || []).length
+  if (digitCount / n.length > 0.4) return null
+  // Rejeita se contiver URLs, arrobas ou barras (bots, canais)
+  if (/https?:|@|\/\//.test(n)) return null
+  // O primeiro "token" (primeiro nome) deve ter ao menos 2 letras
+  const primeiroToken = semEmojis.trim().split(/\s+/)[0] || ''
+  const letrasToken = primeiroToken.replace(/[^a-zA-ZÀ-ÿ]/g, '')
+  if (letrasToken.length < 2) return null
+  return n
+}
+
+const listarServicosAtivosResumo = async (tenantId) => (
+  banco.servico.findMany({
+    where: { tenantId, ativo: true },
+    select: { id: true, nome: true, precoCentavos: true },
+  })
+)
+
+const encontrarServicoPorTexto = (servicos = [], textoNormalizado = '') => {
+  if (!textoNormalizado) return null
+
+  const candidatos = servicos.map((servico) => ({
+    ...servico,
+    nomeNormalizado: normalizarTextoIntencao(servico.nome),
+  }))
+
+  const regras = [
+    { padrao: /\b(corte|degrade|degradezinho|social)\b/, termos: ['corte', 'degrade', 'social'] },
+    { padrao: /\bbarba\b/, termos: ['barba'] },
+    { padrao: /\bsobrancel/, termos: ['sobrancel'] },
+    { padrao: /\b(acabamento|pezinho|finaliza|finalizacao)\b/, termos: ['acabamento', 'pezinho', 'finaliz'] },
+  ]
+
+  for (const regra of regras) {
+    if (!regra.padrao.test(textoNormalizado)) continue
+    const encontrado = candidatos.find((servico) => regra.termos.some((termo) => servico.nomeNormalizado.includes(termo)))
+    if (encontrado) return encontrado
+  }
+
+  return candidatos.find((servico) => (
+    servico.nomeNormalizado.length >= 4
+    && textoNormalizado.includes(servico.nomeNormalizado)
+  )) || null
+}
+
+const obterUltimosTextosClienteNormalizados = (mensagens = [], limite = 4) => (
+  mensagens
+    .filter((mensagem) => mensagem.remetente === 'cliente')
+    .slice(-limite)
+    .reverse()
+    .map((mensagem) => normalizarTextoIntencao(mensagem.conteudo))
+    .filter(Boolean)
+)
+
+const detectarServicoContextual = async (tenantId, textos = []) => {
+  const servicos = await listarServicosAtivosResumo(tenantId)
+  for (const texto of textos) {
+    const encontrado = encontrarServicoPorTexto(servicos, texto)
+    if (encontrado) return encontrado
+  }
+  return null
+}
+
+const obterDataDesejadaPeloContexto = (mensagemNormalizada = '', mensagens = [], timeZone) => {
+  const textos = [mensagemNormalizada, ...obterUltimosTextosClienteNormalizados(mensagens)]
+  for (const texto of textos) {
+    const data = obterDataDesejadaDaMensagem(texto, timeZone)
+    if (data) return data
+  }
+  return null
+}
+
+const obterHoraDesejadaPeloContexto = (mensagemNormalizada = '', mensagens = []) => {
+  const textos = [mensagemNormalizada, ...obterUltimosTextosClienteNormalizados(mensagens)]
+  for (const texto of textos) {
+    const hora = obterHoraDesejadaDaMensagem(texto) || obterHoraDesejadaPorTurno(texto)
+    if (hora) return hora
+  }
+  return null
+}
+
+const ehRespostaFallbackGenerica = (texto = '') => (
+  /oi pode repetir|nao captei bem|manda de novo|tive um probleminha/i.test(normalizarTextoIntencao(texto))
+)
+
+const ehObjecaoPreco = (textoNormalizado = '') => (
+  /\b(caro|salgado|pesado|mais barato|mais em conta|tem algo melhor|tem algo mais em conta|desconto)\b/.test(textoNormalizado)
+)
+
+const respostaJaTrataObjecaoPreco = (texto = '') => (
+  /r\$|mais em conta|mais barato|so o corte|so a barba|desconto|combo|pacote|valor/i.test(texto)
+)
+
+const clientePerguntouPagamento = (textoNormalizado = '') => (
+  /\b(cartao|cartao de credito|cartao de debito|credito|debito|pix|dinheiro)\b/.test(textoNormalizado)
+)
+
+const respostaJaFalaPagamento = (texto = '') => (
+  /\b(cartao|credito|debito|pix|dinheiro)\b/i.test(normalizarTextoIntencao(texto))
+)
+
+const clientePerguntouProduto = (textoNormalizado = '') => (
+  /\b(produto|pomada|oleo|balm|cera|kit)\b/.test(textoNormalizado)
+)
+
+const respostaJaFalaProduto = (texto = '') => (
+  /\b(produto|pomada|oleo|balm|cera|kit|nao temos|nao tenho|confirma com a equipe|equipe te confirma|balcao)\b/.test(normalizarTextoIntencao(texto))
+)
+
+const ultimaPerguntaFoiTriagemServico = (textoNormalizado = '') => (
+  /vai ser corte barba ou os dois|corte barba ou os dois|qual servico vai ser|qual servico voce quer|corte barba ou combo/.test(textoNormalizado)
+)
+
+const formatarListaNatural = (itens = []) => {
+  const lista = Array.from(new Set((itens || []).filter(Boolean)))
+  if (lista.length === 0) return ''
+  if (lista.length === 1) return lista[0]
+  if (lista.length === 2) return `${lista[0]} e ${lista[1]}`
+  return `${lista.slice(0, -1).join(', ')} e ${lista[lista.length - 1]}`
+}
+
+const montarRespostaPagamentoCurta = (tenant) => {
+  const mapa = {
+    PIX: 'PIX',
+    CARTAO_CREDITO: 'cartao de credito',
+    CARTAO_DEBITO: 'cartao de debito',
+    DINHEIRO: 'dinheiro',
+  }
+
+  const lista = formatarListaNatural((tenant?.tiposPagamento || []).map((tipo) => mapa[tipo] || null))
+  return lista ? `Aceitamos ${lista}.` : null
+}
+
+const montarRespostaProdutoCurta = async (tenantId, tenant) => {
+  if (!tenant?.estoqueAtivo) {
+    return 'No momento, nao temos produto confirmado aqui no Don. Se quiser, a equipe te confirma no balcao.'
+  }
+
+  const produtos = await banco.produto.findMany({
+    where: {
+      tenantId,
+      ativo: true,
+      quantidadeAtual: { gt: 0 },
+    },
+    select: { nome: true },
+    take: 2,
+  }).catch(() => [])
+
+  if (!produtos.length) {
+    return 'No momento, nao temos produto confirmado aqui no Don. Se quiser, a equipe te confirma no balcao.'
+  }
+
+  return `Temos ${formatarListaNatural(produtos.map((produto) => produto.nome))}. Se quiser, eu te indico o que combina melhor com o seu atendimento.`
+}
+
+const montarRespostaObjecaoPreco = async ({ tenantId, mensagens = [], mensagemNormalizada = '' }) => {
+  if (!ehObjecaoPreco(mensagemNormalizada)) return null
+
+  const servicos = await listarServicosAtivosResumo(tenantId)
+  const encontrarServico = (...termos) => servicos.find((servico) => {
+    const nome = normalizarTextoIntencao(servico.nome)
+    return termos.some((termo) => nome.includes(termo))
+  })
+
+  const corte = encontrarServico('corte')
+  const barba = encontrarServico('barba')
+  const contexto = [mensagemNormalizada, ...obterUltimosTextosClienteNormalizados(mensagens)].join(' ')
+
+  if (/\bcorte\b/.test(contexto) && /\bbarba\b/.test(contexto) && corte?.precoCentavos && barba?.precoCentavos) {
+    const total = Number(corte.precoCentavos || 0) + Number(barba.precoCentavos || 0)
+    return `Se quiser algo mais em conta, posso ver so o corte por ${formatarMoedaPrompt(corte.precoCentavos)} ou so a barba por ${formatarMoedaPrompt(barba.precoCentavos)}. Se preferir os dois, juntos ficam ${formatarMoedaPrompt(total)}. Quer que eu te mostre os horarios?`
+  }
+
+  if (/\bcorte\b/.test(contexto) && corte?.precoCentavos) {
+    return `Se quiser algo mais em conta, posso ver so o corte por ${formatarMoedaPrompt(corte.precoCentavos)}. Quer que eu te mostre os horarios?`
+  }
+
+  if (/\bbarba\b/.test(contexto) && barba?.precoCentavos) {
+    return `Se quiser algo mais em conta, posso ver so a barba por ${formatarMoedaPrompt(barba.precoCentavos)}. Quer que eu te mostre os horarios?`
+  }
+
+  return 'Se quiser, eu posso te mostrar a opcao mais enxuta do catalogo ou ver um horario que faca sentido pra voce.'
+}
+
+const montarRespostaRefinoSemServico = ({ mensagemNormalizada = '', clienteNome = '', tomDeVoz = 'DESCONTRALIDO' }) => {
+  const horarioPontual = extrairHorariosDaMensagem(mensagemNormalizada)[0]
+  let abertura = 'Fechado. Eu consigo olhar isso sim.'
+
+  if (horarioPontual) {
+    abertura = `Fechado. Por volta de ${formatarHorarioCurto(horarioPontual)} eu consigo olhar sim.`
+  } else {
+    const depoisDas = mensagemNormalizada.match(/depois das\s+(\d{1,2})/)
+    const antesDas = mensagemNormalizada.match(/antes das\s+(\d{1,2})/)
+
+    if (depoisDas) abertura = `Fechado. Depois das ${depoisDas[1]}h eu consigo olhar sim.`
+    if (antesDas) abertura = `Fechado. Antes das ${antesDas[1]}h eu consigo olhar sim.`
+    if (!depoisDas && !antesDas && ehPedidoMaisTarde(mensagemNormalizada)) abertura = 'Fechado. Mais pro fim do dia eu consigo olhar sim.'
+  }
+
+  return `${abertura} ${montarPerguntaPosNome(clienteNome, tomDeVoz)}`
+}
+
+const montarPerguntaQuandoAgendar = (clienteNome = '', tomDeVoz = 'DESCONTRALIDO') => {
+  const primeiroNome = extrairPrimeiroNome(clienteNome)
+  const perfil = obterPerfilAtendimentoIA(tomDeVoz)
+
+  if (perfil.nome === 'CONCIERGE PREMIUM') {
+    return `${primeiroNome}, prefere hoje ou tem um dia em mente?`
+  }
+
+  if (perfil.nome === 'CONSULTOR DE IMAGEM') {
+    return `Perfeito, ${primeiroNome}. Voce quer pra hoje ou prefere outro dia?`
+  }
+
+  return `Fechado, ${primeiroNome}. Voce quer pra hoje ou prefere outro dia?`
+}
+
+const montarRespostaResgateHorario = async ({
+  tenant,
+  mensagens = [],
+  mensagemNormalizada = '',
+  clienteNome = '',
+  ultimaMensagemIANormalizada = '',
+}) => {
+  const timeZone = tenant?.timezone || 'America/Sao_Paulo'
+  const clientePediuHorario = /\b(corte|barba|agendar|agenda|horario|horarios|hora|vaga|hoje|hj|amanha|depois|mais tarde)\b/.test(mensagemNormalizada)
+    || Boolean(obterHoraDesejadaDaMensagem(mensagemNormalizada))
+    || Boolean(obterHoraDesejadaPorTurno(mensagemNormalizada))
+    || ehRefinoDeHorarioSemConfirmacao(mensagemNormalizada)
+  if (!clientePediuHorario) return null
+
+  const servico = await detectarServicoContextual(tenant.id, [
+    mensagemNormalizada,
+    ...obterUltimosTextosClienteNormalizados(mensagens),
+  ])
+
+  if (!servico) {
+    if (ultimaPerguntaFoiTriagemServico(ultimaMensagemIANormalizada) || ehRefinoDeHorarioSemConfirmacao(mensagemNormalizada)) {
+      return montarRespostaRefinoSemServico({
+        mensagemNormalizada,
+        clienteNome,
+        tomDeVoz: tenant.tomDeVoz,
+      })
+    }
+    return null
+  }
+
+  const data = obterDataDesejadaPeloContexto(mensagemNormalizada, mensagens, timeZone)
+  if (!data) {
+    return montarPerguntaQuandoAgendar(clienteNome, tenant.tomDeVoz)
+  }
+
+  const horaDesejada = obterHoraDesejadaPeloContexto(mensagemNormalizada, mensagens)
+  let disponibilidade = await executarFerramenta(tenant.id, 'verificarDisponibilidade', {
+    servicoId: servico.id,
+    data,
+    horaDesejada: horaDesejada || undefined,
+  })
+
+  if (!disponibilidade?.proximoHorario && disponibilidade?.sugestaoProximaData) {
+    disponibilidade = await executarFerramenta(tenant.id, 'verificarDisponibilidade', {
+      servicoId: servico.id,
+      data: disponibilidade.sugestaoProximaData,
+      horaDesejada: horaDesejada || undefined,
+    })
+  }
+
+  if (!disponibilidade?.proximoHorario) return null
+
+  const dataHoje = obterDataIsoNoFuso(new Date(), timeZone)
+  const dataSolicitada = obterDataDesejadaPeloContexto(mensagemNormalizada, mensagens, timeZone) || dataHoje
+  const inicioSlotIso = disponibilidade.proximoHorario?.inicio instanceof Date
+    ? disponibilidade.proximoHorario.inicio.toISOString()
+    : String(disponibilidade.proximoHorario?.inicio || '')
+  const dataDoSlot = inicioSlotIso
+    ? inicioSlotIso.split('T')[0]
+    : dataSolicitada
+  const prefixo = dataDoSlot === dataHoje
+    ? 'Pra hoje'
+    : dataSolicitada === dataHoje
+      ? 'Hoje ja nao tenho mais vaga, mas'
+      : `Pra ${formatarDataParaCliente(dataDoSlot, timeZone).toLowerCase()}`
+  const primeiroNomeProfissional = extrairPrimeiroNome(disponibilidade.proximoHorario.profissional)
+  const complementoProfissional = primeiroNomeProfissional ? ` com o ${primeiroNomeProfissional}` : ''
+
+  return `${prefixo}, tenho ${disponibilidade.proximoHorario.inicioFormatado}${complementoProfissional}. Da certo pra voce?`
+}
+
+const montarRespostaPosNomeComIntencaoPendente = async ({
+  tenant,
+  mensagens = [],
+  clienteNome = '',
+  ultimaMensagemClienteNormalizada = '',
+}) => {
+  const servico = await detectarServicoContextual(tenant.id, [
+    ultimaMensagemClienteNormalizada,
+    ...obterUltimosTextosClienteNormalizados(mensagens),
+  ])
+
+  if (!servico) {
+    return montarPerguntaPosNome(clienteNome, tenant.tomDeVoz)
+  }
+
+  return montarRespostaResgateHorario({
+    tenant,
+    mensagens,
+    mensagemNormalizada: ultimaMensagemClienteNormalizada,
+    clienteNome,
+    ultimaMensagemIANormalizada: '',
+  })
+}
+
+const montarRespostaModoBarbeiro = ({ mensagemNormalizada = '', tenant }) => {
+  const appUrl = process.env.APP_URL || 'https://app.marcai.com.br'
+  const linkPlano = `${appUrl}/plano/${tenant.hashPublico || tenant.slug}`
+
+  if (/\b(preco|preco|valor|quanto custa|plano|planos|mensalidade)\b/.test(mensagemNormalizada)) {
+    return `O Marcaí te ajuda a centralizar agenda, confirmacao e lembrete no WhatsApp sem te prender no celular. Os planos mudam conforme o tamanho da operacao. Se quiser comparar com calma, segue o link: ${linkPlano}`
+  }
+
+  if (/\b(testar|teste|demo|demonstracao|demonstracao|simular)\b/.test(mensagemNormalizada)) {
+    return 'Perfeito. Me manda uma mensagem como se fosse um cliente seu e eu te mostro como o Don responde na pratica.'
+  }
+
+  return 'Aqui o Don segura o WhatsApp enquanto voce foca no atendimento: responde, organiza a agenda, confirma presenca e ajuda a reduzir no-show. Isso tira peso operacional da recepcao e deixa a rotina mais redonda. Se quiser, me manda uma mensagem como se fosse um cliente seu e eu te mostro na pratica.'
 }
 
 // Envia notificação WhatsApp ao profissional (melhor esforço — não falha se não tiver telefone)
@@ -232,10 +842,11 @@ const montarSystemPrompt = async (tenant, cliente = null, primeiroContato = fals
       }).join('\n')
     : 'Nenhum plano mensal ativo cadastrado.'
 
+  const perfilAtendimento = obterPerfilAtendimentoIA(tenant.tomDeVoz)
   const tomDescricao = {
-    FORMAL: 'elegante e refinada, como concierge de uma barbearia premium.',
-    DESCONTRALIDO: 'caloroso e simpático, como recepção de barbearia premium.',
-    ACOLHEDOR: 'acolhedor e empático, transmitindo cuidado genuíno com o cliente.',
+    FORMAL: perfilAtendimento.tonalidade,
+    DESCONTRALIDO: perfilAtendimento.tonalidade,
+    ACOLHEDOR: perfilAtendimento.tonalidade,
   }
 
   const tz = tenant.timezone || 'America/Sao_Paulo'
@@ -337,6 +948,11 @@ const montarSystemPrompt = async (tenant, cliente = null, primeiroContato = fals
     return partes.length > 0 ? partes.join(' | ') : null
   }
   const apresentacaoSalao = montarApresentacaoSalao()
+  const mensagemBoasVindasPreferida = String(tenant.mensagemBoasVindas || '').trim()
+  const soCumprimentouAgora = ehSaudacaoSolta(mensagemAtualNormalizada)
+  const trouxeIntencaoObjetivaAgora = ehIntencaoObjetivaDeAtendimento(mensagemAtualNormalizada)
+  const playbookComercial = montarPlaybookComercial({ tenant, servicos, produtosEstoque, pacotes, planosMensais })
+  const secaoVendasInteligentes = montarSecaoVendasInteligentes({ tenant, servicos, produtosEstoque, pacotes, planosMensais })
 
   // Agendamentos futuros do cliente para contexto
   const secaoAgendamentos = agendamentosCliente.length
@@ -369,7 +985,15 @@ const montarSystemPrompt = async (tenant, cliente = null, primeiroContato = fals
     const nomeServico = (ultimoServicoConcluido.servico?.nome || '').toLowerCase()
     const limiteRevisao = nomeServico.includes('barba') ? 14 : nomeServico.includes('acabamento') ? 10 : 20
     if (diasDesdeUltimo >= limiteRevisao) {
-      secaoRetencao = `\n🔔 RETENÇÃO PROATIVA: Último serviço (${ultimoServicoConcluido.servico?.nome}) foi há ${diasDesdeUltimo} dias — está na hora de uma revisão.\n`
+      const primeiroNomeCliente = extrairPrimeiroNome(cliente?.nome)
+      secaoRetencao = `\n🔔 RETENÇÃO PROATIVA ATIVA:
+Último serviço: ${ultimoServicoConcluido.servico?.nome} | servicoId: ${ultimoServicoConcluido.servico?.id} | há ${diasDesdeUltimo} dias
+Profissional anterior: ${ultimoServicoConcluido.profissional?.nome || 'não identificado'}
+INSTRUÇÃO: Quando ${primeiroNomeCliente} abrir a conversa (mesmo que só com "oi"), NÃO faça triagem genérica. Aja assim:
+1. Chame verificarDisponibilidade com o servicoId acima e data de hoje.
+2. Se houver slot: "Boa, ${primeiroNomeCliente}! Já faz ${diasDesdeUltimo} dias do ${ultimoServicoConcluido.servico?.nome}. Tenho [dia] às [hora] com o [prof] — fecha?"
+3. Se não houver hoje: tente amanhã e ofereça o próximo slot disponível.
+4. NUNCA pergunte "o que vai ser hoje?" se a retenção estiver ativa — assuma o último serviço como intenção default.\n`
     }
   }
 
@@ -433,14 +1057,17 @@ const montarSystemPrompt = async (tenant, cliente = null, primeiroContato = fals
   const nomeExibicao = (cliente?.nome && cliente.nome !== cliente.telefone) ? cliente.nome : 'não informado'
 
   // Se o nome do cliente é o próprio telefone (padrão quando criado sem nome real), trata como sem nome
-  const nomeCliente = cliente?.nome && cliente.nome !== cliente.telefone ? cliente.nome : null
+  // Também valida para rejeitar nomes do WhatsApp com emojis, símbolos ou lixo
+  const nomeCliente = validarNomeWhatsApp(
+    cliente?.nome !== cliente?.telefone ? cliente?.nome : null
+  )
 
   // Detecta se o telefone é um LID (não é número real — não começa com 55 e tem mais de 12 dígitos)
   const telNorm = (cliente?.telefone || '').replace(/\D/g, '')
   const telefoneLID = telNorm.length > 0 && !telNorm.startsWith('55') && telNorm.length > 12
 
   const secaoCliente = cliente
-    ? `\n== CLIENTE DESTA CONVERSA ==\nNome: ${nomeExibicao}\nclienteId: ${cliente.id}  ← use SEMPRE este ID em criarAgendamento.clienteId\nTelefone: ${cliente.telefone}${telefoneLID ? `\n🔴 TELEFONE INVÁLIDO (código interno do WhatsApp). Após o cadastro do nome, peça o WhatsApp real do cliente: "Me passa seu número de WhatsApp com DDD para eu salvar no seu cadastro?" e use cadastrarCliente para atualizar o telefone.` : ''}${secaoPreferencias}${secaoFidelidade}${secaoAssinatura}${secaoRetencao}${secaoAgendamentos}${secaoHistoricoPassado}`
+    ? `\n== CLIENTE DESTA CONVERSA ==\nNome: ${nomeExibicao}\nclienteId: ${cliente.id}  ← use SEMPRE este ID em criarAgendamento.clienteId\nTelefone: ${cliente.telefone}${telefoneLID ? `\n🔴 TELEFONE INVÁLIDO (código interno do WhatsApp). NÃO interrompa o atendimento para pedir o número real logo após descobrir o nome.\n→ Primeiro resolva a intenção principal do cliente (horário, preço, serviço, cancelamento).\n→ Peça o WhatsApp real apenas quando fizer sentido fechar cadastro ou após adiantar o atendimento.\n→ Frase preferida: "Perfeito. Antes de finalizar, me passa seu WhatsApp com DDD pra eu salvar certinho no cadastro?"\n→ Quando ele enviar o número, use cadastrarCliente para atualizar o telefone.` : ''}${secaoPreferencias}${secaoFidelidade}${secaoAssinatura}${secaoRetencao}${secaoAgendamentos}${secaoHistoricoPassado}`
     : ''
   const secaoConversaEmAndamento = conversaEmAndamento
     ? '\n== CONVERSA EM ANDAMENTO ==\nEsta conversa já começou. Não reabra com "bom dia", "boa tarde" ou "boa noite" e não repita sua apresentação.\nVá direto ao ponto, a menos que o cliente tenha mandado apenas uma saudação solta.'
@@ -487,35 +1114,32 @@ const montarSystemPrompt = async (tenant, cliente = null, primeiroContato = fals
 → Quando o cliente não especificar profissional, busque disponibilidade sem fixar profissionalId.
 → Ao oferecer slot, mencione sempre o nome do profissional para o cliente saber com quem ficará.`
 
-// Variações de saudação inicial para não soar robótico sempre igual
+// Variações de saudação inicial — tom de barbearia premium, nunca robótico
 const variacoesSaudacao = [
-  `${saudacao}! Aqui é o ${NOME_IA}, assistente de IA da ${tenant.nome}.${nomeCliente ? ` ${nomeCliente}.` : ' Como você prefere ser chamado?'}`,
-  `${saudacao}! ${NOME_IA} aqui, assistente virtual da ${tenant.nome}.${nomeCliente ? ` ${nomeCliente}.` : ' Qual o seu nome?'}`,
-  `${saudacao}! Eu sou o ${NOME_IA}, bot com IA da ${tenant.nome}.${nomeCliente ? ` Como vai, ${nomeCliente}?` : ' Como posso te chamar?'}`,
-  `${saudacao}! ${tenant.nome} aqui, com o ${NOME_IA}, nosso assistente de IA.${nomeCliente ? ` Tudo bem, ${nomeCliente}?` : ' Com quem eu falo?'}`,
+  `${saudacao}! Aqui é o ${NOME_IA}, assistente da ${tenant.nome}.${nomeCliente ? ` Tudo bem, ${nomeCliente}?` : ' Como você prefere ser chamado?'}`,
+  `${saudacao}! ${NOME_IA} aqui, da ${tenant.nome}.${nomeCliente ? ` Boa te ver, ${nomeCliente}!` : ' Com quem eu falo?'}`,
+  `${saudacao}! Eu sou o ${NOME_IA}, da ${tenant.nome}.${nomeCliente ? ` Como vai, ${nomeCliente}?` : ' Qual o seu nome?'}`,
+  `${saudacao}! ${tenant.nome} aqui — sou o ${NOME_IA}.${nomeCliente ? ` Boa ver você, ${nomeCliente}!` : ' Como posso te chamar?'}`,
 ]
 // Usa variação baseada no segundo atual para distribuir sem ser aleatório demais
 const indiceVariacao = new Date().getSeconds() % variacoesSaudacao.length
 const saudacaoInicial = variacoesSaudacao[indiceVariacao]
 
 const blocoObrigatorio = primeiroContato
-    ? `🔴🔴🔴 INSTRUÇÃO ABSOLUTA — PRIMEIRA MENSAGEM 🔴🔴🔴
-IGNORA TODA OUTRA REGRA DE SAUDAÇÃO. Esta prevalece sobre tudo.
-Comece EXATAMENTE com: "${saudacaoInicial}"
-${!nomeCliente ? `→ PARE após a saudação. Aguarde o nome.
-→ Quando o nome chegar: chame cadastrarCliente PRIMEIRO.
-  → DEPOIS do cadastro, responda com EXATAMENTE esta mensagem (substituindo [nome] pelo nome do cliente):
-    "Olá, [nome]! 👋
-Seja bem-vindo à ${tenant.nome}.
-Na nossa página de agendamento, você pode escolher o barbeiro e o horário que ficar melhor para você.
-
-Se preferir, é só responder aqui e o ${NOME_IA}, nosso assistente de IA, te ajuda a agendar diretamente pelo WhatsApp. 😊
-
-🗓️ ${appUrl}/b/${tenant.hashPublico || tenant.slug}"
-  🔴 INCLUA O LINK ACIMA NA MENSAGEM — NÃO OMITA.
-  → Se o cliente responder escolhendo serviço, profissional ou horário: use verificarDisponibilidade (mostrando SOMENTE datas/horários disponíveis) e então criarAgendamento.
-  → Se o cliente preferir agendar pelo WhatsApp: siga o fluxo normal de agendamento conversacional.` : `→ Se o cliente já trouxe intenção (preço, horário, serviço, cancelamento, fidelidade): responda a intenção diretamente junto à saudação.`}
-NÃO omita "${NOME_IA}" ou "${tenant.nome}". Use EXATAMENTE a saudação acima — não crie outra.
+    ? `🔴🔴🔴 INSTRUÇÃO ABSOLUTA — PRIMEIRO CONTATO 🔴🔴🔴
+No primeiro turno, envie UMA unica resposta curta e natural.
+Comece com uma saudação breve e natural como o ${NOME_IA}, assistente da ${tenant.nome}. Variação sugerida: "${saudacaoInicial}"
+${mensagemBoasVindasPreferida ? `Preferência de boas-vindas do salão: "${mensagemBoasVindasPreferida}"\n→ Use isso como referência de tom, sem copiar mecanicamente.` : ''}
+${!nomeCliente ? `Sem nome salvo:
+→ Se a mensagem atual for só uma saudação${soCumprimentouAgora ? ' (e este é o caso agora)' : ''}: peça o nome e pare.
+→ Se a mensagem atual já trouxe intenção objetiva${trouxeIntencaoObjetivaAgora ? ' (sim, trouxe)' : ''}: reconheça rapidamente e peça o nome sem burocracia. Ex.: "Consigo te ajudar sim. Como você prefere ser chamado?"
+→ Se houver urgência explícita ("hoje", "hj", "agora", "ainda hoje"), mencione essa urgência na resposta ANTES de pedir o nome. Ex.: "Consigo te ajudar com horário pra hoje sim. Como você prefere ser chamado?"
+→ Quando o nome chegar: chame cadastrarCliente PRIMEIRO e RETOME o pedido pendente na mesma linha de raciocínio.
+→ Se o cliente mandar so o nome e nao houver pedido pendente, NAO responda com "como posso ajudar?". Use uma triagem objetiva. Exemplo preferido: "${montarPerguntaPosNome('Matheus', tenant.tomDeVoz)}"
+→ NÃO mande texto institucional longo, NÃO despeje link e NÃO reinicie a conversa do zero quando o nome chegar.
+→ Só ofereça o link do site se o cliente pedir para agendar sozinho ou quiser ver outros horários.` : `Cliente com nome conhecido:
+→ Se a mensagem atual trouxe intenção objetiva${trouxeIntencaoObjetivaAgora ? ' (sim, trouxe)' : ''}: responda a intenção imediatamente — NÃO inclua "como posso te ajudar?" nem perguntas genéricas. Vá direto ao ponto.
+→ Se foi só uma saudação${soCumprimentouAgora ? ' (sim, foi)' : ''}: cumprimente e faça uma única pergunta curta e especifica, nunca vaga.`}
 ${apresentacaoSalao ? `
 🏠 APRESENTAÇÃO DO SALÃO (use APENAS na 1ª visita, quando cliente for novo e não trouxer intenção específica):
 "${apresentacaoSalao}"
@@ -535,37 +1159,50 @@ ${apresentacaoSalao ? `
 5. NUNCA use *, ** (WhatsApp exibe literalmente). Texto limpo, máximo 1 emoji por mensagem.
 6. APRESENTE SEMPRE APENAS 1 SLOT por vez. NUNCA liste 2 ou mais opções de horário na mesma mensagem. Uma opção, uma decisão.
 7. RECLAMAÇÃO = ESCALAR. Se a mensagem contém "horrível", "péssimo", "não gostei", "ficou errado", "mal atendido", "decepcionado" → SEMPRE responda "Que pena ouvir isso. Vou te conectar com a equipe agora." e chame escalonarParaHumano. NUNCA peça para repetir. NUNCA trate como mensagem incompreensível.
+8. NUNCA chame criarAgendamento se o nome do cliente for "não informado" ou igual ao telefone. Peça o nome antes: "Antes de marcar, como você prefere ser chamado?"
+9. MENSAGEM EM CAIXA ALTA (CAPS LOCK): cliente urgente ou irritado. Responda com CALMA e resolva imediatamente — nunca espelhe o tom, nunca use CAPS na resposta.
+10. ÁUDIO: se a mensagem for "[ÁUDIO]", responda SEMPRE: "Não consigo ouvir áudios aqui, mas pode digitar que te ajudo na hora! ✍️" — nunca ignore.
+11. FIGURINHA: se a mensagem for "[FIGURINHA]", responda com leveza: "😄 Boa! Posso te ajudar com alguma coisa?" e siga o fluxo normalmente.
+12. DOCUMENTO: se a mensagem for "[DOCUMENTO]", responda: "Recebi um arquivo, mas não consigo abrir aqui. Se precisar de algo, é só digitar!"
+13. NPS — DÍGITO ISOLADO (1, 2, 3, 4 ou 5 como mensagem inteira): SEMPRE chame coletarFeedback imediatamente. Não pergunte "sobre o quê?". Não trate como mensagem ambígua. Após coletarFeedback: nota ≥ 4 → agradeça com leveza. nota ≤ 2 → "Que pena ouvir isso. Vou te conectar com a equipe." + escalonarParaHumano. nota 3 → "Obrigado pelo feedback! Se quiser contar o que aconteceu, pode falar."
 
 ## IDENTIDADE
-Você é ${NOME_IA}, assistente virtual com IA da barbearia ${tenant.nome}.
+Você é ${NOME_IA}, assistente premium da barbearia ${tenant.nome}.
 Tom: ${tomDescricao[tenant.tomDeVoz] || tomDescricao['ACOLHEDOR']}
+Estilo operacional: ${perfilAtendimento.nome}. ${perfilAtendimento.descricao}
 Data: ${hoje} | Hora: ${new Date().toLocaleString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: tenant.timezone || 'America/Sao_Paulo' })}
 Data ISO hoje: ${dataHoje} | Amanhã: ${dataAmanha}
-Ao se apresentar, deixe claro que é um assistente de IA.
 Nunca sugira horários que já passaram.
 ${secaoPlano}${secaoSotaque}
 
+## ESTILO OPERACIONAL
+${perfilAtendimento.regras}
+
 ## FORMATO
-- Direto, seguro, caloroso. Barbearia masculina.
+- Direto, seguro, caloroso. Barbearia masculina premium.
 - Padrão ACK + ACAO: reconheça o que o cliente disse, depois aja. Sem enrolação.
 - Varie frases naturalmente. Nunca repita o mesmo template duas vezes seguidas.
 - Formato de hora: "hoje às 16h", "amanhã às 9h30", "sexta às 14h".
 - Profissional: use APENAS o primeiro nome.
-- Emoji com propósito: ✂️💈 = identidade, 👋👊 = calor humano, ✅ = confirmação. Nenhum emoji em cobranças, reclamações ou regras.
-- Se o cliente falar "cabelo", "visual", "dar um trato" = intenção de corte masculino.
-- Pense como barbeiro premium: o Don não é só agendador, é consultor de imagem masculina. Quando natural, sugira serviços complementares como faria um barbeiro experiente.
+- Emoji com propósito: ✂️💈 = identidade, 👊 = calor humano, ✅ = confirmação. Nenhum emoji em cobranças, reclamações ou regras.
+- Se o cliente falar "cabelo", "visual", "dar um trato", "arrumar" = intenção de corte masculino.
+- Pense como concierge de barbearia: o Don não é só agendador, é assistente de imagem masculina. Quando natural, sugira complementos como faria um barbeiro experiente de confiança.
+- Link do site é apoio, não muleta. Se o cliente já trouxe intenção clara, resolva pelo WhatsApp antes de jogar link.
+- Nunca pareça robótico. Nunca use linguagem de atendimento SAC corporativo.
 
 Frases PROIBIDAS:
 - "Se precisar de mais alguma coisa, é só avisar" e variações
 - "Estou à sua disposição" / "Não hesite em entrar em contato"
-- "Agendamento realizado com sucesso" / "Fico feliz em ajudar"
-- "Infelizmente não há disponibilidade" → use "Hoje tá lotado! Mas tenho..."
-- "Desculpe, não compreendi" → use "Não entendi bem. Você quer agendar algo?"
+- "Agendamento realizado com sucesso" / "Fico feliz em ajudar" / "Com prazer"
+- "Infelizmente não há disponibilidade" → use "Essa data tá sem vaga, mas tenho..."
+- "Desculpe, não compreendi" → use "Não peguei bem. Você quer agendar algo?"
+- "Sou um assistente de IA" (proativamente) → diga apenas se perguntado diretamente
+- "Como posso te ajudar hoje?" quando já há intenção ou histórico do cliente
 
 Palavras PROIBIDAS: "descanso", "folga", "fechado", "não funcionamos", "não atendemos".
 Alternativas: "Hoje não tenho horário disponível", "Esse dia tá sem vaga".
 
-Fechamentos bons: "Perfeito, te espero! ✂️" | "Fechado! Até lá 👊" | "Tá marcado! A gente te aguarda." | "Vai ficar alinhado 💈"
+Fechamentos bons: "Perfeito, te espero! ✂️" | "Fechado! Até lá 👊" | "A gente te aguarda." | "Vai ficar alinhado 💈" | "Combinado! 👊"
 
 ## CATÁLOGO
 Os ÚNICOS serviços existentes são os listados abaixo. Serviço não listado: "Poxa, não temos [serviço] aqui! Temos: [lista]. Posso ajudar com algum?"
@@ -589,6 +1226,8 @@ ${listaDiferenciais.length > 0 ? `Diferenciais: ${listaDiferenciais.join(', ')}`
 ${idadeMinText ? `Corte infantil: ${idadeMinText}` : 'Corte infantil: não disponível'}
 ${tenant.numeroDono ? `Contato do dono: ${tenant.numeroDono}` : ''}
 
+${playbookComercial}
+
 ## CLIENTE
 ${secaoCliente}
 ${secaoConversaEmAndamento}
@@ -600,11 +1239,15 @@ ${nomeCliente
   ? primeiroContato
     ? 'Instrução de saudação definida no blocoObrigatório acima — siga exatamente.'
     : `Cliente retornando (${nomeCliente}):
-Se PREFERÊNCIAS CONHECIDAS contiver serviço e o cliente pedir para agendar: chame verificarDisponibilidade IMEDIATAMENTE com o serviço preferido.
-NUNCA diga "voltou" / "bem-vindo de volta" se HISTÓRICO DE SERVIÇOS estiver vazio.`
+→ Se RETENÇÃO PROATIVA ATIVA estiver no contexto do cliente: siga as instruções dela — não faça triagem genérica.
+→ Se PREFERÊNCIAS CONHECIDAS contiver serviço e o cliente pedir para agendar: chame verificarDisponibilidade IMEDIATAMENTE com o serviço preferido.
+→ NUNCA diga "voltou" / "bem-vindo de volta" se HISTÓRICO DE SERVIÇOS estiver vazio.
+→ NUNCA comece com pergunta genérica ("como posso ajudar?") quando há histórico ou retenção ativa.`
   : `Sem nome cadastrado:
 Verifique se o cliente informou o nome na mensagem. Padrões: "sou o [nome]", "me chamo", "aqui é o", "meu nome é", "pode me chamar de".
-Se a mensagem anterior pediu o nome e o cliente respondeu com 1-3 palavras simples: TRATE COMO NOME e chame cadastrarCliente imediatamente.
+Se a mensagem anterior pediu o nome e o cliente respondeu com 1-3 palavras simples: TRATE COMO NOME, chame cadastrarCliente imediatamente e retome o pedido pendente se existir.
+Se o cliente já trouxe serviço, horário, preço ou urgência antes do nome: NÃO jogue fora essa intenção. Reconheça em 1 frase, peça o nome com leveza e retome do ponto onde parou assim que o nome chegar.
+Se o cliente mandar só o nome e não houver pedido pendente: faça triagem útil. Ex.: "${montarPerguntaPosNome('Matheus', tenant.tomDeVoz)}"
 Se não detectar nome: "Como você prefere ser chamado?" — pare aqui.
 Se houver frustração/reclamação: acolha primeiro, depois peça nome.`}
 
@@ -612,10 +1255,14 @@ Pergunta direta antes do nome (novo usuário):
 Se o cliente perguntar algo objetivo (localização, pagamento, preço) sem intenção de agendamento:
 Responda brevemente + peça o nome: "Sim, aceitamos [X]! Como posso te chamar?"
 
+Pedido direto de agendamento sem nome:
+Reconheça a urgência ou o objetivo e peça o nome sem burocracia.
+Evite mandar link, apresentação longa ou pedir o WhatsApp real nessa etapa.
+
 Mensagem só com saudação ("oi", "olá", "bom dia"):
 ${nomeCliente
   ? `Cumprimente e pergunte como pode ajudar.`
-  : `"${saudacao}! Aqui é o ${NOME_IA}, assistente de IA da ${tenant.nome}. Como você prefere ser chamado?"`}
+  : `"${saudacao}! Aqui é o ${NOME_IA}, da ${tenant.nome}. Como você prefere ser chamado?"`}
 
 ### Agendamento
 
@@ -628,21 +1275,31 @@ Responda: "Oi ${nomeCliente || 'cliente'}. Vi que o pagamento do plano está em 
 - Expressões de semana futura: "semana que vem", "próxima semana" → calcule data ISO
 - Cliente retornando COM preferências salvas
 - Resposta pós-nome indica urgência: "hoje se tiver", "tem vaga?"
+- Cliente claramente com pressa: "hoje ainda", "agora", "saio do trampo 18h", "responde ai", "to correndo"
 
 Quando perguntar ANTES (1 pergunta leve):
 - Intenção genérica sem tempo: "quero agendar", "tem horário?"
 - Pergunta ideal (escolha UMA): "Prefere vir hoje ou tem um dia em mente?" / "Manhã ou tarde fica melhor?"
 
+Urgência real:
+- Trate como prioridade e fale com senso de prontidão.
+- Se já houver serviço + tempo, consulte disponibilidade antes de fazer pergunta genérica.
+- Nunca responda "como posso ajudar?" quando o cliente já disse claramente o que quer.
+
 Conversão de datas relativas (dataHoje = ${dataHoje}):
 "amanhã" → ${dataAmanha} | "semana que vem" → segunda da próxima semana | "essa sexta" → sexta desta semana
 Sempre converta para ISO (YYYY-MM-DD).
 Use SEMPRE o campo inicioFormatado retornado por verificarDisponibilidade para o dia da semana. NUNCA calcule o dia por conta própria.
+Trate os slots retornados como verdade absoluta: eles já respeitam expediente, intervalos, buffer e horários muito em cima da hora. Nunca invente encaixe fora disso.
 
 Sem serviço especificado e sem histórico → pergunte 1 vez: "Vai ser corte, barba ou os dois?"
 Anti-loop: se já perguntou serviço e cliente respondeu outra coisa, assuma CORTE como padrão.
 
-Combo detectado ("corte e barba", "os dois", "tudo"):
-Chame verificarDisponibilidadeCombo IMEDIATAMENTE. Apresente como 1 bloco.
+Combo detectado ("corte e barba", "os dois", "tudo", "os três", 2+ serviços na mesma mensagem):
+→ Chame verificarDisponibilidadeCombo IMEDIATAMENTE com os servicoIds dos serviços mencionados.
+→ Se o cliente JÁ informou dia ou período (amanhã, hoje, de manhã, à tarde, essa semana): use esse dado e chame a ferramenta SEM fazer pergunta prévia de turno ou confirmação de horário.
+→ NUNCA pergunte "Pode ser a partir das 9h?" antes de chamar a ferramenta. Chame primeiro, apresente o slot real depois.
+→ Apresente como 1 bloco: horário + profissional + total dos serviços somado.
 
 Agendamento para outra pessoa ("pro meu irmão"):
 Pergunte nome e telefone. Cadastre com cadastrarCliente. Agende com novo clienteId.
@@ -661,13 +1318,37 @@ Se cliente rejeitar:
 - Todos rejeitados → "Prefere manhã ou tarde?" e verifique próximo dia
 - Sem nenhum slot → "Essa semana tá disputada! Quer que eu veja a semana que vem?"
 
+Objeção de preço ("tá caro", "salgado", "tem algo mais em conta", "desconto"):
+- NUNCA discuta, justifique ou defenda o preço.
+- A alternativa sugerida DEVE ser sempre um serviço de valor MENOR ou igual ao reclamado. NUNCA sugira serviço mais caro como "opção mais em conta".
+  Regra: se o cliente reclamou do corte (R$20), só ofereça serviço que custe MENOS de R$20. Se não houver, diga: "É nossa opção mais em conta. Quer que eu agende?"
+  Regra: se o cliente reclamou de combo (corte+barba), ofereça só o corte OU só a barba — o mais barato dos dois.
+- Responda em 1 linha reconhecendo + 1 linha com alternativa real (mais barata) ou fechamento direto.
+  Exemplo (combo): "Entendo. Só o corte sai por R$XX — quer esse?"
+  Exemplo (serviço já o mais barato): "É nossa opção mais em conta. Quer que eu agende?"
+- Se o cliente pedir desconto diretamente: "Desconto não consigo aplicar por aqui, mas posso ver a opção mais enxuta do catálogo."
+- "Tá caro", "muito caro" e "tem algo melhor?" NÃO são reclamação e NÃO devem escalar para humano.
+- Nunca force venda depois de uma recusa clara ("não, deixa", "tá bom assim", "esquece").
+
+Múltiplos serviços ("quero corte, barba e sobrancelha" / "os três"):
+- Se todos os serviços forem do catálogo: chame verificarDisponibilidadeCombo com os 3 servicoIds.
+- Apresente como 1 bloco único: horário + profissional + total somado.
+- Se um dos serviços não existir: confirme os que existem e seja transparente sobre o que não tem.
+- NUNCA agende serviço a serviço separadamente quando o cliente pediu tudo junto.
+
 Confirmação do slot:
 Sinais: "sim", "pode", "pode ser", "marca aí", "confirma", "ok", "blz", "bora", "fechou", "beleza", "serve", "👍", "✅"
 → Se há slot apresentado e não rejeitado: chame criarAgendamento IMEDIATAMENTE. NUNCA peça confirmação de confirmação.
 → Se não há slot: chame verificarDisponibilidade primeiro.
 → clienteId: ${cliente?.id || '<ID do cliente acima>'}
 
-Após criar: SEMPRE comece com "✅ Agendado!" ou "✅ Marcado!" e varie o restante.
+Após criar: monte um card de confirmação premium — uma linha por dado, sem enrolação:
+✅ Marcado, [primeiro nome]!
+✂️ [Nome do serviço]
+📅 [Dia da semana], [dia] de [mês] às [hora]
+💈 Com [primeiro nome do profissional]
+${tenant.endereco ? `📍 ${tenant.endereco}` : ''}
+Finalize com 1 frase de fechamento caloroso e varie: "Até lá! 👊" / "Te esperamos! 💈" / "Vai ficar alinhado ✂️" / "A gente te aguarda!"
 Chame salvarPreferenciasCliente com serviço, profissional, turno.
 
 Erro CONFLITO_HORARIO: chame verificarDisponibilidade IMEDIATAMENTE.
@@ -681,7 +1362,9 @@ Tente ${dataHoje} → se vazio, ${dataAmanha} → se vazio, use sugestaoProximaD
 
 Cancelar:
 buscarAgendamentosCliente → se vazio: explique + ofereça agendar → se encontrar: cancelarAgendamento.
-Sucesso: "Cancelado. Quer que eu veja outro horário?"
+Após cancelar: NÃO se limite a "Cancelado." — chame verificarDisponibilidade com o mesmo serviço e data de hoje ou amanhã, e ofereça 1 slot real na mesma resposta.
+Exemplo: "Cancelado, [nome]. Já olhei aqui e tenho [dia] às [hora] com o [prof] — quer remarcar?"
+Meta: não perder a venda mesmo no cancelamento. Se o cliente recusar, encerre com leveza.
 
 Remarcar:
 buscarAgendamentosCliente → pergunte dia/turno → verificarDisponibilidade → slot → confirma → remarcarAgendamento.
@@ -693,41 +1376,7 @@ Se não há: "Claro! Quando quiser agendar, é só falar."
 
 Resposta a lembrete: "1"/"sim" = confirmarAgendamento | "2"/"não" = cancelarAgendamento → ofereça remarcar
 
-### Pós-agendamento (vendas inteligentes)
-
-Após criarAgendamento com sucesso, siga esta sequência de vendas (pare assim que o cliente recusar):
-
-PASSO 1 — Serviço complementar:
-- Corte agendado → "Quer aproveitar pra fazer a barba também? Consigo encaixar logo em seguida."
-- Barba agendada → "Um acabamento depois da barba deixa tudo mais alinhado. Quer adicionar?"
-- Sobrancelha → "Tem interesse em corte ou barba também?"
-Use verificarDisponibilidade com mesmo profissional + serviço complementar + mesma data.
-
-PASSO 2 — Combo/pacote (se pacotesAtivo e tem pacotes cadastrados):
-- Se o cliente pediu 2 serviços separados: "Temos o combo [nome] por [preço] — sai mais em conta que separado."
-- Apresente APENAS pacotes que incluem o serviço já agendado.
-
-PASSO 3 — Produtos (se estoqueAtivo e tem produtos):
-- Mencione 1 produto relevante ao serviço agendado:
-  - Corte → "Temos pomada/cera pra manter o visual em casa. Quer dar uma olhada?"
-  - Barba → "Temos óleo pra barba que ajuda a manter o shape. Interesse?"
-- Não liste todos os produtos. 1 sugestão natural, 1 vez.
-
-PASSO 4 — Fidelidade (se fidelidadeAtivo):
-- Cliente novo: "Aqui cada atendimento gera pontos. Juntando [X] você ganha [benefício]. Já começa acumulando nesse!"
-- Cliente com pontos: chame verificarSaldoFidelidade → "Você já tem X pontos! Faltam Y pro benefício."
-
-${tenant.membershipsAtivo && planosMensais.length > 0
-  ? `PASSO 5 — Plano mensal (se membershipsAtivo, 1 vez por conversa, só se cliente não tem plano):
-- "Pra quem vem toda semana/quinzena, temos o [nome] por [preço]/mês com [benefício]. Quer ver os detalhes?"
-- Se aceitar: use enviarLinkPlano.`
-  : ``}
-
-Regras de ouro das vendas:
-- NUNCA insista após recusa. 1 tentativa por item.
-- Seja natural, como barbeiro que conversa. Não seja vendedor insistente.
-- Se o cliente disser "só isso" / "não precisa" / "tá bom assim" → encerre com calorosa.
-- Priorize a experiência: o cliente veio cortar cabelo, não comprar coisas.
+${secaoVendasInteligentes}
 
 ## FERRAMENTAS
 - verificarDisponibilidade: SEMPRE antes de falar sobre horários.
@@ -759,8 +1408,14 @@ Regras de ouro das vendas:
 "Tem produto pra barba/cabelo?": ${tenant.estoqueAtivo ? `Apresente 1-2 produtos relevantes do catálogo.` : `"Essa informação você confirma com a equipe."`}
 "Tem combo/pacote?": ${tenant.pacotesAtivo ? `Apresente os pacotes disponíveis do catálogo com preços.` : `"Não temos combo cadastrado no momento."`}
 "Como funciona a fidelidade?": ${tenant.fidelidadeAtivo ? `"Cada atendimento gera pontos. Juntando o suficiente, você troca por benefício. Quer saber seu saldo?" → chame verificarSaldoFidelidade.` : `"No momento não temos programa de fidelidade."`}
+"RESGATAR" ou "quero resgatar" ou "usar meus pontos": ${tenant.fidelidadeAtivo ? `Chame PRIMEIRO verificarSaldoFidelidade para ver se tem pontos suficientes. Se podeResgatar=true, chame resgatarFidelidade. Se não, informe quantos pontos faltam.` : `"No momento não temos programa de fidelidade."`}
 
 ## CENÁRIOS ESPECIAIS
+
+Mensagem em CAIXA ALTA ("QUERO CANCELAR", "CADÊ MEU HORÁRIO", "NÃO APARECE"):
+→ Cliente urgente ou irritado. Responda com calma e objetividade — nunca espelhe o tom.
+→ Aja IMEDIATAMENTE: busque o agendamento, resolva a dor, não peça para repetir.
+→ Não explique processos. Não peça calma. Só resolva: "Entendi, vou ver agora."
 
 Reclamação ("não gostei", "ficou horrível", "péssimo"):
 "Que pena ouvir isso. Vou te conectar com a equipe." → escalonarParaHumano. NÃO reagende.
@@ -768,13 +1423,13 @@ Reclamação ("não gostei", "ficou horrível", "péssimo"):
 "Quero falar com alguém" / "atendente":
 "Claro. Vou te passar pra equipe." + escalonarParaHumano.
 
-"Você é uma IA?":
-"Sou o ${NOME_IA}, assistente virtual da ${tenant.nome}. Te ajudo com horários e agendamentos."
+"Você é uma IA?" / "Você é humano?" / "Estou falando com robô?":
+"Sou o ${NOME_IA}, assistente da ${tenant.nome} com IA. Mas pode falar normalmente — te ajudo com tudo que precisar aqui."
 
 Modo barbeiro/demo ("sou barbeiro", "estou avaliando"):
 Saia do fluxo de cliente. Responda como consultor. MANTENHA esse modo até o fim.
 
-NPS: "1"-"5" sozinhos = nota → coletarFeedback. Nota >= 4: agradece. Nota <= 2: escala.
+NPS: ver REGRA ABSOLUTA 13 — dígito isolado 1-5 = coletarFeedback IMEDIATO, sem perguntar contexto.
 
 Mensagem incompreensível: 1 tentativa → se persistir: escalonarParaHumano.
 "Obrigado" / "Tchau": resposta curta + encerrarConversa.
@@ -1027,7 +1682,48 @@ const executarFerramenta = async (tenantId, nomeFerramenta, parametros) => {
           clienteId: parametros.clienteId,
           status: ['AGENDADO', 'CONFIRMADO'],
           ordem: 'proximosPrimeiro',
+          inicio: new Date().toISOString(), // garante que só retorna agendamentos FUTUROS
         })
+
+        const clienteFerramenta = await banco.cliente.findUnique({
+          where: { id: parametros.clienteId },
+          select: {
+            id: true,
+            nome: true,
+            telefone: true,
+            lidWhatsapp: true,
+            criadoEm: true,
+            atualizadoEm: true,
+            _count: {
+              select: {
+                agendamentos: true,
+                conversas: true,
+              },
+            },
+          },
+        })
+
+        if (agendamentos.length === 0) {
+          logClienteTrace('ia_busca_agendamentos_sem_resultado', {
+            tenantId,
+            clienteId: parametros.clienteId,
+            cliente: resumirCliente(clienteFerramenta),
+          }, 'warn')
+        } else {
+          logClienteTrace('ia_busca_agendamentos_com_resultado', {
+            tenantId,
+            clienteId: parametros.clienteId,
+            cliente: resumirCliente(clienteFerramenta),
+            agendamentos: agendamentos.map((a) => ({
+              id: a.id,
+              status: a.status,
+              inicioEm: a.inicioEm,
+              servico: a.servico?.nome,
+              profissional: a.profissional?.nome,
+            })),
+          })
+        }
+
         return {
           agendamentos: agendamentos.map((a) => ({
             id: a.id,
@@ -1069,9 +1765,7 @@ const executarFerramenta = async (tenantId, nomeFerramenta, parametros) => {
       }
 
       case 'buscarCliente': {
-        const c = await banco.cliente.findUnique({
-          where: { tenantId_telefone: { tenantId, telefone: parametros.telefone } },
-        })
+        const c = await clientesServico.buscarPorTelefone(tenantId, parametros.telefone)
         return { cliente: c || null, encontrado: !!c }
       }
 
@@ -1119,6 +1813,29 @@ const executarFerramenta = async (tenantId, nomeFerramenta, parametros) => {
         }
       }
 
+      case 'resgatarFidelidade': {
+        const tenant = await banco.tenant.findUnique({ where: { id: tenantId } })
+        if (!tenant?.fidelidadeAtivo) {
+          return { sucesso: false, mensagem: 'Programa de fidelidade não está ativo.' }
+        }
+        try {
+          const saldoAtualizado = await fidelidadeServico.resgatarPontos(tenantId, parametros.clienteId)
+          const config = await fidelidadeServico.obterConfig(tenantId)
+          return {
+            sucesso: true,
+            mensagem: `Resgate confirmado! O cliente ganhou: ${config?.descricaoResgate || 'benefício'}. O próximo atendimento deste serviço será gratuito.`,
+            pontosRestantes: saldoAtualizado.pontos,
+            beneficio: config?.descricaoResgate,
+          }
+        } catch (err) {
+          return {
+            sucesso: false,
+            mensagem: err.mensagem || 'Não foi possível resgatar. Verifique se o cliente tem pontos suficientes.',
+            erro: err.codigo,
+          }
+        }
+      }
+
       case 'ativarPlano': {
         const assinatura = await planosServico.criarAssinatura(tenantId, {
           clienteId: parametros.clienteId,
@@ -1135,6 +1852,57 @@ const executarFerramenta = async (tenantId, nomeFerramenta, parametros) => {
         }
       }
 
+      case 'verificarCreditosPlano': {
+        const tenant = await banco.tenant.findUnique({ where: { id: tenantId }, select: { membershipsAtivo: true } })
+        if (!tenant?.membershipsAtivo) {
+          return { temPlano: false, mensagem: 'O estabelecimento não possui planos mensais ativos.' }
+        }
+
+        const assinatura = await banco.assinaturaCliente.findFirst({
+          where: {
+            tenantId,
+            clienteId: parametros.clienteId,
+            status: 'ATIVA',
+            OR: [{ fimEm: null }, { fimEm: { gte: new Date() } }],
+          },
+          include: {
+            planoAssinatura: { select: { nome: true } },
+            creditos: {
+              include: { servico: { select: { id: true, nome: true } } },
+            },
+          },
+          orderBy: { criadoEm: 'desc' },
+        })
+
+        if (!assinatura) {
+          return { temPlano: false, mensagem: 'Cliente não possui plano mensal ativo.' }
+        }
+
+        const servicosDisponiveis = assinatura.creditos
+          .filter((c) => c.creditosRestantes > 0)
+          .map((c) => ({
+            servicoId: c.servicoId,
+            servicoNome: c.servico.nome,
+            creditosRestantes: c.creditosRestantes,
+          }))
+
+        if (servicosDisponiveis.length === 0) {
+          return {
+            temPlano: true,
+            planoNome: assinatura.planoAssinatura?.nome,
+            servicosDisponiveis: [],
+            mensagem: `Cliente tem o plano ${assinatura.planoAssinatura?.nome}, mas já usou todos os créditos do ciclo.`,
+          }
+        }
+
+        return {
+          temPlano: true,
+          planoNome: assinatura.planoAssinatura?.nome,
+          servicosDisponiveis,
+          mensagem: `Cliente tem o plano ${assinatura.planoAssinatura?.nome} com créditos disponíveis. Use APENAS os serviços listados quando ele quiser agendar pelo plano.`,
+        }
+      }
+
       case 'escalonarParaHumano':
         return { escalonado: true, mensagem: 'Conversa transferida para atendente humano.' }
 
@@ -1144,7 +1912,7 @@ const executarFerramenta = async (tenantId, nomeFerramenta, parametros) => {
       case 'enviarLinkAgendamento': {
         const tenantInfo = await banco.tenant.findUnique({
           where: { id: tenantId },
-          select: { slug: true, hashPublico: true, nome: true },
+          select: { slug: true, nome: true },
         })
         const slug = tenantInfo?.hashPublico || tenantInfo?.slug
         // Monta link com nome do cliente (sem telefone LID)
@@ -1173,7 +1941,7 @@ const executarFerramenta = async (tenantId, nomeFerramenta, parametros) => {
       case 'enviarLinkPlano': {
         const tenantInfo = await banco.tenant.findUnique({
           where: { id: tenantId },
-          select: { slug: true, hashPublico: true, nome: true },
+          select: { slug: true, nome: true },
         })
         const slug = tenantInfo?.hashPublico || tenantInfo?.slug
         const linkPlano = `${process.env.APP_URL || 'https://app.marcai.com.br'}/plano/${slug}`
@@ -1282,6 +2050,57 @@ const normalizarTextoIntencao = (texto = '') =>
     .replace(/\s+/g, ' ')
     .trim()
 
+const ehSaudacaoSolta = (textoNormalizado = '') => {
+  if (!textoNormalizado) return false
+
+  return [
+    'oi',
+    'ola',
+    'bom dia',
+    'boa tarde',
+    'boa noite',
+    'opa',
+    'e ai',
+    'iae',
+    'fala',
+    'salve',
+    'slv',
+    'moca',
+    'moco',
+    'mano',
+  ].includes(textoNormalizado)
+}
+
+const ehIntencaoObjetivaDeAtendimento = (textoNormalizado = '') => (
+  /\b(corte|barba|combo|degrade|acabamento|sobrancelha|agendar|agenda|horario|horarios|hora|vaga|hoje|hj|amanha|amanhã|semana|sexta|sabado|sábado|cancelar|remarcar|preco|valor|quanto|plano|fidelidade|produto|cartao|cartão|pix|endereco|endereço|maps|localizacao|localização)\b/.test(textoNormalizado)
+)
+
+const ehRespostaCurtaComNome = (texto = '', iaPerguntouNome = false) => {
+  if (!iaPerguntouNome) return false
+
+  const textoNormalizado = normalizarTextoIntencao(texto)
+  if (!textoNormalizado || ehSaudacaoSolta(textoNormalizado) || ehIntencaoObjetivaDeAtendimento(textoNormalizado)) {
+    return false
+  }
+
+  const palavras = textoNormalizado.split(' ').filter(Boolean)
+  if (palavras.length < 1 || palavras.length > 3) return false
+
+  const palavrasBloqueadas = new Set([
+    'sim', 'nao', 'não', 'blz', 'beleza', 'ok', 'fechou', 'bora', 'hoje', 'amanha', 'amanhã',
+    'corte', 'barba', 'combo', 'horario', 'hora', 'vaga', 'tarde', 'manha', 'manhã', 'noite',
+  ])
+
+  return palavras.every((palavra) => palavra.length >= 2 && !palavrasBloqueadas.has(palavra))
+}
+
+const ehRespostaVagaAposNome = (texto = '') => {
+  const textoNormalizado = normalizarTextoIntencao(texto)
+  if (!textoNormalizado) return false
+
+  return /como posso te ajudar|como posso ajudar|o que voce quer fazer hoje|quer dar um trato no visual|em que posso ajudar/.test(textoNormalizado)
+}
+
 const ehPerguntaSobreIdentidadeDaIA = (textoNormalizado) => {
   if (!textoNormalizado) return false
 
@@ -1314,6 +2133,8 @@ const ehPedidoDiretoDeHumano = (textoNormalizado) => {
 
   return [
     /\bfala com humano\b/,
+    /\bquero falar com humano\b/,
+    /\bfalar com humano\b/,
     /\bquero falar com (?:alguem|alguém|uma pessoa)\b/,
     /\bme passa pra (?:alguem|alguém|uma pessoa|o atendente|um atendente)\b/,
     /\bquero falar com o atendente\b/,
@@ -1779,6 +2600,25 @@ const processarMensagem = async (tenantId, clienteId, conversaId, mensagemClient
 
   if (!tenant) throw { status: 404, mensagem: 'Tenant não encontrado' }
 
+  const clienteSemNomeConhecido = !(cliente?.nome && cliente.nome !== cliente.telefone)
+  const ultimaMensagemIAVisivel = [...mensagens].reverse().find((mensagem) => mensagem.remetente === 'ia')
+  const ultimaMensagemClienteVisivel = [...mensagens].reverse().find((mensagem) => mensagem.remetente === 'cliente')
+  const ultimaMensagemIANormalizada = normalizarTextoIntencao(ultimaMensagemIAVisivel?.conteudo || '')
+  const ultimaMensagemClienteNormalizada = normalizarTextoIntencao(ultimaMensagemClienteVisivel?.conteudo || '')
+  const iaPerguntouNomeNoTurnoAnterior = /como voce prefere ser chamado|qual o seu nome|como posso te chamar|com quem eu falo/.test(ultimaMensagemIANormalizada)
+  const haviaIntencaoObjetivaAntesDoNome = ehIntencaoObjetivaDeAtendimento(ultimaMensagemClienteNormalizada)
+
+  if (clienteSemNomeConhecido && ehRespostaCurtaComNome(mensagemCliente, iaPerguntouNomeNoTurnoAnterior)) {
+    const nomeDetectado = mensagemCliente
+      .trim()
+      .split(/\s+/)
+      .map((parte) => parte.charAt(0).toUpperCase() + parte.slice(1))
+      .join(' ')
+
+    await clientesServico.atualizar(tenantId, clienteId, { nome: nomeDetectado }).catch(() => {})
+    if (cliente) cliente.nome = nomeDetectado
+  }
+
   // Contexto de conversa anterior: quando esta é uma nova conversa (sem histórico),
   // carrega as últimas mensagens da conversa anterior do mesmo cliente para manter continuidade
   let mensagensContextoAnterior = []
@@ -1807,14 +2647,189 @@ const processarMensagem = async (tenantId, clienteId, conversaId, mensagemClient
   // Nova sessão de cliente conhecido (conversa encerrada/expirada) → primeiroContato = false → modo proativo
   const temContextoAnterior = mensagensContextoAnterior.length > 0
   const temPreferencias = !!cliente?.preferencias
-  const primeiroContato = mensagens.length === 0 && !temContextoAnterior && !temPreferencias
 
-  const systemPrompt = await montarSystemPrompt(tenant, cliente, primeiroContato, mensagemCliente, mensagens.length > 0)
+  // "Post-card first contact": histórico contém exatamente [msg_cliente + card_boas_vindas]
+  // → Don deve fazer o primeiro contato real nesta mensagem (não considerar como conversa em andamento)
+  const soTemMsgInicialECard = mensagens.length === 2
+    && mensagens[0]?.remetente === 'cliente'
+    && mensagens[1]?.remetente === 'ia'
+    && !temContextoAnterior
+    && !temPreferencias
+
+  const primeiroContato = (mensagens.length === 0 && !temContextoAnterior && !temPreferencias)
+    || soTemMsgInicialECard
+
+  // conversaEmAndamento = false quando é efetivamente o primeiro contato real com Don
+  const systemPrompt = await montarSystemPrompt(tenant, cliente, primeiroContato, mensagemCliente, mensagens.length > 0 && !soTemMsgInicialECard)
 
   // Salva mensagem do cliente
   await banco.mensagem.create({
     data: { conversaId, remetente: 'cliente', conteudo: mensagemCliente },
   })
+
+  // ── Card de boas-vindas — enviado SOMENTE na primeira mensagem de cada nova sessão ──
+  // Inclui horários derivados dos profissionais, diferenciais configurados e link personalizado.
+  // Don NÃO responde neste turno — só o card é enviado. Don entra a partir da próxima mensagem.
+  let mensagemProativa = null
+  if (mensagens.length === 0 && !conversa?.modoBarbeiro) {
+    try {
+      const appUrl_ = process.env.APP_URL || process.env.FRONTEND_URL || 'https://app.marcai.com.br'
+      const linkSlug_ = tenant.hashPublico || tenant.slug
+      const nomeLink_ = validarNomeWhatsApp(
+        cliente?.nome !== cliente?.telefone ? cliente?.nome : null
+      )
+      const telDigitos_ = (cliente?.telefone || '').replace(/\D/g, '')
+      const telReal_ = telDigitos_.startsWith('55') && telDigitos_.length >= 12 && telDigitos_.length <= 13
+
+      // Monta link personalizado com tel+nome se telefone real (não LID)
+      let linkAg_ = `${appUrl_}/b/${linkSlug_}`
+      if (telReal_) {
+        linkAg_ += `?tel=${encodeURIComponent(cliente.telefone)}`
+        if (nomeLink_) linkAg_ += `&nome=${encodeURIComponent(nomeLink_)}`
+      }
+
+      // Busca agendamento futuro ativo (prioridade: mostrar o próximo horário marcado)
+      const proxAg_ = clienteId ? await banco.agendamento.findFirst({
+        where: { tenantId, clienteId, status: { in: ['AGENDADO', 'CONFIRMADO'] }, inicioEm: { gte: new Date() } },
+        orderBy: { inicioEm: 'asc' },
+        include: {
+          servico: { select: { nome: true } },
+          profissional: { select: { nome: true } },
+        },
+      }) : null
+
+      // Busca último serviço concluído para card de retorno (só usado se não tiver proxAg_)
+      const ultimoAg_ = !proxAg_ && clienteId ? await banco.agendamento.findFirst({
+        where: { tenantId, clienteId, status: 'CONCLUIDO' },
+        orderBy: { inicioEm: 'desc' },
+        include: {
+          servico: { select: { nome: true } },
+          profissional: { select: { nome: true } },
+        },
+      }) : null
+
+      // ── Horários e diferenciais — só incluídos se apresentacaoSalaoAtivo ───
+      let horariosFmt_ = ''
+      const incluirApresentacao_ = tenant.apresentacaoSalaoAtivo !== false
+      if (incluirApresentacao_) try {
+        const profsHorario_ = await banco.profissional.findMany({
+          where: { tenantId, ativo: true },
+          select: { horarioTrabalho: true },
+        })
+        const DIAS_BR_ = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb']
+        const diasAtivos_ = {}
+        for (const p_ of profsHorario_) {
+          const ht_ = p_.horarioTrabalho || {}
+          for (let d_ = 0; d_ <= 6; d_++) {
+            const dia_ = ht_[d_] || ht_[String(d_)]
+            if (dia_?.ativo && dia_.inicio && dia_.fim) {
+              if (!diasAtivos_[d_]) {
+                diasAtivos_[d_] = { inicio: dia_.inicio, fim: dia_.fim }
+              } else {
+                if (dia_.inicio < diasAtivos_[d_].inicio) diasAtivos_[d_].inicio = dia_.inicio
+                if (dia_.fim > diasAtivos_[d_].fim) diasAtivos_[d_].fim = dia_.fim
+              }
+            }
+          }
+        }
+        const fmtH_ = (hhmm) => {
+          const [h_, m_] = hhmm.split(':')
+          return m_ === '00' ? `${parseInt(h_)}h` : `${parseInt(h_)}h${m_}`
+        }
+        // Ordena Seg→Sáb→Dom e agrupa dias consecutivos com mesmo horário
+        const ordem_ = [1, 2, 3, 4, 5, 6, 0].filter(d_ => diasAtivos_[d_])
+        if (ordem_.length > 0) {
+          const grupos_ = []
+          let g_ = null
+          for (const d_ of ordem_) {
+            const info_ = diasAtivos_[d_]
+            const chave_ = `${info_.inicio}-${info_.fim}`
+            if (!g_ || g_.chave !== chave_) {
+              if (g_) grupos_.push(g_)
+              g_ = { dias: [d_], chave: chave_, inicio: info_.inicio, fim: info_.fim }
+            } else {
+              g_.dias.push(d_)
+            }
+          }
+          if (g_) grupos_.push(g_)
+          horariosFmt_ = grupos_.map(grp_ => {
+            const nomeDias_ = grp_.dias.length === 1
+              ? DIAS_BR_[grp_.dias[0]]
+              : `${DIAS_BR_[grp_.dias[0]]}–${DIAS_BR_[grp_.dias[grp_.dias.length - 1]]}`
+            return `${nomeDias_} ${fmtH_(grp_.inicio)} às ${fmtH_(grp_.fim)}`
+          }).join(' | ')
+        }
+      } catch { /* horários indisponíveis — omite do card */ }
+
+      // ── Diferenciais configurados pelo salão ─────────────────────────────
+      const labDif_ = {
+        sinuca: 'sinuca', wifi: 'Wi-Fi', tv: 'TV', estacionamento: 'estacionamento',
+        cafezinho: 'cafezinho', cerveja: 'cerveja', ar_condicionado: 'ar-condicionado',
+        musica_ao_vivo: 'música ao vivo', venda_produtos: 'produtos',
+      }
+      const diferenciais_ = incluirApresentacao_ && Array.isArray(tenant.diferenciais) && tenant.diferenciais.length > 0
+        ? tenant.diferenciais.map(d_ => labDif_[d_] || d_).join(', ')
+        : ''
+
+      // Verifica se é cliente recorrente: tem agendamento concluído OU já teve conversa anterior
+      const temConversaAnterior_ = clienteId ? await banco.conversa.count({
+        where: { tenantId, clienteId, id: { not: conversaId } },
+      }) : 0
+      const ehRecorrente_ = !!(ultimoAg_ || temConversaAnterior_ > 0)
+
+      // ── Monta o card ─────────────────────────────────────────────────────
+      const saudacao_ = nomeLink_ ? `Fala, ${nomeLink_.split(' ')[0]}! 👋` : `Fala! 👋`
+      let msgLink_
+
+      if (proxAg_) {
+        // Tem agendamento futuro — mostra o horário e opções
+        const tz_ = tenant.timezone || 'America/Sao_Paulo'
+        const horaFmt_ = new Date(proxAg_.inicioEm).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: tz_ })
+        const dataFmt_ = new Date(proxAg_.inicioEm).toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long', timeZone: tz_ })
+        msgLink_ = [
+          saudacao_,
+          ``,
+          `Dei uma olhada aqui e seu horário já está reservado 💈`,
+          ``,
+          `🕒 ${horaFmt_} (${dataFmt_})`,
+          ``,
+          `Se quiser, posso:`,
+          `✔️ Confirmar`,
+          `🔄 Buscar outro horário`,
+          `❌ Cancelar`,
+        ].join('\n')
+      } else if (ehRecorrente_) {
+        // Cliente recorrente sem agendamento futuro — card direto ao ponto
+        msgLink_ = [
+          saudacao_,
+          ``,
+          `Aqui é o Don, assistente virtual da ${tenant.nome} 💈`,
+          ``,
+          `Quer agendar seu horário? Pode escolher pelo link ou me fala aqui que eu marco pra você:`,
+          `🗓️ ${linkAg_}`,
+        ].join('\n')
+      } else {
+        // Novo cliente — card completo com horários e diferenciais
+        const linhas_ = []
+        linhas_.push(`Oi${nomeLink_ ? `, ${nomeLink_}` : ''}! Aqui é o Don, assistente virtual da ${tenant.nome} 💈`)
+        if (horariosFmt_) linhas_.push(`📅 ${horariosFmt_}`)
+        if (diferenciais_) linhas_.push(`✨ ${diferenciais_}`)
+        linhas_.push(``)
+        linhas_.push(`Você pode agendar pelo link ou me fala aqui que eu marco pra você:`)
+        linhas_.push(`🗓️ ${linkAg_}`)
+        msgLink_ = linhas_.join('\n')
+      }
+
+      // Salva no histórico para contexto do LLM no próximo turno
+      await banco.mensagem.create({ data: { conversaId, remetente: 'ia', conteudo: msgLink_ } })
+      await banco.conversa.update({ where: { id: conversaId }, data: { atualizadoEm: new Date() } }).catch(() => {})
+
+      // Retorna imediatamente — Don responde na próxima mensagem do cliente
+      return { resposta: '', mensagemProativa: msgLink_, escalonado: false, encerrado: false }
+    } catch (errLink_) {
+      console.warn('[Don] Falha ao gerar card de boas-vindas:', errLink_.message)
+    }
+  }
 
   // Reconstrói histórico: contexto anterior (se houver) + mensagens da conversa atual
   const historicoMensagens = [
@@ -1822,10 +2837,33 @@ const processarMensagem = async (tenantId, clienteId, conversaId, mensagemClient
     ...reconstruirHistorico(mensagens),
   ]
 
+  // Normaliza mensagem antes de enviar ao LLM:
+  // 1. CAPS LOCK → lowercase (evita confusão do modelo, preserva intenção)
+  // 2. Abreviações BR comuns → forma completa (melhora reconhecimento de intenção)
+  const mensagemParaLLM = (() => {
+    let txt = mensagemCliente
+    // CAPS: converte se > 60% dos chars alfabéticos são maiúsculos
+    const letras = txt.replace(/[^a-zA-ZÀ-ú]/g, '')
+    const maiusculas = letras.replace(/[^A-ZÁÀÂÃÉÊÍÓÔÕÚ]/g, '')
+    if (letras.length >= 4 && maiusculas.length / letras.length > 0.6) {
+      txt = txt.toLowerCase()
+    }
+    // Abreviações BR frequentes
+    txt = txt
+      .replace(/\bhj\b/gi, 'hoje')
+      .replace(/\bamh\b|\bamhã\b/gi, 'amanhã')
+      .replace(/\bvc\b/gi, 'você')
+      .replace(/\bpq\b/gi, 'porque')
+      .replace(/\btb\b|\ttbm\b/gi, 'também')
+      .replace(/\bmsm\b/gi, 'mesmo')
+      .replace(/\bq\b/gi, 'que')
+    return txt
+  })()
+
   let mensagensIA = [
     { role: 'system', content: systemPrompt },
     ...historicoMensagens,
-    { role: 'user', content: mensagemCliente },
+    { role: 'user', content: mensagemParaLLM },
   ]
 
   let respostaFinal = ''
@@ -1851,6 +2889,67 @@ const processarMensagem = async (tenantId, clienteId, conversaId, mensagemClient
   const pedidoDiretoDeHumano = ehPedidoDiretoDeHumano(mensagemNormalizada)
   const responderDiretoSemFerramentas = barbeiroAvaliandoSistema || clientePerguntouSobreIdentidadeDaIA
 
+  // ── NPS: dígito isolado 1-5 → feedback determinístico (antes do LLM para não ser capturado como horário) ──
+  const ehNpsIsolado = /^[1-5]$/.test(mensagemCliente.trim()) && !primeiroContato
+  if (ehNpsIsolado) {
+    const nota = parseInt(mensagemCliente.trim(), 10)
+
+    // Tenta registrar no último agendamento concluído do cliente (best effort)
+    if (clienteId) {
+      const ultimoAg = await banco.agendamento.findFirst({
+        where: { tenantId, clienteId, status: 'CONCLUIDO' },
+        orderBy: { inicioEm: 'desc' },
+      }).catch(() => null)
+      if (ultimoAg) {
+        await banco.agendamento.update({
+          where: { id: ultimoAg.id },
+          data: { feedbackNota: nota },
+        }).catch(() => {})
+      }
+    }
+
+    const primeiroNome = extrairPrimeiroNome(cliente?.nome)
+    let respostaNps
+    if (nota <= 2) {
+      respostaNps = `Que pena ouvir isso, ${primeiroNome}. Vou te conectar com a equipe agora.`
+      escalonado = true
+      await banco.conversa.update({
+        where: { id: conversaId },
+        data: { status: 'ESCALONADA', motivoEscalacao: `NPS baixo: ${nota}` },
+      }).catch(() => {})
+    } else if (nota === 3) {
+      respostaNps = `Obrigado pelo feedback, ${primeiroNome}! Se quiser contar o que aconteceu, pode falar.`
+    } else {
+      respostaNps = `Que bom, ${primeiroNome}! Fico feliz. Até a próxima! 💈`
+    }
+
+    await banco.mensagem.create({ data: { conversaId, remetente: 'ia', conteudo: respostaNps } })
+    await banco.conversa.update({ where: { id: conversaId }, data: { atualizadoEm: new Date() } }).catch(() => {})
+
+    return { resposta: respostaNps, escalonado, encerrado: false }
+  }
+
+  // ── Handler pré-LLM: data/horário curto com serviço no contexto ──────────
+  // Ex: "hj", "hoje", "amanha", "às 15h", "14h" sozinhos — evita LLM retornar vazio
+  const ehDataOuHoraIsolada = (
+    /^(hj|hoje|agora|amanha|amanhã|depois de amanha|depois de amanhã)$/i.test(mensagemCliente.trim())
+    || /^(\d{1,2}h(\d{2})?|às \d{1,2}h|as \d{1,2}h|\d{2}:\d{2})$/i.test(mensagemCliente.trim())
+  )
+  if (ehDataOuHoraIsolada && !primeiroContato) {
+    const resgatePreLLM = await montarRespostaResgateHorario({
+      tenant,
+      mensagens,
+      mensagemNormalizada,
+      clienteNome: extrairPrimeiroNome(cliente?.nome),
+      ultimaMensagemIANormalizada,
+    }).catch(() => null)
+    if (resgatePreLLM) {
+      await banco.mensagem.create({ data: { conversaId, remetente: 'ia', conteudo: resgatePreLLM } })
+      await banco.conversa.update({ where: { id: conversaId }, data: { atualizadoEm: new Date() } })
+      return { resposta: resgatePreLLM, escalonado: false, encerrado: false }
+    }
+  }
+
   if (pedidoDiretoDeHumano) {
     escalonado = true
 
@@ -1873,6 +2972,9 @@ const processarMensagem = async (tenantId, clienteId, conversaId, mensagemClient
   }
 
   if (responderDiretoSemFerramentas) {
+    const respostaBarbeiroDeterministica = barbeiroAvaliandoSistema
+      ? montarRespostaModoBarbeiro({ mensagemNormalizada, tenant })
+      : null
     const systemPromptDireto = barbeiroAvaliandoSistema
       ? `Você é ${NOME_IA}, assistente de gestão da barbearia ${tenant.nome}. Um dono ou barbeiro está avaliando o sistema Marcaí para contratar.
 Responda com linguagem de negócio — direto, sem chatbot, como um consultor que entende de barbearia.
@@ -1892,7 +2994,7 @@ Responda em 2 frases curtas, sem saudação longa, sem emoji e sem parecer rotei
 Se perguntarem se você é IA, robô ou humano: seja transparente e seguro. Exemplo: "Sou o ${NOME_IA}, assistente virtual da ${tenant.nome}. Cuido de horários, agendamentos e dúvidas — no que posso te ajudar?"
 NUNCA corte a resposta no meio. Complete sempre a frase.`
 
-    respostaFinal = await responderSemFerramentas({
+    respostaFinal = respostaBarbeiroDeterministica || await responderSemFerramentas({
       mensagens: mensagensIA,
       systemPromptOverride: systemPromptDireto,
       maxTokensOverride: barbeiroAvaliandoSistema ? 800 : undefined,
@@ -2021,22 +3123,108 @@ NUNCA corte a resposta no meio. Complete sempre a frase.`
     }
   }
 
+  if (
+    respostaFinal
+    && ehRespostaCurtaComNome(mensagemCliente, iaPerguntouNomeNoTurnoAnterior)
+  ) {
+    const nomeCliente = cliente?.nome || mensagemCliente
+    const respostaPosNome = haviaIntencaoObjetivaAntesDoNome
+      ? await montarRespostaPosNomeComIntencaoPendente({
+          tenant,
+          mensagens,
+          clienteNome: nomeCliente,
+          ultimaMensagemClienteNormalizada,
+        })
+      : null
+    respostaFinal = respostaPosNome || montarPerguntaPosNome(nomeCliente, tenant.tomDeVoz)
+  }
+
+  if (
+    respostaFinal
+    && /oi pode repetir|nao captei bem|manda de novo|tive um probleminha/i.test(normalizarTextoIntencao(respostaFinal))
+  ) {
+    const respostaPrecoRapida = await montarRespostaRapidaPreco(tenant.id, mensagemNormalizada)
+    if (respostaPrecoRapida) {
+      respostaFinal = respostaPrecoRapida
+    }
+  }
+
+  if (respostaFinal && ehRespostaFallbackGenerica(respostaFinal)) {
+    const respostaHorarioResgate = await montarRespostaResgateHorario({
+      tenant,
+      mensagens,
+      mensagemNormalizada,
+      clienteNome: cliente?.nome || mensagemCliente,
+      ultimaMensagemIANormalizada,
+    })
+
+    if (respostaHorarioResgate) {
+      respostaFinal = respostaHorarioResgate
+    }
+  }
+
+  if (
+    respostaFinal
+    && clienteSemNomeConhecido
+    && /\b(hoje|hj|agora|ainda hoje)\b/.test(mensagemNormalizada)
+    && /como voce prefere ser chamado|qual o seu nome|como posso te chamar|com quem eu falo/i.test(normalizarTextoIntencao(respostaFinal))
+    && !/\b(hoje|hj|horario|vaga)\b/.test(normalizarTextoIntencao(respostaFinal))
+  ) {
+    respostaFinal = 'Consigo te ajudar com horario pra hoje sim. Como voce prefere ser chamado?'
+  }
+
   // Auto-append link de agendamento
   const appUrl = process.env.APP_URL || 'https://app.marcai.com.br'
   const linkSite = `${appUrl}/b/${tenant.hashPublico || tenant.slug}`
+  const clientePediuLinkAgendaDireto = /link.*agenda|agenda.*link|ver sozinho|agendar sozinho|me manda o link|manda o link do site|manda o link da agenda/i.test(mensagemNormalizada)
+  if (respostaFinal && clientePediuLinkAgendaDireto && !escalonado) {
+    respostaFinal = `Claro! Segue o link pra ver a agenda:\n🗓️ ${linkSite}`
+  }
+
+  if (respostaFinal && ehObjecaoPreco(mensagemNormalizada) && !respostaJaTrataObjecaoPreco(respostaFinal)) {
+    const respostaObjecaoPreco = await montarRespostaObjecaoPreco({
+      tenantId: tenant.id,
+      mensagens,
+      mensagemNormalizada,
+    })
+    if (respostaObjecaoPreco) {
+      respostaFinal = respostaObjecaoPreco
+    }
+  }
+
+  if (respostaFinal && clientePerguntouPagamento(mensagemNormalizada) && !respostaJaFalaPagamento(respostaFinal)) {
+    const respostaPagamento = montarRespostaPagamentoCurta(tenant)
+    if (respostaPagamento) {
+      respostaFinal = `${respostaPagamento} ${respostaFinal}`.trim()
+    }
+  }
+
+  if (
+    respostaFinal
+    && clientePerguntouProduto(mensagemNormalizada)
+    && (!tenant.estoqueAtivo || !respostaJaFalaProduto(respostaFinal) || /que pena ouvir isso|conectar com a equipe/i.test(normalizarTextoIntencao(respostaFinal)))
+  ) {
+    const respostaProduto = await montarRespostaProdutoCurta(tenant.id, tenant)
+    if (respostaProduto) {
+      respostaFinal = respostaProduto
+    }
+  }
+
   if (respostaFinal && !respostaFinal.includes(linkSite) && !respostaFinal.includes('🗓️')) {
     const ehConfirmacao = respostaFinal.includes('✅ Agendado') || respostaFinal.includes('✅ Marcado')
     const ehEscalacao = respostaFinal.includes('equipe agora') || escalonado
+    // Detecta se a IA está ativamente oferecendo um slot específico ao cliente
+    const sugerindoHorario = /pode ser\??|dá certo\??|fecha\??|te serve\??|fica bom\??|quer esse\??|que tal\??|topa\??|serve pra voc/i.test(respostaFinal)
+    // Só envia o link quando o assunto é agendamento/horário
+    const assuntoEhAgendamento = /horario|horário|agendar|agendamento|marcar|disponib|corte|barba|servico|serviço|atend|vaga|dia|hoje|amanha|amanhã|semana|encaixe/i.test(mensagemNormalizada)
     const linkJaEnviado = mensagens.some(m => m.conteudo?.includes('🗓️'))
 
-    if (!ehConfirmacao && !ehEscalacao && !linkJaEnviado) {
-      // Detecta se a IA está sugerindo um horário (oferecendo slot)
-      const sugerindoHorario = /pode ser\??|dá certo\??|fecha\??|te serve\??|fica bom\??|quer esse\??|que tal\??|topa\??|serve pra voc/i.test(respostaFinal)
-
-      if (sugerindoHorario) {
-        // Sugeriu horário — link como alternativa para ver outros
-        respostaFinal += `\n\nSe quiser conferir outros horários, é só acessar:\n🗓️ ${linkSite}`
-      }
+    if (!ehConfirmacao && !ehEscalacao && sugerindoHorario) {
+      // Sugeriu horário — link como alternativa para escolher sozinho
+      respostaFinal += `\n\nSe preferir escolher sozinho, é só acessar:\n🗓️ ${linkSite}`
+    } else if (!ehConfirmacao && !ehEscalacao && assuntoEhAgendamento && !linkJaEnviado) {
+      // Pergunta de agendamento sem link ainda enviado nesta conversa
+      respostaFinal += `\n\nVocê pode agendar pelo link ou me fala aqui que eu marco pra você:\n🗓️ ${linkSite}`
     }
   }
 
@@ -2050,10 +3238,12 @@ NUNCA corte a resposta no meio. Complete sempre a frase.`
     }
   }
 
-  // Salva resposta final da IA
-  await banco.mensagem.create({
-    data: { conversaId, remetente: 'ia', conteudo: respostaFinal },
-  })
+  // Salva resposta final da IA (guarda nulo — evita crash quando LLM retorna vazio)
+  if (respostaFinal != null) {
+    await banco.mensagem.create({
+      data: { conversaId, remetente: 'ia', conteudo: respostaFinal },
+    })
+  }
 
   await banco.conversa.update({ where: { id: conversaId }, data: { atualizadoEm: new Date() } })
 
@@ -2063,7 +3253,7 @@ NUNCA corte a resposta no meio. Complete sempre a frase.`
     gerarESalvarResumo(tenantId, cliente.id, mensagensIA).catch(() => {})
   }
 
-  return { resposta: respostaFinal, escalonado, encerrado }
+  return { resposta: respostaFinal, escalonado, encerrado, mensagemProativa }
 }
 
 // ─── Simular (painel) ─────────────────────────────────────────────────────────

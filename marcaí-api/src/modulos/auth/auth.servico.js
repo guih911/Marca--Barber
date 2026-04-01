@@ -4,8 +4,19 @@ const crypto = require('crypto')
 const banco = require('../../config/banco')
 const { jwtSecret, jwtRefreshSecret, jwtExpiresIn, jwtRefreshExpiresIn, bcryptSaltRounds } = require('../../config/auth')
 const { gerarSlugUnico } = require('../../utils/gerarSlug')
+const { enviarEmail, montarHtmlPadrao } = require('../../utils/email')
 
 // Gera par de tokens JWT (access + refresh)
+// Gera hash público único de 8 chars para URLs públicas
+const gerarHashPublico = async () => {
+  for (let i = 0; i < 20; i++) {
+    const hash = crypto.randomBytes(4).toString('hex') // 8 chars hex
+    const existente = await banco.tenant.findUnique({ where: { hashPublico: hash } })
+    if (!existente) return hash
+  }
+  return crypto.randomBytes(6).toString('hex').slice(0, 10) // fallback 10 chars
+}
+
 const gerarTokens = (usuario) => {
   const payload = {
     id: usuario.id,
@@ -29,6 +40,7 @@ const cadastrar = async ({ nome, email, senha }) => {
 
   const senhaHash = await bcrypt.hash(senha, bcryptSaltRounds)
   const slug = await gerarSlugUnico(nome)
+  const hashPublico = await gerarHashPublico()
 
   // Cria tenant e usuário em transação
   const resultado = await banco.$transaction(async (tx) => {
@@ -36,6 +48,7 @@ const cadastrar = async ({ nome, email, senha }) => {
       data: {
         nome,
         slug,
+        hashPublico,
         onboardingCompleto: false,
       },
     })
@@ -138,10 +151,11 @@ const loginOuCadastrarGoogle = async ({ googleId, email, nome, avatarUrl }) => {
   if (!usuario) {
     // Novo usuário: cria tenant e usuário
     const slug = await gerarSlugUnico(nome)
+    const hashPublico = await gerarHashPublico()
 
     const resultado = await banco.$transaction(async (tx) => {
       const tenant = await tx.tenant.create({
-        data: { nome, slug, onboardingCompleto: false },
+        data: { nome, slug, hashPublico, onboardingCompleto: false },
       })
       const novoUsuario = await tx.usuario.create({
         data: {
@@ -182,7 +196,7 @@ const loginOuCadastrarGoogle = async ({ googleId, email, nome, avatarUrl }) => {
   }
 }
 
-// Gera token de reset de senha e "envia" por email
+// Gera token de reset de senha e envia por e-mail
 const recuperarSenha = async ({ email }) => {
   const usuario = await banco.usuario.findUnique({ where: { email } })
   // Não revela se o email existe ou não (segurança)
@@ -193,8 +207,31 @@ const recuperarSenha = async ({ email }) => {
 
   await banco.tokenResetSenha.create({ data: { email, token, expiresAt } })
 
-  // Em produção: enviar email com link
-  console.log(`Link de reset: ${process.env.FRONTEND_URL}/redefinir-senha/${token}`)
+  const link = `${process.env.FRONTEND_URL || 'https://app.marcai.com.br'}/redefinir-senha/${token}`
+
+  const html = montarHtmlPadrao({
+    titulo: 'Redefinir sua senha',
+    corpo: `
+      <p>Olá${usuario.nome ? `, <strong style="color:#fff">${usuario.nome.split(' ')[0]}</strong>` : ''}!</p>
+      <p>Recebemos uma solicitação para redefinir a senha da sua conta no <strong style="color:#B8894D">Marcaí</strong>.</p>
+      <p>Clique no botão abaixo para criar uma nova senha. O link é válido por <strong style="color:#fff">1 hora</strong>.</p>
+      <p style="margin-top:12px;">Se não foi você quem solicitou, pode ignorar este e-mail com segurança — sua senha não será alterada.</p>
+    `,
+    botaoTexto: 'Redefinir minha senha',
+    botaoLink: link,
+  })
+
+  const enviado = await enviarEmail({
+    para: email,
+    assunto: 'Redefinição de senha — Marcaí',
+    texto: `Clique no link para redefinir sua senha: ${link}\n\nEste link expira em 1 hora. Se não foi você, ignore este e-mail.`,
+    html,
+  })
+
+  // Fallback: loga o link se o e-mail não estiver configurado (desenvolvimento)
+  if (!enviado) {
+    console.log(`[Auth] Link de reset para ${email}: ${link}`)
+  }
 
   return { mensagem: 'Se o e-mail existir, você receberá o link em breve.' }
 }
@@ -217,6 +254,27 @@ const redefinirSenha = async ({ token, novaSenha }) => {
   return { mensagem: 'Senha redefinida com sucesso' }
 }
 
+const buscarMeuPerfil = async ({ usuarioId, tenantId }) => {
+  const usuario = await banco.usuario.findFirst({
+    where: { id: usuarioId, tenantId },
+    include: { tenant: true },
+  })
+
+  if (!usuario) {
+    throw { status: 404, mensagem: 'Usuário não encontrado', codigo: 'USUARIO_NAO_ENCONTRADO' }
+  }
+
+  return {
+    id: usuario.id,
+    nome: usuario.nome,
+    email: usuario.email,
+    avatarUrl: usuario.avatarUrl,
+    tenantId: usuario.tenantId,
+    perfil: usuario.perfil,
+    onboardingCompleto: usuario.tenant.onboardingCompleto,
+  }
+}
+
 module.exports = {
   cadastrar,
   login,
@@ -224,4 +282,5 @@ module.exports = {
   loginOuCadastrarGoogle,
   recuperarSenha,
   redefinirSenha,
+  buscarMeuPerfil,
 }

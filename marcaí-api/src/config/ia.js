@@ -4,11 +4,10 @@ module.exports = {
   apiKey: process.env.GEMINI_API_KEY,
   baseURL: 'https://generativelanguage.googleapis.com/v1beta/openai/',
   modelo: 'gemini-2.5-flash',
-  maxTokens: 1024,
-  // Desabilita thinking do Gemini 2.5 Flash — evita raciocínio interno vazar na resposta ao cliente
-  // NOTA: thinking_config não é suportado pela API OpenAI-compatible do Gemini, causa 400.
-  // A proteção contra raciocínio vazado é feita pela função limparRaciocinio() no ia.servico.js.
-  thinkingBudget: -1, // -1 = desativado (0 causava envio de extra_body rejeitado pela API)
-  // Tempo máximo de inatividade de uma conversa ATIVA em minutos (2h)
+  // Aumentado de 1024 para 4096 - evita cortar mensagens com lista de horários/serviços
+  maxTokens: 4096,
+  // A protecao contra raciocinio vazado fica no limparRaciocinio() do ia.servico.js.
+  // thinking_config nao e suportado pela API OpenAI-compatible do Gemini.
+  thinkingBudget: -1,
   tempoInatividade: 120,
 }

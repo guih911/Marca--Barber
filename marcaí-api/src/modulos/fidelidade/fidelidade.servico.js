@@ -194,6 +194,40 @@ const obterSaldoCliente = async (tenantId, clienteId) => {
   return { saldo, config }
 }
 
+// Verifica se o cliente tem resgate pendente (não utilizado) e aplica no agendamento
+// Retorna true se aplicou o resgate (agendamento deve ser gratuito)
+const verificarEAplicarResgatePendente = async (tenantId, clienteId, agendamentoId) => {
+  const saldo = await banco.pontosFidelidade.findUnique({
+    where: { tenantId_clienteId: { tenantId, clienteId } },
+  })
+  if (!saldo) return { aplicado: false }
+
+  // Busca resgate pendente (tipo RESGATE sem agendamentoId associado)
+  const resgatePendente = await banco.historicoFidelidade.findFirst({
+    where: {
+      pontosFidelidadeId: saldo.id,
+      tipo: 'RESGATE',
+      agendamentoId: null,
+    },
+    orderBy: { criadoEm: 'desc' },
+  })
+
+  if (!resgatePendente) return { aplicado: false }
+
+  // Associa o resgate ao agendamento
+  await banco.historicoFidelidade.update({
+    where: { id: resgatePendente.id },
+    data: { agendamentoId },
+  })
+
+  const config = await obterConfig(tenantId)
+  return {
+    aplicado: true,
+    beneficio: config?.descricaoResgate || 'benefício de fidelidade',
+    historicoId: resgatePendente.id,
+  }
+}
+
 module.exports = {
   obterConfig,
   salvarConfig,
@@ -202,4 +236,5 @@ module.exports = {
   listarRanking,
   obterSaldoCliente,
   obterOuCriarSaldo,
+  verificarEAplicarResgatePendente,
 }

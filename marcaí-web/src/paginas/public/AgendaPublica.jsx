@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react'
 import { useParams, useSearchParams } from 'react-router-dom'
-import { Loader2, Calendar, Clock, User, Scissors, ChevronLeft, Phone } from 'lucide-react'
+import { Loader2, Calendar, Clock, User, Scissors, ChevronLeft, Phone, CheckCircle } from 'lucide-react'
 
 const API_URL = import.meta.env.VITE_API_URL ?? ''
+const MARCAI_LOGO = '/logo.svg'
 
 const apiFetch = async (path, opts = {}) => {
   const res = await fetch(`${API_URL}${path}`, {
@@ -28,6 +29,13 @@ const formatarDataExibicao = (iso) =>
     timeZone: 'America/Sao_Paulo',
   })
 
+const formatarDataHoraCompleta = (iso) =>
+  new Date(iso).toLocaleString('pt-BR', {
+    weekday: 'long', day: 'numeric', month: 'long',
+    hour: '2-digit', minute: '2-digit',
+    timeZone: 'America/Sao_Paulo',
+  })
+
 const DIAS_SEMANA = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb']
 const MESES = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez']
 
@@ -49,6 +57,7 @@ const C = {
   bgHeader: '#0a0a0a',
   gold: '#B8894D',
   goldDim: 'rgba(184,137,77,0.15)',
+  goldLight: 'rgba(184,137,77,0.25)',
   border: '#2a2a2a',
   borderStrong: '#333',
   borderHeader: '#222',
@@ -56,6 +65,8 @@ const C = {
   textSecondary: '#aaa',
   textDim: '#888',
   textOnGold: '#ffffff',
+  green: '#25D366',
+  greenDim: 'rgba(37,211,102,0.15)',
 }
 
 // ─── Máscara de telefone brasileiro ─────────────────────────────────────────
@@ -79,27 +90,49 @@ const agruparSlotsPorPeriodo = (slots) => {
   return grupos
 }
 
-// ─── Etapas ────────────────────────────────────────────────────────────────────
-// 1. Serviço → 2. Profissional → 3. Data/Hora → 4. Dados pessoais (novos) → WhatsApp
+// ─── Chave localStorage por barbearia ───────────────────────────────────────
+const chaveLocal = (slug) => `marcai_usuario_${slug}`
+
+const lerDadosLocais = (slug) => {
+  try {
+    const salvo = localStorage.getItem(chaveLocal(slug))
+    if (!salvo) return null
+    const parsed = JSON.parse(salvo)
+    if (parsed?.nome && parsed?.telefone) return parsed
+    return null
+  } catch {
+    return null
+  }
+}
+
+const salvarDadosLocais = (slug, dados) => {
+  try {
+    localStorage.setItem(chaveLocal(slug), JSON.stringify(dados))
+  } catch {
+    // localStorage indisponível — sem persistência
+  }
+}
+
+const limparDadosLocais = (slug) => {
+  try {
+    localStorage.removeItem(chaveLocal(slug))
+  } catch {}
+}
+
+// ─── Etapas: 1=Serviço 2=Profissional 3=Data/Hora 4=Dados pessoais 5=Sucesso ─
 
 const AgendaPublica = () => {
   const { slug } = useParams()
   const [searchParams] = useSearchParams()
 
-  // Cliente retornante? (tel + nome na URL)
-  const telUrl = searchParams.get('tel') || ''
-  const nomeUrl = searchParams.get('nome') || ''
-  const clienteRetornante = !!(telUrl && nomeUrl)
-
-  const totalEtapas = clienteRetornante ? 3 : 4
-
+  // Dados do tenant / catálogo
   const [carregando, setCarregando] = useState(true)
   const [erro, setErro] = useState(null)
   const [tenant, setTenant] = useState(null)
   const [servicos, setServicos] = useState([])
   const [profissionais, setProfissionais] = useState([])
 
-  // Seleções
+  // Seleções de agendamento
   const [servicoId, setServicoId] = useState('')
   const [profissionalId, setProfissionalId] = useState('')
   const [data, setData] = useState('')
@@ -109,14 +142,45 @@ const AgendaPublica = () => {
   const [nomeCliente, setNomeCliente] = useState('')
   const [telefoneCliente, setTelefoneCliente] = useState('')
 
+  // Dados salvos no localStorage
+  const [dadosSalvos, setDadosSalvos] = useState(null)
+
+  // Meus agendamentos
+  const [meusAgs, setMeusAgs] = useState([])
+  const [meusAgsCarregando, setMeusAgsCarregando] = useState(false)
+
+  // Assinatura/plano do cliente (serviços inclusos)
+  const [assinatura, setAssinatura] = useState(null)
+
+  // Navegação e estado
   const [etapa, setEtapa] = useState(1)
   const [slots, setSlots] = useState([])
   const [carregandoSlots, setCarregandoSlots] = useState(false)
+  const [agendando, setAgendando] = useState(false)
+  const [erroAgendamento, setErroAgendamento] = useState(null)
+  const [agendamentoConfirmado, setAgendamentoConfirmado] = useState(null)
 
   const dias = gerarDias(new Date(), 14)
 
-  // Carrega info do tenant
+  // Usuário retornante (dados no localStorage)
+  const clienteConhecido = !!(dadosSalvos?.nome && dadosSalvos?.telefone)
+  // Etapas visíveis na barra de progresso (sem a tela de sucesso)
+  const totalEtapas = clienteConhecido ? 3 : 4
+
+  // ── Carrega info do tenant ───────────────────────────────────────────────
   useEffect(() => {
+    // Prioridade: localStorage → URL params (gerados pelo bot com ?tel=&nome=)
+    const dadosLocal = lerDadosLocais(slug)
+    const telUrl = searchParams.get('tel') || ''
+    const nomeUrl = searchParams.get('nome') || ''
+    if (dadosLocal) {
+      setDadosSalvos(dadosLocal)
+    } else if (telUrl && nomeUrl) {
+      const dadosUrl = { nome: decodeURIComponent(nomeUrl), telefone: decodeURIComponent(telUrl) }
+      setDadosSalvos(dadosUrl)
+      salvarDadosLocais(slug, dadosUrl) // migra URL params para localStorage
+    }
+
     apiFetch(`/api/public/${slug}/info`)
       .then((dados) => {
         setTenant(dados.tenant)
@@ -127,14 +191,29 @@ const AgendaPublica = () => {
       .finally(() => setCarregando(false))
   }, [slug])
 
-  // Auto-seleciona hoje ao entrar na etapa 3
+  // ── Carrega meus agendamentos e verifica assinatura quando cliente é conhecido
   useEffect(() => {
-    if (etapa === 3 && !data && dias.length > 0) {
-      setData(dias[0])
-    }
+    const tel = dadosSalvos?.telefone
+    if (!tel || !slug) return
+    setMeusAgsCarregando(true)
+    const telLimpo = tel.replace(/\D/g, '')
+
+    // Busca agendamentos e assinatura em paralelo
+    Promise.all([
+      apiFetch(`/api/public/${slug}/meus-agendamentos?tel=${telLimpo}`).catch(() => []),
+      apiFetch(`/api/public/${slug}/verificar-assinatura?tel=${telLimpo}`).catch(() => null),
+    ]).then(([ags, assinaturaData]) => {
+      setMeusAgs(ags || [])
+      setAssinatura(assinaturaData?.temPlano ? assinaturaData.assinatura : null)
+    }).finally(() => setMeusAgsCarregando(false))
+  }, [dadosSalvos, slug])
+
+  // ── Auto-seleciona hoje ao entrar na etapa 3 ─────────────────────────────
+  useEffect(() => {
+    if (etapa === 3 && !data && dias.length > 0) setData(dias[0])
   }, [etapa]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Carrega slots quando data, serviço e profissional estão definidos
+  // ── Carrega slots ─────────────────────────────────────────────────────────
   useEffect(() => {
     if (!data || !servicoId) return
     setCarregandoSlots(true)
@@ -151,48 +230,82 @@ const AgendaPublica = () => {
     ? profissionais.filter((p) => p.servicoIds.includes(servicoId))
     : profissionais
 
-  const redirecionarWhatsApp = (slotEscolhido, nome, telefone) => {
-    const profEscolhido = profissionalId
-      ? profissionais.find((p) => p.id === profissionalId)
-      : slotEscolhido.profissional
-    const servicoEscolhido = servicos.find((s) => s.id === servicoId)
-    const dataFormatada = formatarDataExibicao(slotEscolhido.inicio)
-    const horaFormatada = formatarHora(slotEscolhido.inicio)
+  // ── Confirma agendamento via API ─────────────────────────────────────────
+  const confirmarAgendamento = async (nome, telefone) => {
+    setAgendando(true)
+    setErroAgendamento(null)
+    try {
+      const telLimpo = telefone.replace(/\D/g, '')
+      const telComCodigo = telLimpo.startsWith('55') && telLimpo.length >= 12 ? telLimpo : `55${telLimpo}`
 
-    const linhas = [
-      `Olá! Escolhi pelo site:`,
-      `Serviço: ${servicoEscolhido?.nome}`,
-      profEscolhido ? `Profissional: ${profEscolhido.nome}` : '',
-      `Data: ${dataFormatada} às ${horaFormatada}`,
-    ]
+      const profIdFinal = profissionalId || slot?.profissional?.id
+      if (!profIdFinal) throw new Error('Profissional não identificado. Volte e selecione um horário.')
 
-    // Para novos clientes, inclui nome e telefone
-    if (!clienteRetornante && nome) {
-      linhas.push(`Nome: ${nome}`)
-      if (telefone) linhas.push(`Telefone: ${telefone}`)
+      const dados = await apiFetch(`/api/public/${slug}/agendar`, {
+        method: 'POST',
+        body: JSON.stringify({
+          nome: nome.trim(),
+          telefone: telComCodigo,
+          servicoId,
+          profissionalId: profIdFinal,
+          inicio: slot.inicio,
+        }),
+      })
+
+      // Salva dados no localStorage para próximas visitas
+      const dadosNovos = { nome: nome.trim(), telefone: telComCodigo }
+      salvarDadosLocais(slug, dadosNovos)
+      setDadosSalvos(dadosNovos)
+      setAgendamentoConfirmado(dados)
+      setEtapa(5)
+      // Recarrega lista de agendamentos após confirmar
+      apiFetch(`/api/public/${slug}/meus-agendamentos?tel=${telComCodigo}`)
+        .then((d) => setMeusAgs(d || [])).catch(() => {})
+    } catch (e) {
+      setErroAgendamento(e.message || 'Não foi possível confirmar. Tente novamente.')
+    } finally {
+      setAgendando(false)
     }
-
-    const mensagem = linhas.filter(Boolean).join('\n')
-    const numero = (tenant?.whatsappNumero || tenant?.telefone || '').replace(/\D/g, '')
-    const url = `https://wa.me/${numero}?text=${encodeURIComponent(mensagem)}`
-    window.open(url, '_blank')
   }
 
+  // ── Avança após escolher slot ──────────────────────────────────────────
   const avancarAposSlot = () => {
-    if (clienteRetornante) {
-      redirecionarWhatsApp(slot, nomeUrl, telUrl)
+    if (clienteConhecido) {
+      // Usuário já conhecido — confirma direto com dados do localStorage
+      confirmarAgendamento(dadosSalvos.nome, dadosSalvos.telefone)
     } else {
       setEtapa(4)
     }
   }
 
+  // ── Confirmar na etapa 4 (dados pessoais) ─────────────────────────────
   const confirmarDadosPessoais = () => {
-    const telLimpo = telefoneCliente.replace(/\D/g, '')
-    const telComCodigo = telLimpo.length === 11 ? `55${telLimpo}` : telLimpo
-    redirecionarWhatsApp(slot, nomeCliente, telComCodigo)
+    confirmarAgendamento(nomeCliente, telefoneCliente)
   }
 
-  // ─── Loading ─────────────────────────────────────────────────────────────────
+  // ── Resetar para novo agendamento ─────────────────────────────────────
+  const reiniciar = () => {
+    setServicoId('')
+    setProfissionalId('')
+    setData('')
+    setSlot(null)
+    setSlots([])
+    setNomeCliente('')
+    setTelefoneCliente('')
+    setErroAgendamento(null)
+    setAgendamentoConfirmado(null)
+    setEtapa(1)
+  }
+
+  // ── Trocar usuário (limpa localStorage) ───────────────────────────────
+  const trocarUsuario = () => {
+    limparDadosLocais(slug)
+    setDadosSalvos(null)
+    setNomeCliente('')
+    setTelefoneCliente('')
+  }
+
+  // ─── Loading ─────────────────────────────────────────────────────────────
   if (carregando) {
     return (
       <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: C.bg }}>
@@ -202,7 +315,7 @@ const AgendaPublica = () => {
     )
   }
 
-  // ─── Erro ─────────────────────────────────────────────────────────────────────
+  // ─── Erro ─────────────────────────────────────────────────────────────────
   if (erro) {
     return (
       <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: C.bg }}>
@@ -215,7 +328,7 @@ const AgendaPublica = () => {
     )
   }
 
-  // ─── Render de seção de slots por período ────────────────────────────────────
+  // ─── Render de slots por período ─────────────────────────────────────────
   const renderGrupoSlots = (titulo, slotsGrupo) => {
     if (slotsGrupo.length === 0) return null
     return (
@@ -223,7 +336,7 @@ const AgendaPublica = () => {
         <p style={{ color: C.textSecondary, fontSize: 12, fontWeight: 600, marginBottom: 8, textTransform: 'uppercase', letterSpacing: 0.5 }}>
           {titulo}
         </p>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
+        <div className="slot-grid">
           {slotsGrupo.map((s) => {
             const sel = slot?.inicio === s.inicio && slot?.profissional?.id === s.profissional?.id
             return (
@@ -253,14 +366,13 @@ const AgendaPublica = () => {
     )
   }
 
-  // Encontrar próximo dia útil para sugestão
   const proximoDiaUtil = () => {
     const idx = dias.indexOf(data)
     if (idx < 0 || idx >= dias.length - 1) return null
     return dias[idx + 1]
   }
 
-  // ─── Render principal ────────────────────────────────────────────────────────
+  // ─── Render principal ────────────────────────────────────────────────────
   return (
     <div style={{ minHeight: '100vh', background: C.bg, display: 'flex', flexDirection: 'column' }}>
       <style>{`
@@ -270,47 +382,193 @@ const AgendaPublica = () => {
         .fade-in { animation: fadeIn 0.25s ease }
         @keyframes popIn { from { opacity: 0; transform: scale(0.7) } to { opacity: 1; transform: scale(1) } }
         .pop-in { animation: popIn 0.4s cubic-bezier(0.34,1.56,0.64,1) }
-        .slot-pill {
-          transition: background 0.15s, border-color 0.15s, transform 0.1s;
-        }
+        .slot-pill { transition: background 0.15s, border-color 0.15s, transform 0.1s; }
         .slot-pill:hover { transform: scale(1.03); }
         .day-pill { transition: background 0.15s, border-color 0.15s; }
         .card-sel { transition: background 0.15s, border-color 0.15s; }
         .btn-back { transition: background 0.15s; }
         .btn-back:hover { background: #1e1e1e !important; }
+        .btn-link { background: none; border: none; cursor: pointer; padding: 0; font-family: inherit; }
+        input:focus { outline: none; border-color: #B8894D !important; }
+        .public-header-shell,
+        .public-appointments-shell,
+        .public-progress-shell,
+        .public-content-shell {
+          width: 100%;
+          max-width: 520px;
+          margin: 0 auto;
+        }
+        .public-header-shell {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 16px;
+        }
+        .public-brand-block {
+          display: flex;
+          align-items: center;
+          gap: 14px;
+          min-width: 0;
+          flex: 1;
+        }
+        .public-brand-logo {
+          width: 116px;
+          max-width: 38vw;
+          height: auto;
+          display: block;
+          object-fit: contain;
+          flex-shrink: 0;
+          filter: drop-shadow(0 10px 24px rgba(0, 0, 0, 0.35));
+        }
+        .public-brand-copy {
+          min-width: 0;
+        }
+        .public-brand-kicker {
+          color: #B8894D;
+          font-size: 10px;
+          font-weight: 700;
+          letter-spacing: 0.16em;
+          text-transform: uppercase;
+          margin: 0 0 4px;
+        }
+        .public-user-badge {
+          text-align: right;
+          flex-shrink: 0;
+        }
+        .appointment-card {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+        }
+        .appointment-card-meta {
+          text-align: right;
+          flex-shrink: 0;
+        }
+        .slot-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(88px, 1fr));
+          gap: 8px;
+        }
+        @media (max-width: 420px) {
+          .public-header-shell {
+            flex-wrap: wrap;
+            align-items: flex-start;
+          }
+          .public-brand-block {
+            width: 100%;
+          }
+          .public-brand-logo {
+            width: 104px;
+            max-width: 44vw;
+          }
+          .public-user-badge {
+            width: 100%;
+            text-align: left;
+          }
+          .appointment-card {
+            flex-wrap: wrap;
+          }
+          .appointment-card-meta {
+            width: 100%;
+            padding-left: 48px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            text-align: left;
+          }
+        }
       `}</style>
 
       {/* ── Header ── */}
       <div style={{ background: C.bgHeader, borderBottom: `1px solid ${C.borderHeader}`, padding: '16px 20px' }}>
-        <div style={{ maxWidth: 480, margin: '0 auto', display: 'flex', alignItems: 'center', gap: 12 }}>
-          {tenant?.logoUrl ? (
+        <div className="public-header-shell">
+          <div className="public-brand-block">
             <img
-              src={`${API_URL}${tenant.logoUrl}`}
-              alt={tenant.nome}
-              style={{ width: 40, height: 40, borderRadius: '50%', objectFit: 'cover', border: `1.5px solid ${C.border}` }}
+              src={MARCAI_LOGO}
+              alt="Marcaí Barber"
+              className="public-brand-logo"
             />
-          ) : (
-            <div style={{
-              width: 40, height: 40, borderRadius: '50%',
-              background: C.goldDim, border: `1.5px solid ${C.gold}`,
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-            }}>
-              <Scissors size={18} style={{ color: C.gold }} />
+            <div className="public-brand-copy">
+              <p className="public-brand-kicker">Agendamento online</p>
+              <h1 style={{ color: C.textPrimary, fontWeight: 700, fontSize: 15, lineHeight: 1.2, margin: 0 }}>
+                {tenant?.nome}
+              </h1>
+              <p style={{ color: C.textDim, fontSize: 11, margin: '4px 0 0' }}>
+                Escolha seu horário em poucos passos.
+              </p>
+            </div>
+          </div>
+          {/* Badge de usuário retornante */}
+          {clienteConhecido && etapa < 5 && (
+            <div className="public-user-badge">
+              <p style={{ color: C.gold, fontSize: 12, fontWeight: 600, margin: 0 }}>
+                Olá, {dadosSalvos.nome.split(' ')[0]}!
+              </p>
+              <button
+                className="btn-link"
+                onClick={trocarUsuario}
+                style={{ color: C.textDim, fontSize: 10, textDecoration: 'underline' }}
+              >
+                Não é você?
+              </button>
             </div>
           )}
-          <div>
-            <h1 style={{ color: C.textPrimary, fontWeight: 700, fontSize: 15, lineHeight: 1.2, margin: 0 }}>
-              {tenant?.nome}
-            </h1>
-            <p style={{ color: C.textDim, fontSize: 11, margin: 0, marginTop: 2 }}>Agendamento online</p>
-          </div>
         </div>
       </div>
 
-      {/* ── Barra de progresso ── */}
+      {/* ── Meus agendamentos ── */}
+      {clienteConhecido && etapa < 5 && (meusAgsCarregando || meusAgs.length > 0) && (
+        <div style={{ background: C.bgHeader, borderBottom: `1px solid ${C.borderHeader}`, padding: '12px 20px' }}>
+          <div className="public-appointments-shell">
+            <p style={{ color: C.textDim, fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>
+              📅 Meus agendamentos
+            </p>
+            {meusAgsCarregando ? (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <Loader2 size={14} className="spin" style={{ color: C.gold }} />
+                <span style={{ color: C.textDim, fontSize: 12 }}>Carregando...</span>
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {meusAgs.map((ag) => (
+                  <div key={ag.id} className="appointment-card" style={{
+                    background: C.bgCard, border: `1px solid ${C.border}`,
+                    borderRadius: 12, padding: '10px 14px',
+                  }}>
+                    <div style={{
+                      width: 36, height: 36, borderRadius: '50%', flexShrink: 0,
+                      background: C.goldDim, border: `1.5px solid ${C.gold}`,
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      overflow: 'hidden',
+                    }}>
+                      {ag.profissionalAvatar
+                        ? <img src={`${API_URL}${ag.profissionalAvatar}`} alt={ag.profissional} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                        : <Scissors size={14} style={{ color: C.gold }} />}
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <p style={{ color: C.textPrimary, fontWeight: 700, fontSize: 13, margin: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {ag.servico}
+                      </p>
+                      <p style={{ color: C.textDim, fontSize: 11, margin: '2px 0 0' }}>
+                        com {ag.profissional.split(' ')[0]}
+                      </p>
+                    </div>
+                    <div className="appointment-card-meta">
+                      <p style={{ color: C.gold, fontWeight: 700, fontSize: 12, margin: 0 }}>{ag.horaFormatada}</p>
+                      <p style={{ color: C.textDim, fontSize: 11, margin: '2px 0 0' }}>{ag.dataFormatada}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ── Barra de progresso (oculta na tela de sucesso) ── */}
       {etapa <= totalEtapas && (
         <div style={{ background: C.bgHeader, borderBottom: `1px solid ${C.borderHeader}`, padding: '10px 20px' }}>
-          <div style={{ maxWidth: 480, margin: '0 auto', display: 'flex', gap: 6, alignItems: 'center' }}>
+          <div className="public-progress-shell" style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
             {Array.from({ length: totalEtapas }, (_, i) => i + 1).map((e) => (
               <div key={e} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
                 <div style={{
@@ -329,7 +587,7 @@ const AgendaPublica = () => {
               </div>
             ))}
           </div>
-          <div style={{ maxWidth: 480, margin: '6px auto 0', display: 'flex', gap: 6 }}>
+          <div className="public-progress-shell" style={{ marginTop: 6, display: 'flex', gap: 6 }}>
             {Array.from({ length: totalEtapas }, (_, i) => i + 1).map((e) => (
               <div key={e} style={{
                 flex: 1, height: 3, borderRadius: 4,
@@ -342,7 +600,7 @@ const AgendaPublica = () => {
       )}
 
       {/* ── Conteúdo ── */}
-      <div style={{ flex: 1, maxWidth: 480, margin: '0 auto', width: '100%', padding: '20px 16px 32px', boxSizing: 'border-box' }}>
+      <div className="public-content-shell" style={{ flex: 1, padding: '20px 16px 32px', boxSizing: 'border-box' }}>
 
         {/* ════ Etapa 1: Serviço ════ */}
         {etapa === 1 && (
@@ -353,14 +611,30 @@ const AgendaPublica = () => {
             </h2>
             {servicos.map((s) => {
               const sel = servicoId === s.id
+              // Verifica se o serviço está incluso no plano do cliente
+              const creditoPlano = assinatura?.servicosComCredito?.find((c) => c.servicoId === s.id)
+              const inclusoNoPlano = creditoPlano && creditoPlano.creditosRestantes > 0
               return (
                 <div
                   key={s.id}
                   className="card-sel"
-                  onClick={() => { setServicoId(s.id); setProfissionalId(''); setData(''); setSlot(null); setEtapa(2) }}
+                  onClick={() => {
+                    const profsDoServico = profissionais.filter((p) => p.servicoIds.includes(s.id))
+                    setServicoId(s.id)
+                    setData('')
+                    setSlot(null)
+                    if (profsDoServico.length === 1) {
+                      // Único profissional — auto-seleciona e pula etapa 2
+                      setProfissionalId(profsDoServico[0].id)
+                      setEtapa(3)
+                    } else {
+                      setProfissionalId('')
+                      setEtapa(2)
+                    }
+                  }}
                   style={{
-                    background: sel ? C.bgSelected : C.bgCard,
-                    border: `1.5px solid ${sel ? C.gold : C.border}`,
+                    background: sel ? C.bgSelected : inclusoNoPlano ? 'rgba(37,211,102,0.08)' : C.bgCard,
+                    border: `1.5px solid ${sel ? C.gold : inclusoNoPlano ? C.green : C.border}`,
                     borderRadius: 14, padding: '14px 16px', marginBottom: 10, cursor: 'pointer',
                   }}
                 >
@@ -369,7 +643,14 @@ const AgendaPublica = () => {
                       <p style={{ color: C.textPrimary, fontWeight: 600, fontSize: 14, margin: 0 }}>{s.nome}</p>
                       <p style={{ color: C.textDim, fontSize: 12, margin: '3px 0 0' }}>{s.duracaoMinutos} min</p>
                     </div>
-                    {s.precoCentavos != null && (
+                    {inclusoNoPlano ? (
+                      <div style={{ textAlign: 'right' }}>
+                        <span style={{ color: C.green, fontWeight: 700, fontSize: 13 }}>Incluso no plano</span>
+                        <p style={{ color: C.textDim, fontSize: 11, margin: '2px 0 0' }}>
+                          {creditoPlano.creditosRestantes}x restante{creditoPlano.creditosRestantes > 1 ? 's' : ''}
+                        </p>
+                      </div>
+                    ) : s.precoCentavos != null && (
                       <span style={{ color: C.gold, fontWeight: 700, fontSize: 14 }}>
                         {formatarReais(s.precoCentavos)}
                       </span>
@@ -402,7 +683,6 @@ const AgendaPublica = () => {
               </h2>
             </div>
 
-            {/* Qualquer profissional */}
             <div
               className="card-sel"
               onClick={() => { setProfissionalId(''); setData(''); setSlot(null); setEtapa(3) }}
@@ -460,7 +740,11 @@ const AgendaPublica = () => {
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
               <button
                 className="btn-back"
-                onClick={() => setEtapa(2)}
+                onClick={() => {
+                  // Se há só 1 profissional para o serviço, etapa 2 foi pulada — volta para etapa 1
+                  const profsDoServico = profissionais.filter((p) => p.servicoIds.includes(servicoId))
+                  setEtapa(profsDoServico.length === 1 ? 1 : 2)
+                }}
                 style={{
                   background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 10,
                   width: 32, height: 32, display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -549,18 +833,68 @@ const AgendaPublica = () => {
                   {renderGrupoSlots('Manhã', grupos.manha)}
                   {renderGrupoSlots('Tarde', grupos.tarde)}
                   {renderGrupoSlots('Noite', grupos.noite)}
+
                   {slot && (
-                    <button
-                      onClick={avancarAposSlot}
-                      style={{
-                        width: '100%', marginTop: 8, background: clienteRetornante ? '#25D366' : C.gold, color: '#fff',
-                        border: 'none', borderRadius: 12, padding: '13px', fontWeight: 700,
-                        fontSize: 15, cursor: 'pointer', fontFamily: 'inherit',
-                        display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-                      }}
-                    >
-                      {clienteRetornante ? 'Confirmar pelo WhatsApp' : 'Continuar'}
-                    </button>
+                    <>
+                      {/* Resumo do slot selecionado */}
+                      <div style={{
+                        background: C.bgCard, border: `1px solid ${C.border}`,
+                        borderRadius: 12, padding: '12px 14px', marginTop: 8, marginBottom: 10,
+                      }}>
+                        <p style={{ color: C.textDim, fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5, margin: '0 0 6px' }}>Selecionado</p>
+                        <p style={{ color: C.textPrimary, fontWeight: 600, fontSize: 13, margin: 0 }}>
+                          {formatarDataExibicao(slot.inicio)} às {formatarHora(slot.inicio)}
+                        </p>
+                        {slot.profissional && (
+                          <p style={{ color: C.textDim, fontSize: 12, margin: '2px 0 0' }}>
+                            com {slot.profissional.nome}
+                          </p>
+                        )}
+                      </div>
+
+                      {/* Botão de continuar / confirmar */}
+                      <button
+                        onClick={avancarAposSlot}
+                        disabled={agendando}
+                        style={{
+                          width: '100%', marginTop: 4,
+                          background: agendando ? '#333' : C.gold,
+                          color: '#fff', border: 'none', borderRadius: 12,
+                          padding: '13px', fontWeight: 700, fontSize: 15,
+                          cursor: agendando ? 'not-allowed' : 'pointer',
+                          fontFamily: 'inherit',
+                          display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+                        }}
+                      >
+                        {agendando ? (
+                          <><Loader2 size={18} className="spin" /> Confirmando...</>
+                        ) : clienteConhecido ? (
+                          `Confirmar agendamento`
+                        ) : (
+                          'Continuar'
+                        )}
+                      </button>
+
+                      {/* Erro de agendamento */}
+                      {erroAgendamento && (
+                        <div style={{
+                          marginTop: 12, background: 'rgba(220,38,38,0.1)', border: '1px solid rgba(220,38,38,0.3)',
+                          borderRadius: 10, padding: '10px 14px',
+                        }}>
+                          <p style={{ color: '#f87171', fontSize: 13, margin: 0 }}>⚠️ {erroAgendamento}</p>
+                        </div>
+                      )}
+
+                      {/* Info de usuário retornante */}
+                      {clienteConhecido && (
+                        <p style={{ color: C.textDim, fontSize: 12, textAlign: 'center', marginTop: 10 }}>
+                          Agendando como <strong style={{ color: C.textSecondary }}>{dadosSalvos.nome.split(' ')[0]}</strong> •{' '}
+                          <button className="btn-link" onClick={trocarUsuario} style={{ color: C.gold, fontSize: 12, textDecoration: 'underline' }}>
+                            Não sou eu
+                          </button>
+                        </p>
+                      )}
+                    </>
                   )}
                 </div>
               )
@@ -569,7 +903,7 @@ const AgendaPublica = () => {
         )}
 
         {/* ════ Etapa 4: Dados pessoais (apenas novos clientes) ════ */}
-        {etapa === 4 && !clienteRetornante && (
+        {etapa === 4 && !clienteConhecido && (
           <div className="fade-in">
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
               <button
@@ -590,7 +924,7 @@ const AgendaPublica = () => {
             </div>
 
             <p style={{ color: C.textDim, fontSize: 13, marginBottom: 20 }}>
-              Para confirmar seu agendamento, precisamos do seu nome e telefone.
+              Apenas no primeiro agendamento. Nas próximas vezes, não precisará preencher novamente.
             </p>
 
             {/* Nome */}
@@ -601,34 +935,35 @@ const AgendaPublica = () => {
                 value={nomeCliente}
                 onChange={(e) => setNomeCliente(e.target.value)}
                 placeholder="Seu nome"
+                autoComplete="name"
                 style={{
                   width: '100%', padding: '12px 14px', borderRadius: 12,
                   background: C.bgCard, border: `1.5px solid ${C.border}`,
                   color: C.textPrimary, fontSize: 14, fontFamily: 'inherit',
-                  outline: 'none', boxSizing: 'border-box',
+                  outline: 'none', boxSizing: 'border-box', transition: 'border-color 0.15s',
                 }}
-                onFocus={(e) => { e.target.style.borderColor = C.gold }}
-                onBlur={(e) => { e.target.style.borderColor = C.border }}
               />
             </label>
 
             {/* Telefone */}
             <label style={{ display: 'block', marginBottom: 24 }}>
-              <span style={{ color: C.textSecondary, fontSize: 12, fontWeight: 600, display: 'block', marginBottom: 6 }}>Telefone</span>
+              <span style={{ color: C.textSecondary, fontSize: 12, fontWeight: 600, display: 'block', marginBottom: 6 }}>WhatsApp</span>
               <input
                 type="tel"
                 value={telefoneCliente}
                 onChange={(e) => setTelefoneCliente(mascaraTelefone(e.target.value))}
                 placeholder="(11) 99999-9999"
+                autoComplete="tel"
                 style={{
                   width: '100%', padding: '12px 14px', borderRadius: 12,
                   background: C.bgCard, border: `1.5px solid ${C.border}`,
                   color: C.textPrimary, fontSize: 14, fontFamily: 'inherit',
-                  outline: 'none', boxSizing: 'border-box',
+                  outline: 'none', boxSizing: 'border-box', transition: 'border-color 0.15s',
                 }}
-                onFocus={(e) => { e.target.style.borderColor = C.gold }}
-                onBlur={(e) => { e.target.style.borderColor = C.border }}
               />
+              <span style={{ color: C.textDim, fontSize: 11, marginTop: 4, display: 'block' }}>
+                A confirmação será enviada por WhatsApp
+              </span>
             </label>
 
             {/* Resumo */}
@@ -637,7 +972,7 @@ const AgendaPublica = () => {
               padding: '14px 16px', marginBottom: 20,
             }}>
               <p style={{ color: C.textDim, fontSize: 11, fontWeight: 600, textTransform: 'uppercase', marginBottom: 8, letterSpacing: 0.5 }}>Resumo</p>
-              <p style={{ color: C.textPrimary, fontSize: 13, margin: '4px 0' }}>
+              <p style={{ color: C.textPrimary, fontSize: 13, margin: '4px 0', fontWeight: 600 }}>
                 {servicos.find((s) => s.id === servicoId)?.nome}
               </p>
               <p style={{ color: C.textSecondary, fontSize: 12, margin: '4px 0' }}>
@@ -652,19 +987,128 @@ const AgendaPublica = () => {
               )}
             </div>
 
+            {/* Erro */}
+            {erroAgendamento && (
+              <div style={{
+                marginBottom: 16, background: 'rgba(220,38,38,0.1)', border: '1px solid rgba(220,38,38,0.3)',
+                borderRadius: 10, padding: '10px 14px',
+              }}>
+                <p style={{ color: '#f87171', fontSize: 13, margin: 0 }}>⚠️ {erroAgendamento}</p>
+              </div>
+            )}
+
             <button
               onClick={confirmarDadosPessoais}
-              disabled={!nomeCliente.trim() || telefoneCliente.replace(/\D/g, '').length < 10}
+              disabled={!nomeCliente.trim() || telefoneCliente.replace(/\D/g, '').length < 10 || agendando}
               style={{
-                width: '100%', background: (!nomeCliente.trim() || telefoneCliente.replace(/\D/g, '').length < 10) ? '#1a3d2a' : '#25D366',
+                width: '100%',
+                background: (!nomeCliente.trim() || telefoneCliente.replace(/\D/g, '').length < 10 || agendando) ? '#1a1a1a' : C.gold,
                 color: '#fff', border: 'none', borderRadius: 12, padding: '13px', fontWeight: 700,
-                fontSize: 15, cursor: (!nomeCliente.trim() || telefoneCliente.replace(/\D/g, '').length < 10) ? 'not-allowed' : 'pointer',
+                fontSize: 15,
+                cursor: (!nomeCliente.trim() || telefoneCliente.replace(/\D/g, '').length < 10 || agendando) ? 'not-allowed' : 'pointer',
                 fontFamily: 'inherit', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
                 opacity: (!nomeCliente.trim() || telefoneCliente.replace(/\D/g, '').length < 10) ? 0.5 : 1,
                 transition: 'opacity 0.2s, background 0.2s',
               }}
             >
-              Confirmar pelo WhatsApp
+              {agendando ? (
+                <><Loader2 size={18} className="spin" /> Confirmando...</>
+              ) : (
+                'Confirmar agendamento'
+              )}
+            </button>
+          </div>
+        )}
+
+        {/* ════ Etapa 5: Sucesso ════ */}
+        {etapa === 5 && agendamentoConfirmado && (
+          <div className="fade-in" style={{ textAlign: 'center', paddingTop: 16 }}>
+            {/* Ícone de sucesso animado */}
+            <div className="pop-in" style={{
+              width: 72, height: 72, borderRadius: '50%',
+              background: C.greenDim, border: `2px solid ${C.green}`,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              margin: '0 auto 20px',
+            }}>
+              <CheckCircle size={36} style={{ color: C.green }} />
+            </div>
+
+            <h2 style={{ color: C.textPrimary, fontWeight: 700, fontSize: 20, margin: '0 0 6px' }}>
+              Agendamento confirmado!
+            </h2>
+            <p style={{ color: C.textDim, fontSize: 13, margin: '0 0 28px' }}>
+              Até lá! Esperamos por você. 💈
+            </p>
+
+            {/* Card com detalhes */}
+            <div style={{
+              background: C.bgCard, border: `1px solid ${C.border}`,
+              borderRadius: 16, padding: '20px', marginBottom: 24, textAlign: 'left',
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
+                <div style={{
+                  width: 36, height: 36, borderRadius: '50%', background: C.goldDim,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+                }}>
+                  <Scissors size={16} style={{ color: C.gold }} />
+                </div>
+                <div>
+                  <p style={{ color: C.textDim, fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5, margin: 0 }}>Serviço</p>
+                  <p style={{ color: C.textPrimary, fontWeight: 700, fontSize: 14, margin: 0 }}>{agendamentoConfirmado.servico}</p>
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
+                <div style={{
+                  width: 36, height: 36, borderRadius: '50%', background: C.goldDim,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+                }}>
+                  <User size={16} style={{ color: C.gold }} />
+                </div>
+                <div>
+                  <p style={{ color: C.textDim, fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5, margin: 0 }}>Profissional</p>
+                  <p style={{ color: C.textPrimary, fontWeight: 700, fontSize: 14, margin: 0 }}>{agendamentoConfirmado.profissional}</p>
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <div style={{
+                  width: 36, height: 36, borderRadius: '50%', background: C.goldDim,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+                }}>
+                  <Calendar size={16} style={{ color: C.gold }} />
+                </div>
+                <div>
+                  <p style={{ color: C.textDim, fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5, margin: 0 }}>Data e hora</p>
+                  <p style={{ color: C.textPrimary, fontWeight: 700, fontSize: 14, margin: 0 }}>
+                    {agendamentoConfirmado.inicioEm ? formatarDataHoraCompleta(agendamentoConfirmado.inicioEm) : '—'}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Aviso de WhatsApp */}
+            <div style={{
+              background: C.greenDim, border: `1px solid rgba(37,211,102,0.3)`,
+              borderRadius: 12, padding: '12px 16px', marginBottom: 24,
+              display: 'flex', alignItems: 'center', gap: 10,
+            }}>
+              <span style={{ fontSize: 20 }}>📱</span>
+              <p style={{ color: '#86efac', fontSize: 13, margin: 0, textAlign: 'left' }}>
+                Enviamos uma confirmação para o seu WhatsApp. Fique atento aos lembretes!
+              </p>
+            </div>
+
+            {/* Botão: Agendar outro */}
+            <button
+              onClick={reiniciar}
+              style={{
+                width: '100%', background: C.bgCard, color: C.textPrimary,
+                border: `1.5px solid ${C.border}`, borderRadius: 12, padding: '12px',
+                fontWeight: 600, fontSize: 14, cursor: 'pointer', fontFamily: 'inherit',
+              }}
+            >
+              Fazer outro agendamento
             </button>
           </div>
         )}

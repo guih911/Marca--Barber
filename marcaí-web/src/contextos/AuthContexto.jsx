@@ -8,8 +8,16 @@ export const AuthProvider = ({ children }) => {
   const [usuario, setUsuario] = useState(null)
   const [tenant, setTenant] = useState(null)
   const [carregando, setCarregando] = useState(true)
+  const [tenantCarregando, setTenantCarregando] = useState(false)
+  const [tenantInicializado, setTenantInicializado] = useState(false)
+
+  const definirUsuario = useCallback((dadosUsuario) => {
+    setUsuario(dadosUsuario)
+    localStorage.setItem('usuario', JSON.stringify(dadosUsuario))
+  }, [])
 
   const carregarTenant = useCallback(async () => {
+    setTenantCarregando(true)
     try {
       const resp = await api.get('/api/tenants/meu')
       const dados = resp.dados
@@ -18,6 +26,9 @@ export const AuthProvider = ({ children }) => {
       return dados
     } catch {
       return null
+    } finally {
+      setTenantCarregando(false)
+      setTenantInicializado(true)
     }
   }, [])
 
@@ -28,10 +39,17 @@ export const AuthProvider = ({ children }) => {
     if (usuarioSalvo) {
       try {
         setUsuario(JSON.parse(usuarioSalvo))
-        if (tenantSalvo) setTenant(JSON.parse(tenantSalvo))
+        if (tenantSalvo) {
+          setTenant(JSON.parse(tenantSalvo))
+          setTenantInicializado(true)
+        } else {
+          setTenantCarregando(true)
+        }
       } catch {
         removerTokens()
       }
+    } else {
+      setTenantInicializado(true)
     }
     setCarregando(false)
   }, [])
@@ -45,25 +63,31 @@ export const AuthProvider = ({ children }) => {
     const resposta = await api.post('/api/auth/login', { email, senha })
     const { accessToken, refreshToken, usuario: dadosUsuario } = resposta.dados
     salvarTokens(accessToken, refreshToken)
-    localStorage.setItem('usuario', JSON.stringify(dadosUsuario))
-    setUsuario(dadosUsuario)
+    definirUsuario(dadosUsuario)
+    setTenant(null)
+    setTenantCarregando(true)
+    setTenantInicializado(false)
     return dadosUsuario
-  }, [])
+  }, [definirUsuario])
 
   const cadastrar = useCallback(async (nome, email, senha) => {
     const resposta = await api.post('/api/auth/cadastro', { nome, email, senha })
     const { accessToken, refreshToken, usuario: dadosUsuario } = resposta.dados
     salvarTokens(accessToken, refreshToken)
-    localStorage.setItem('usuario', JSON.stringify(dadosUsuario))
-    setUsuario(dadosUsuario)
+    definirUsuario(dadosUsuario)
+    setTenant(null)
+    setTenantCarregando(true)
+    setTenantInicializado(false)
     return dadosUsuario
-  }, [])
+  }, [definirUsuario])
 
   const logout = useCallback(() => {
     removerTokens()
     localStorage.removeItem('tenant')
     setUsuario(null)
     setTenant(null)
+    setTenantCarregando(false)
+    setTenantInicializado(false)
   }, [])
 
   // Atualiza dados do usuário em memória (após onboarding)
@@ -81,6 +105,8 @@ export const AuthProvider = ({ children }) => {
       localStorage.setItem('tenant', JSON.stringify(atualizado))
       return atualizado
     })
+    setTenantInicializado(true)
+    setTenantCarregando(false)
   }, [])
 
   return (
@@ -89,7 +115,10 @@ export const AuthProvider = ({ children }) => {
         usuario,
         tenant,
         carregando,
+        tenantCarregando,
+        tenantInicializado,
         estaAutenticado: !!usuario,
+        definirUsuario,
         login,
         cadastrar,
         logout,

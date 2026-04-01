@@ -83,17 +83,18 @@ const LayoutAuth = ({ children }) => {
       <div className="w-full lg:w-1/2 flex items-center justify-center p-8 bg-white">
         <div className="w-full max-w-md">
           {/* Logo */}
-          <div className="flex items-center gap-2 mb-8">
-            <div className="w-8 h-8 bg-primaria rounded-lg flex items-center justify-center">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
-                <rect x="3" y="4" width="18" height="17" rx="3" stroke="white" strokeWidth="2" />
-                <path d="M8 2v4M16 2v4M3 10h18" stroke="white" strokeWidth="2" strokeLinecap="round" />
-                <circle cx="8" cy="15" r="1.5" fill="white" />
-                <circle cx="12" cy="15" r="1.5" fill="white" />
-                <circle cx="16" cy="15" r="1.5" fill="white" />
-              </svg>
-            </div>
-            <span className="text-xl font-bold text-texto font-display tracking-[0.12em]">Marcaí Barber</span>
+          <div className="mb-8" style={{ width: 260, maxWidth: '100%', height: 110, overflow: 'hidden' }}>
+            <img
+              src="/logo-light.jpeg"
+              alt="Marcaí Barber"
+              style={{
+                width: '100%',
+                height: '100%',
+                objectFit: 'cover',
+                objectPosition: 'center 44%',
+                display: 'block',
+              }}
+            />
           </div>
 
           {children}

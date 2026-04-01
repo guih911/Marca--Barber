@@ -78,7 +78,7 @@ const ModalAusencia = ({ profissional, onFechar }) => {
   )
 }
 
-const PainelProfissional = ({ profissional, servicos, onFechar, onSalvar }) => {
+const PainelProfissional = ({ profissional, servicos, planoSolo = false, onFechar, onSalvar }) => {
   const [aba, setAba] = useState('dados')
   const [dados, setDados] = useState({
     nome: profissional.nome || '',
@@ -96,6 +96,13 @@ const PainelProfissional = ({ profissional, servicos, onFechar, onSalvar }) => {
   const [comissaoPadrao, setComissaoPadrao] = useState('')
   const [salvando, setSalvando] = useState(false)
   const [mostrarAusencia, setMostrarAusencia] = useState(false)
+  const abasRenderizadas = planoSolo
+    ? [['dados', 'Dados', User], ['horarios', 'Hor\u00e1rios', Clock], ['servicos', 'Servi\u00e7os', Wrench]]
+    : [['dados', 'Dados', User], ['horarios', 'Hor\u00e1rios', Clock], ['servicos', 'Servi\u00e7os', Wrench], ['comissoes', 'Comiss\u00f5es', Percent]]
+
+  useEffect(() => {
+    if (planoSolo && aba === 'comissoes') setAba('dados')
+  }, [aba, planoSolo])
 
   const handleUploadFoto = async (e) => {
     const file = e.target.files?.[0]
@@ -104,14 +111,8 @@ const PainelProfissional = ({ profissional, servicos, onFechar, onSalvar }) => {
     try {
       const formData = new FormData()
       formData.append('avatar', file)
-      const token = localStorage.getItem('accessToken')
-      const res = await fetch(`${API_URL}/api/profissionais/${profissional.id}/avatar`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-        body: formData,
-      })
-      const json = await res.json()
-      if (json.sucesso) setAvatarUrl(json.dados.avatarUrl)
+      const json = await api.upload(`/api/profissionais/${profissional.id}/avatar`, formData)
+      if (json?.sucesso) setAvatarUrl(json.dados.avatarUrl)
     } catch (e) {
       console.error('Erro ao fazer upload:', e)
     } finally {
@@ -237,7 +238,7 @@ const PainelProfissional = ({ profissional, servicos, onFechar, onSalvar }) => {
 
         {/* Abas */}
         <div className="flex border-b border-borda shrink-0">
-          {[['dados', 'Dados', User], ['horarios', 'Horários', Clock], ['servicos', 'Serviços', Wrench], ['comissoes', 'Comissões', Percent]].map(([val, label, Icon]) => (
+          {abasRenderizadas.map(([val, label, Icon]) => (
             <button
               key={val}
               onClick={() => setAba(val)}
@@ -436,6 +437,7 @@ const ConfigProfissionais = () => {
   }
 
   useEffect(() => { carregar() }, [])
+  const profissionaisAtivos = profissionais.filter((profissional) => profissional.ativo !== false)
 
   return (
     <div className="max-w-4xl space-y-5">
@@ -444,7 +446,7 @@ const ConfigProfissionais = () => {
           <h1 className="text-2xl font-semibold text-texto">Profissionais</h1>
           <p className="text-texto-sec text-sm mt-1">Gerencie a equipe da barbearia</p>
         </div>
-        {planoSolo && profissionais.length >= 1 ? (
+        {planoSolo && profissionaisAtivos.length >= 1 ? (
           <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 text-amber-700 px-3 py-2 rounded-lg text-xs font-medium">
             <Scissors size={13} /> Plano Solo — 1 profissional
           </div>
@@ -515,6 +517,7 @@ const ConfigProfissionais = () => {
         <PainelProfissional
           profissional={selecionado}
           servicos={servicos}
+          planoSolo={planoSolo}
           onFechar={() => setSelecionado(null)}
           onSalvar={() => { carregar(); setSelecionado(null) }}
         />
@@ -524,6 +527,7 @@ const ConfigProfissionais = () => {
         <PainelProfissional
           profissional={{ nome: '', servicos: [], horarioTrabalho: {} }}
           servicos={servicos}
+          planoSolo={planoSolo}
           onFechar={() => setMostrarNovo(false)}
           onSalvar={() => { carregar(); setMostrarNovo(false) }}
         />

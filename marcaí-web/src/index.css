@@ -62,6 +62,10 @@
   ::-webkit-scrollbar-thumb:hover { background: #b8894d; }
 
   .sidebar-scroll::-webkit-scrollbar-thumb { background: #3a3028; }
+  .sidebar-scroll {
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+  }
 
   a, button {
     transition: color 0.15s, background-color 0.15s, border-color 0.15s, box-shadow 0.15s, opacity 0.15s, transform 0.15s;

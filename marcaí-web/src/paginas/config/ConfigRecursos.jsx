@@ -39,6 +39,7 @@ const recursos = [
     descricao: 'Configure o percentual de comissão por serviço. Veja o relatório mensal de quanto cada profissional gerou e quanto deve receber.',
     cor: 'text-green-500',
     fundo: 'bg-green-50',
+    plano: 'SALAO',
   },
   {
     chave: 'comandaAtivo',
@@ -114,12 +115,14 @@ const ConfigRecursos = () => {
   const toast = useToast()
   const { carregarTenant } = useAuth()
   const [flags, setFlags] = useState({})
+  const [planoAtual, setPlanoAtual] = useState('SALAO')
   const [carregando, setCarregando] = useState(true)
   const [salvando, setSalvando] = useState(false)
 
   useEffect(() => {
     api.get('/api/tenants/meu').then((res) => {
       const t = res.dados || {}
+      setPlanoAtual(t.planoContratado || 'SALAO')
       const estado = {}
       recursos.forEach((r) => { estado[r.chave] = t[r.chave] ?? false })
       setFlags(estado)
@@ -138,8 +141,8 @@ const ConfigRecursos = () => {
       await api.patch('/api/tenants/meu', flags)
       await carregarTenant()
       toast('Recursos atualizados com sucesso!', 'sucesso')
-    } catch {
-      toast('Erro ao salvar. Tente novamente.', 'erro')
+    } catch (e) {
+      toast(e?.erro?.mensagem || 'Erro ao salvar. Tente novamente.', 'erro')
     } finally {
       setSalvando(false)
     }
@@ -155,7 +158,8 @@ const ConfigRecursos = () => {
     )
   }
 
-  const ativos = Object.values(flags).filter(Boolean).length
+  const recursosDisponiveis = recursos.filter((recurso) => !recurso.plano || recurso.plano === planoAtual)
+  const ativos = recursosDisponiveis.filter((recurso) => flags[recurso.chave]).length
 
   return (
     <div className="max-w-3xl space-y-6">
@@ -173,13 +177,13 @@ const ConfigRecursos = () => {
         </div>
         <div>
           <p className="text-sm font-semibold text-texto">{ativos} recurso{ativos !== 1 ? 's' : ''} ativo{ativos !== 1 ? 's' : ''}</p>
-          <p className="text-xs text-texto-sec">de {recursos.length} disponíveis</p>
+          <p className="text-xs text-texto-sec">de {recursosDisponiveis.length} disponíveis</p>
         </div>
       </div>
 
       {/* Lista de recursos */}
       <div className="space-y-3">
-        {recursos.map((r) => {
+        {recursosDisponiveis.map((r) => {
           const Icone = r.icone
           const ativo = flags[r.chave] ?? false
           return (
