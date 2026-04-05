@@ -1,13 +1,13 @@
 require('dotenv').config()
 
 module.exports = {
-  apiKey: process.env.GEMINI_API_KEY,
-  baseURL: 'https://generativelanguage.googleapis.com/v1beta/openai/',
-  modelo: 'gemini-2.5-flash',
-  // Aumentado de 1024 para 4096 - evita cortar mensagens com lista de horários/serviços
+  provider: 'anthropic',
+  anthropicApiKey: process.env.ANTHROPIC_API_KEY,
+  modeloAnthropic: process.env.ANTHROPIC_MODEL || 'claude-3-5-haiku-latest',
+  modeloAnthropicComplexo: process.env.ANTHROPIC_MODEL_COMPLEXO || 'claude-3-7-sonnet-latest',
+  apiKey: process.env.GEMINI_API_KEY || process.env.OPENAI_API_KEY,
+  baseURL: process.env.GEMINI_API_KEY ? 'https://generativelanguage.googleapis.com/v1beta/openai/' : process.env.OPENAI_BASE_URL,
+  modelo: process.env.GEMINI_MODEL || 'gemini-2.5-flash',
   maxTokens: 4096,
-  // A protecao contra raciocinio vazado fica no limparRaciocinio() do ia.servico.js.
-  // thinking_config nao e suportado pela API OpenAI-compatible do Gemini.
-  thinkingBudget: -1,
   tempoInatividade: 120,
 }

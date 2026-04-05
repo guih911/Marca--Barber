@@ -26,6 +26,7 @@ const publicRotas = require('./modulos/public/public.rotas')
 const caixaRotas = require('./modulos/caixa/caixa.rotas')
 const galeriaRotas = require('./modulos/galeria/galeria.rotas')
 const filaEsperaRotas = require('./modulos/fila-espera/fila-espera.rotas')
+const pagamentosRotas = require('./modulos/pagamentos/pagamentos.rotas')
 const { inicializarSessoesWWebJS, iniciarCronLembretes } = require('./modulos/ia/ia.controlador')
 const { iniciarCronAutomacoes } = require('./modulos/ia/automacoes.servico')
 
@@ -127,16 +128,17 @@ app.use('/api/public', rateLimit(10, 60 * 1000), publicRotas)
 app.use('/api/caixa', caixaRotas)
 app.use('/api/galeria', galeriaRotas)
 app.use('/api/fila-espera', filaEsperaRotas)
+app.use('/api/pagamentos', pagamentosRotas)
 
 // Rota 404
 app.use((req, res) => {
   res.status(404).json({
     sucesso: false,
-    erro: { mensagem: 'Rota nÃ£o encontrada', codigo: 'ROTA_NAO_ENCONTRADA' },
+    erro: { mensagem: 'Rota não encontrada', codigo: 'ROTA_NAO_ENCONTRADA' },
   })
 })
 
-// Handler global de erros (deve ser o Ãºltimo middleware)
+// Handler global de erros (deve ser o último middleware)
 app.use(tratarErros)
 
 const PORTA = process.env.PORT || 3001

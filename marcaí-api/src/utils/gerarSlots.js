@@ -8,10 +8,30 @@ const ANTECEDENCIA_MINIMA_PADRAO_MINUTOS = 60
 const GRANULARIDADE_PADRAO_MINUTOS = 15
 
 /**
- * Converte horário "HH:MM" + data string "YYYY-MM-DD" em Date (horário de Brasília UTC-3)
+ * Converte horário "HH:MM" + data string "YYYY-MM-DD" em Date respeitando o timezone do tenant.
+ * Calcula o offset real do timezone (lida com horário de verão automaticamente).
  */
-const horarioParaDate = (dataStr, horario) => {
-  return new Date(`${dataStr}T${horario}:00.000-03:00`)
+const horarioParaDate = (dataStr, horario, timezone = 'America/Sao_Paulo') => {
+  // Cria data ao meio-dia para evitar problemas de DST na detecção de offset
+  const refDate = new Date(`${dataStr}T12:00:00Z`)
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: timezone,
+    timeZoneName: 'shortOffset',
+  })
+  const parts = formatter.formatToParts(refDate)
+  const tzPart = parts.find(p => p.type === 'timeZoneName')?.value || 'GMT-3'
+
+  // Extrai offset: "GMT-3" → "-03:00", "GMT-5" → "-05:00"
+  const match = tzPart.match(/GMT([+-])(\d{1,2})(?::?(\d{2}))?/)
+  let offsetStr = '-03:00' // fallback BRT
+  if (match) {
+    const sinal = match[1]
+    const horas = match[2].padStart(2, '0')
+    const minutos = (match[3] || '00').padStart(2, '0')
+    offsetStr = `${sinal}${horas}:${minutos}`
+  }
+
+  return new Date(`${dataStr}T${horario}:00.000${offsetStr}`)
 }
 
 /**
@@ -46,35 +66,34 @@ const gerarSlots = async (profissionalId, duracaoMinutos, dataStr, db = banco, s
     include: {
       bloqueios: true,
       servicos: servicoId ? { where: { servicoId } } : false,
+      tenant: { select: { timezone: true } },
     },
   })
 
   if (!profissional || !profissional.ativo) return []
 
-  // Valida se o profissional realiza o serviço solicitado (MÉDIO 4)
   if (servicoId && Array.isArray(profissional.servicos) && profissional.servicos.length === 0) {
-    return [] // profissional não faz este serviço — sem slots
+    return []
   }
 
-  // Interpreta a data como dia em BRT (UTC-3)
-  const dataBRT = new Date(`${dataStr}T12:00:00.000-03:00`)
-  const diaSemana = dataBRT.getDay() // 0=domingo, 6=sábado
+  const tz = profissional.tenant?.timezone || 'America/Sao_Paulo'
 
-  // Profissional sem horário configurado → sem disponibilidade
+  const dataBRT = horarioParaDate(dataStr, '12:00', tz)
+  const diaSemana = new Date(dataBRT).toLocaleDateString('en-US', { timeZone: tz, weekday: 'short' })
+  const diaSemanaNum = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 }[diaSemana] ?? new Date(dataBRT).getDay()
+
   if (!profissional.horarioTrabalho) return []
-  const horario = profissional.horarioTrabalho[diaSemana]
+  const horario = profissional.horarioTrabalho[diaSemanaNum]
 
-  // Profissional não trabalha nesse dia
   if (!horario || !horario.ativo) return []
 
-  const inicioTrabalho = horarioParaDate(dataStr, horario.inicio)
-  const fimTrabalho = horarioParaDate(dataStr, horario.fim)
+  const inicioTrabalho = horarioParaDate(dataStr, horario.inicio, tz)
+  const fimTrabalho = horarioParaDate(dataStr, horario.fim, tz)
   const intervalos = horario.intervalos || []
   const buffer = profissional.bufferMinutos || 0
 
-  // Limites do dia em BRT: meia-noite BRT = 03:00 UTC
-  const inicioDia = new Date(`${dataStr}T00:00:00.000-03:00`)
-  const fimDia = new Date(`${dataStr}T23:59:59.999-03:00`)
+  const inicioDia = horarioParaDate(dataStr, '00:00', tz)
+  const fimDia = horarioParaDate(dataStr, '23:59', tz)
 
   const agendamentosDoDia = await db.agendamento.findMany({
     where: {
@@ -115,8 +134,8 @@ const gerarSlots = async (profissionalId, duracaoMinutos, dataStr, db = banco, s
 
     // Verifica sobreposição com intervalos (almoço, etc.)
     for (const intervalo of intervalos) {
-      const inicioIntervalo = horarioParaDate(dataStr, intervalo.inicio)
-      const fimIntervalo = horarioParaDate(dataStr, intervalo.fim)
+      const inicioIntervalo = horarioParaDate(dataStr, intervalo.inicio, tz)
+      const fimIntervalo = horarioParaDate(dataStr, intervalo.fim, tz)
       if (sobrepoem(slotInicio, slotFim, inicioIntervalo, fimIntervalo)) {
         disponivel = false
         break
@@ -169,17 +188,17 @@ const gerarSlots = async (profissionalId, duracaoMinutos, dataStr, db = banco, s
 const validarJanelaTempo = async (db, { profissionalId, duracaoMinutos, inicioEm, agendamentoExcluidoId }) => {
   const profissional = await db.profissional.findUnique({
     where: { id: profissionalId },
-    include: { bloqueios: true },
+    include: { bloqueios: true, tenant: { select: { timezone: true } } },
   })
 
   if (!profissional || !profissional.ativo) {
     throw { status: 422, mensagem: 'Profissional inativo ou não encontrado.', codigo: 'PROFISSIONAL_INATIVO' }
   }
 
-  const tz = 'America/Sao_Paulo'
+  const tz = profissional.tenant?.timezone || 'America/Sao_Paulo'
   const dataStr = new Date(inicioEm).toLocaleDateString('en-CA', { timeZone: tz })
-  const dataBRT = new Date(`${dataStr}T12:00:00.000-03:00`)
-  const diaSemana = dataBRT.getDay()
+  const diaSemanaStr = new Date(inicioEm).toLocaleDateString('en-US', { timeZone: tz, weekday: 'short' })
+  const diaSemana = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 }[diaSemanaStr] ?? 0
 
   if (!profissional.horarioTrabalho) {
     throw { status: 422, mensagem: 'Profissional sem horário configurado.', codigo: 'SLOT_INVALIDO' }
@@ -194,8 +213,8 @@ const validarJanelaTempo = async (db, { profissionalId, duracaoMinutos, inicioEm
     }
   }
 
-  const inicioTrabalho = horarioParaDate(dataStr, horario.inicio)
-  const fimTrabalho = horarioParaDate(dataStr, horario.fim)
+  const inicioTrabalho = horarioParaDate(dataStr, horario.inicio, tz)
+  const fimTrabalho = horarioParaDate(dataStr, horario.fim, tz)
   const intervalos = horario.intervalos || []
   const buffer = profissional.bufferMinutos || 0
 
@@ -224,8 +243,8 @@ const validarJanelaTempo = async (db, { profissionalId, duracaoMinutos, inicioEm
 
   // Sobreposição com intervalos (almoço, etc.)
   for (const intervalo of intervalos) {
-    const inicioIntervalo = horarioParaDate(dataStr, intervalo.inicio)
-    const fimIntervalo = horarioParaDate(dataStr, intervalo.fim)
+    const inicioIntervalo = horarioParaDate(dataStr, intervalo.inicio, tz)
+    const fimIntervalo = horarioParaDate(dataStr, intervalo.fim, tz)
     if (sobrepoem(slotInicio, slotFim, inicioIntervalo, fimIntervalo)) {
       throw {
         status: 422,
@@ -236,8 +255,8 @@ const validarJanelaTempo = async (db, { profissionalId, duracaoMinutos, inicioEm
   }
 
   // Sobreposição com bloqueios do profissional
-  const inicioDia = new Date(`${dataStr}T00:00:00.000-03:00`)
-  const fimDia = new Date(`${dataStr}T23:59:59.999-03:00`)
+  const inicioDia = horarioParaDate(dataStr, '00:00', tz)
+  const fimDia = horarioParaDate(dataStr, '23:59', tz)
   const bloqueiosDoDia = profissional.bloqueios.filter((b) =>
     sobrepoem(b.inicioEm, b.fimEm, inicioDia, fimDia)
   )

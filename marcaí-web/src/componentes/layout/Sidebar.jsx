@@ -12,7 +12,6 @@ import {
   UserCog,
   Puzzle,
   BadgeDollarSign,
-  Crown,
   Gift,
   Archive,
   BarChart2,

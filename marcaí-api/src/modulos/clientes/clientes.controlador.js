@@ -1,5 +1,6 @@
 ﻿const clientesServico = require('./clientes.servico')
 const banco = require('../../config/banco')
+const whatsappServico = require('../ia/whatsapp.servico')
 
 const listar = async (req, res, next) => {
   try {
@@ -21,11 +22,40 @@ const buscarPorId = async (req, res, next) => {
 
 const criar = async (req, res, next) => {
   try {
-    const cliente = await clientesServico.criar(req.usuario.tenantId, req.body)
+    const tenantId = req.usuario.tenantId
+    const cliente = await clientesServico.criar(tenantId, req.body)
     res.status(201).json({ sucesso: true, dados: cliente })
+
+    // Envia mensagem de boas-vindas via WhatsApp (fire-and-forget)
+    enviarBoasVindas(tenantId, cliente).catch((err) =>
+      console.error('[Clientes] Erro ao enviar boas-vindas WhatsApp:', err.message)
+    )
   } catch (erro) {
     next(erro)
   }
+}
+
+const enviarBoasVindas = async (tenantId, cliente) => {
+  const tenant = await banco.tenant.findUnique({
+    where: { id: tenantId },
+    select: { nome: true, slug: true, configWhatsApp: true, nomeIA: true },
+  })
+  if (!tenant?.configWhatsApp?.provedor || !tenant.slug) return
+
+  const appUrl = process.env.APP_URL || 'https://barber.xn--marca-3sa.com'
+  const nomeIA = tenant.nomeIA || 'Don Barber'
+  const linkAgendamento = `${appUrl}/b/${tenant.slug}`
+  const mensagem =
+    `Olá! 👋\n` +
+    `Para melhorar sua experiência, agora a ${tenant.nome} conta com o assistente de IA ${nomeIA} 🤖💈, nosso sistema inteligente de agendamentos.\n\n` +
+    `Você pode garantir seu horário em segundos:\n` +
+    `🔗 Pelo link: ${linkAgendamento}\n` +
+    `💬 Ou falando diretamente comigo aqui\n\n` +
+    `Rápido, prático e sem espera 😉`
+
+  const lidJid = cliente.lidWhatsapp ? `${cliente.lidWhatsapp}@lid` : null
+  await whatsappServico.enviarMensagem(tenant.configWhatsApp, cliente.telefone, mensagem, tenantId, lidJid)
+  console.log(`[Clientes] Boas-vindas enviada para ${cliente.telefone} — tenant ${tenantId}`)
 }
 
 const atualizar = async (req, res, next) => {

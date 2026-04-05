@@ -1,6 +1,6 @@
 ﻿import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ChevronLeft, ChevronRight, Plus, X, Loader2, Filter, MessageSquare, UserPlus, Trash2, Send, Star, CheckCircle2, Ban, Megaphone, CalendarClock, UserX, Sparkles, Gift, Clock, ListChecks } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Plus, X, Loader2, Filter, MessageSquare, UserPlus, Trash2, Send, Star, CheckCircle2, Ban, CalendarClock, UserX, Clock, ListChecks } from 'lucide-react'
 import api from '../../servicos/api'
 import { cn, formatarHora, formatarTelefone, statusAgendamento } from '../../lib/utils'
 import { Button } from '../../componentes/ui/button'
@@ -14,7 +14,7 @@ import useAuth from '../../hooks/useAuth'
 const MESES = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro']
 const DIAS_SEMANA_ABREV = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb']
 const DIAS_SEMANA_COMPLETO = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado']
-const HORAS = Array.from({ length: 13 }, (_, i) => i + 7)
+const HORAS = Array.from({ length: 16 }, (_, i) => i + 6) // 6h às 21h — cobre qualquer configuração
 const ALTURA_FAIXA_HORA = 64
 const ESPACAMENTO_CARD_AGENDA = 6
 
@@ -1736,253 +1736,6 @@ const ModalWalkIn = ({ onClose, onSalvar }) => {
   )
 }
 
-const ModalCancelarPeriodo = ({ onClose, onSucesso }) => {
-  const toast = useToast()
-  const [form, setForm] = useState({
-    inicio: '', fim: '', mensagem: '',
-    enviarMensagem: true, tentarRemarcar: true,
-    incluirPromo: false, promoDescricao: '',
-  })
-  const [carregando, setCarregando] = useState(false)
-  const [gerandoMensagem, setGerandoMensagem] = useState(false)
-  const [produtos, setProdutos] = useState([])
-  const [pacotes, setPacotes] = useState([])
-
-  useEffect(() => {
-    Promise.all([
-      api.get('/api/estoque').catch(() => ({ dados: [] })),
-      api.get('/api/pacotes').catch(() => ({ dados: [] })),
-    ]).then(([estRes, pacRes]) => {
-      setProdutos((estRes.dados || []).filter(p => p.ativo && p.quantidadeAtual > 0))
-      setPacotes(pacRes.dados || [])
-    })
-  }, [])
-
-  const gerarMensagemIA = async () => {
-    setGerandoMensagem(true)
-    try {
-      const res = await api.post('/api/agendamentos/gerar-mensagem-cancelamento', {
-        promo: form.incluirPromo && form.promoDescricao ? form.promoDescricao : null,
-        tentarRemarcar: form.tentarRemarcar,
-      })
-      setForm(p => ({ ...p, mensagem: res.dados?.mensagem || '' }))
-    } catch {
-      toast('Erro ao gerar mensagem com IA', 'erro')
-    } finally {
-      setGerandoMensagem(false)
-    }
-  }
-
-  const confirmarCancelamento = async () => {
-    if (!form.inicio || !form.fim) { toast('Informe o período', 'aviso'); return }
-    setCarregando(true)
-    try {
-      const res = await api.post('/api/agendamentos/cancelar-periodo', {
-        dataInicio: form.inicio,
-        dataFim: form.fim,
-        mensagemWhatsApp: form.enviarMensagem && form.mensagem ? form.mensagem : undefined,
-      })
-      const total = res.dados?.cancelados || res.cancelados || 0
-      toast(`${total} agendamento(s) cancelado(s)`, 'sucesso')
-      onSucesso()
-      onClose()
-    } catch (e) {
-      toast(e?.erro?.mensagem || 'Erro ao cancelar período', 'erro')
-    } finally {
-      setCarregando(false)
-    }
-  }
-
-  const itensPromo = [
-    ...pacotes.map(p => ({ tipo: 'pacote', id: p.id, label: `Pacote: ${p.nome}${p.precoCentavos ? ` — R$${(p.precoCentavos/100).toFixed(2).replace('.',',')}` : ''}` })),
-    ...produtos.map(p => ({ tipo: 'produto', id: p.id, label: `Produto: ${p.nome}${p.precoVendaCentavos ? ` — R$${(p.precoVendaCentavos/100).toFixed(2).replace('.',',')}` : ''}` })),
-  ]
-
-  return (
-    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-xl max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between mb-5">
-          <div>
-            <h3 className="text-lg font-semibold text-texto">Cancelar por período</h3>
-            <p className="text-xs text-texto-sec mt-0.5">Cancela todos os agendamentos no intervalo</p>
-          </div>
-          <button onClick={onClose}><X size={20} className="text-texto-sec" /></button>
-        </div>
-        <div className="space-y-4">
-          {/* Período */}
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-medium text-texto mb-1.5">Data início</label>
-              <input type="date" value={form.inicio} onChange={(e) => setForm(p => ({...p, inicio: e.target.value}))} className="w-full px-3 py-2.5 rounded-lg border border-borda text-sm focus:outline-none focus:ring-2 focus:ring-primaria/30" />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-texto mb-1.5">Data fim</label>
-              <input type="date" value={form.fim} onChange={(e) => setForm(p => ({...p, fim: e.target.value}))} min={form.inicio} className="w-full px-3 py-2.5 rounded-lg border border-borda text-sm focus:outline-none focus:ring-2 focus:ring-primaria/30" />
-            </div>
-          </div>
-
-          {/* Avisar clientes */}
-          <div className="flex items-center gap-2">
-            <input type="checkbox" id="envMsgCancel" checked={form.enviarMensagem} onChange={(e) => setForm(p => ({...p, enviarMensagem: e.target.checked}))} className="rounded" />
-            <label htmlFor="envMsgCancel" className="text-sm text-texto cursor-pointer">Avisar clientes pelo WhatsApp</label>
-          </div>
-
-          {form.enviarMensagem && (
-            <>
-              {/* Tentar remarcar */}
-              <div className="flex items-center gap-2 pl-1">
-                <input type="checkbox" id="tentarRemarcar" checked={form.tentarRemarcar} onChange={(e) => setForm(p => ({...p, tentarRemarcar: e.target.checked}))} className="rounded" />
-                <label htmlFor="tentarRemarcar" className="text-sm text-texto cursor-pointer">Convidar para remarcar</label>
-              </div>
-
-              {/* Incluir promoção */}
-              <div className="border border-borda rounded-xl p-3 space-y-3">
-                <div className="flex items-center gap-2">
-                  <input type="checkbox" id="incluirPromo" checked={form.incluirPromo} onChange={(e) => setForm(p => ({...p, incluirPromo: e.target.checked, promoDescricao: ''}))} className="rounded" />
-                  <label htmlFor="incluirPromo" className="text-sm font-medium text-texto cursor-pointer flex items-center gap-1.5">
-                    <Gift size={14} className="text-primaria" />
-                    Incluir promoção na mensagem
-                  </label>
-                </div>
-                {form.incluirPromo && (
-                  <div className="space-y-2">
-                    {itensPromo.length > 0 ? (
-                      <select
-                        className="w-full px-3 py-2 rounded-lg border border-borda text-sm focus:outline-none focus:ring-2 focus:ring-primaria/30"
-                        onChange={(e) => {
-                          const item = itensPromo.find(i => i.id === e.target.value)
-                          setForm(p => ({ ...p, promoDescricao: item?.label?.replace(/^(Pacote|Produto): /, '') || '' }))
-                        }}
-                        defaultValue=""
-                      >
-                        <option value="" disabled>Selecionar produto ou pacote...</option>
-                        {itensPromo.map(item => (
-                          <option key={item.id} value={item.id}>{item.label}</option>
-                        ))}
-                      </select>
-                    ) : null}
-                    <input
-                      type="text"
-                      value={form.promoDescricao}
-                      onChange={(e) => setForm(p => ({ ...p, promoDescricao: e.target.value }))}
-                      placeholder="Ex: Corte + barba por R$40,00 essa semana"
-                      className="w-full px-3 py-2 rounded-lg border border-borda text-sm focus:outline-none focus:ring-2 focus:ring-primaria/30"
-                    />
-                  </div>
-                )}
-              </div>
-
-              {/* Mensagem */}
-              <div>
-                <div className="flex items-center justify-between mb-1.5">
-                  <label className="text-xs font-medium text-texto">Mensagem para os clientes</label>
-                  <button
-                    onClick={gerarMensagemIA}
-                    disabled={gerandoMensagem}
-                    className="flex items-center gap-1 text-xs text-primaria hover:text-primaria/80 font-medium disabled:opacity-50"
-                  >
-                    {gerandoMensagem
-                      ? <Loader2 size={12} className="animate-spin" />
-                      : <Sparkles size={12} />}
-                    Gerar com IA
-                  </button>
-                </div>
-                <textarea
-                  value={form.mensagem}
-                  onChange={(e) => setForm(p => ({...p, mensagem: e.target.value}))}
-                  placeholder="Use {nome}, {servico} e {data} como variáveis. Clique em 'Gerar com IA' para criar automaticamente."
-                  rows={4}
-                  className="w-full px-3 py-2.5 rounded-lg border border-borda text-sm focus:outline-none focus:ring-2 focus:ring-primaria/30 resize-none"
-                />
-                <p className="text-xs text-texto-sec mt-1">Variáveis disponíveis: {'{nome}'}, {'{servico}'}, {'{data}'}</p>
-              </div>
-            </>
-          )}
-
-          <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-xs text-red-700">
-            Esta ação cancela todos os agendamentos do período e não pode ser desfeita.
-          </div>
-        </div>
-        <div className="flex gap-3 mt-5">
-          <Button variante="outline" className="flex-1" onClick={onClose}>Cancelar</Button>
-          <Button className="flex-1 bg-red-600 hover:bg-red-700" onClick={confirmarCancelamento} disabled={carregando || !form.inicio || !form.fim}>
-            {carregando && <Loader2 size={14} className="animate-spin mr-1" />}
-            Confirmar cancelamento
-          </Button>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-const ModalPromocao = ({ onClose }) => {
-  const toast = useToast()
-  const [form, setForm] = useState({ mensagem: '', filtro: 'todos' })
-  const [carregando, setCarregando] = useState(false)
-
-  const enviar = async () => {
-    if (!form.mensagem.trim()) { toast('Escreva a mensagem da promoção', 'aviso'); return }
-    setCarregando(true)
-    try {
-      const res = await api.post('/api/agendamentos/promocao', { mensagem: form.mensagem, filtro: form.filtro })
-      const total = res.dados?.enviados || res.enviados || 0
-      toast(`Promoção enviada para ${total} ${total === 1 ? 'cliente' : 'clientes'}!`, 'sucesso')
-      onClose()
-    } catch (e) {
-      toast(e?.erro?.mensagem || 'Erro ao enviar promoção', 'erro')
-    } finally {
-      setCarregando(false)
-    }
-  }
-
-  return (
-    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-xl" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between mb-5">
-          <div>
-            <h3 className="text-lg font-semibold text-texto">Enviar promoção</h3>
-            <p className="text-xs text-texto-sec mt-0.5">Mensagem via WhatsApp para seus clientes</p>
-          </div>
-          <button onClick={onClose}><X size={20} className="text-texto-sec" /></button>
-        </div>
-        <div className="space-y-4">
-          <div>
-            <label className="block text-xs font-medium text-texto mb-1.5">Enviar para</label>
-            <div className="grid grid-cols-3 gap-2">
-              {[['todos', 'Todos os clientes'], ['recentes', 'Últimos 30 dias'], ['inativos', 'Sem visita há 60+ dias']].map(([v, l]) => (
-                <button key={v} onClick={() => setForm(p => ({...p, filtro: v}))}
-                  className={`py-2 px-2 rounded-lg text-xs font-medium border transition-colors text-center ${form.filtro === v ? 'bg-primaria text-white border-primaria' : 'border-borda text-texto-sec hover:border-primaria/40'}`}>
-                  {l}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-texto mb-1.5">Mensagem</label>
-            <textarea
-              value={form.mensagem}
-              onChange={(e) => setForm(p => ({...p, mensagem: e.target.value}))}
-              placeholder="Ex: Oi! Temos 20% de desconto no corte essa semana. Quer agendar?"
-              rows={4}
-              className="w-full px-3 py-2.5 rounded-lg border border-borda text-sm focus:outline-none focus:ring-2 focus:ring-primaria/30 resize-none"
-            />
-            <p className="text-xs text-texto-sec mt-1">{form.mensagem.length} caracteres</p>
-          </div>
-          <div className="bg-green-50 border border-green-200 rounded-lg px-3 py-2 text-xs text-green-700">
-            A mensagem será enviada pelo WhatsApp conectado à sua conta.
-          </div>
-        </div>
-        <div className="flex gap-3 mt-5">
-          <Button variante="outline" className="flex-1" onClick={onClose}>Cancelar</Button>
-          <Button className="flex-1 gap-1.5" onClick={enviar} disabled={carregando || !form.mensagem.trim()}>
-            {carregando ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
-            Enviar promoção
-          </Button>
-        </div>
-      </div>
-    </div>
-  )
-}
 
 const obterVisaoInicialAgenda = () => {
   try {
@@ -2253,8 +2006,6 @@ const Agenda = () => {
   const [modalDetalhe, setModalDetalhe] = useState(null)
   const [mostrarNovoModal, setMostrarNovoModal] = useState(false)
   const [mostrarWalkIn, setMostrarWalkIn] = useState(false)
-  const [mostrarCancelarPeriodo, setMostrarCancelarPeriodo] = useState(false)
-  const [mostrarPromocao, setMostrarPromocao] = useState(false)
   const [mostrarFilaEspera, setMostrarFilaEspera] = useState(false)
   const [carregando, setCarregando] = useState(true)
   const [mostrarPainelMobile, setMostrarPainelMobile] = useState(false)
@@ -2430,20 +2181,6 @@ const Agenda = () => {
 
               <div className="flex flex-wrap items-center gap-2 lg:ml-auto">
                 <button
-                  title="Cancelar período"
-                  onClick={() => setMostrarCancelarPeriodo(true)}
-                  className="w-9 h-9 flex items-center justify-center rounded-xl border border-borda hover:bg-red-50 hover:border-red-300 text-texto-sec hover:text-red-600 transition-colors shrink-0"
-                >
-                  <Ban size={15} />
-                </button>
-                <button
-                  title="Enviar promoção"
-                  onClick={() => setMostrarPromocao(true)}
-                  className="w-9 h-9 flex items-center justify-center rounded-xl border border-borda hover:bg-primaria/5 hover:border-primaria/40 text-texto-sec hover:text-primaria transition-colors shrink-0"
-                >
-                  <Megaphone size={15} />
-                </button>
-                <button
                   title="Lista de espera"
                   onClick={() => setMostrarFilaEspera(true)}
                   className="w-9 h-9 flex items-center justify-center rounded-xl border border-borda hover:bg-primaria/5 hover:border-primaria/40 text-texto-sec hover:text-primaria transition-colors shrink-0"
@@ -2503,8 +2240,6 @@ const Agenda = () => {
           onSalvar={carregarAgendamentos}
         />
       )}
-      {mostrarCancelarPeriodo && <ModalCancelarPeriodo onClose={() => setMostrarCancelarPeriodo(false)} onSucesso={carregarAgendamentos} />}
-      {mostrarPromocao && <ModalPromocao onClose={() => setMostrarPromocao(false)} />}
       {mostrarFilaEspera && <PainelFilaEspera profissionais={profissionais} onFechar={() => setMostrarFilaEspera(false)} />}
     </div>
   )

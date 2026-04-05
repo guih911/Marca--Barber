@@ -407,6 +407,29 @@ const buscarOuCriarPorTelefone = async (tenantId, telefone, nome, lidWhatsapp) =
     }
   }
 
+  // Quando o telefone é LID, tenta encontrar cliente real pelo nome antes de criar
+  if (!cliente && ehLid(telefoneNorm) && nomeLimpo) {
+    const primeiroNome = nomeLimpo.split(/\s+/)[0].toLowerCase()
+    const clienteReal = await banco.cliente.findFirst({
+      where: {
+        tenantId,
+        nome: { contains: primeiroNome, mode: 'insensitive' },
+        telefone: { startsWith: '+55' },
+      },
+      orderBy: { atualizadoEm: 'desc' },
+    })
+    if (clienteReal) {
+      const lidParaSalvar = lidNorm || normalizarTelefone(telefoneNorm)
+      try {
+        cliente = await banco.cliente.update({
+          where: { id: clienteReal.id },
+          data: { ...(lidParaSalvar ? { lidWhatsapp: lidParaSalvar } : {}) },
+        })
+      } catch { cliente = clienteReal }
+      console.log(`[Clientes] LID vinculado a cliente existente: ${telefoneNorm} → ${clienteReal.telefone} (${clienteReal.nome})`)
+    }
+  }
+
   if (!cliente) {
     try {
       const data = { tenantId, nome: nomeLimpo || telefoneNorm, telefone: telefoneNorm }
@@ -423,10 +446,30 @@ const buscarOuCriarPorTelefone = async (tenantId, telefone, nome, lidWhatsapp) =
         },
       })
     } catch (erro) {
-      if (!lidNorm || !erroTemCampoLidWhatsapp(erro)) throw erro
-      cliente = await banco.cliente.create({
-        data: { tenantId, nome: nomeLimpo || telefoneNorm, telefone: telefoneNorm },
-      })
+      // P2002 = unique constraint violation (race condition: outro request criou entre o findFirst e o create)
+      if (erro?.code === 'P2002') {
+        cliente = await buscarPorTelefone(tenantId, telefoneNorm)
+        if (cliente) {
+          logClienteTrace('cliente_recuperado_apos_race_condition', { tenantId, telefoneNormalizado: telefoneNorm })
+        } else {
+          throw erro
+        }
+      } else if (!lidNorm || !erroTemCampoLidWhatsapp(erro)) {
+        throw erro
+      } else {
+        try {
+          cliente = await banco.cliente.create({
+            data: { tenantId, nome: nomeLimpo || telefoneNorm, telefone: telefoneNorm },
+          })
+        } catch (erroRetry) {
+          if (erroRetry?.code === 'P2002') {
+            cliente = await buscarPorTelefone(tenantId, telefoneNorm)
+            if (!cliente) throw erroRetry
+          } else {
+            throw erroRetry
+          }
+        }
+      }
       logClienteTrace('cliente_criado_sem_lid', {
         tenantId,
         cliente: resumirCliente(cliente),

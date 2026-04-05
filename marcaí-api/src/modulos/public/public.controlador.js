@@ -329,6 +329,36 @@ const slots = async (req, res, next) => {
   }
 }
 
+// GET /api/public/:slug/slots-combo?servicoIds=id1,id2&profissionalId=&data=
+const slotsCombo = async (req, res, next) => {
+  try {
+    const tenant = await banco.tenant.findFirst({
+      where: { OR: [{ slug: req.params.slug }, { hashPublico: req.params.slug }] },
+      select: { id: true, ativo: true },
+    })
+    if (!tenant || !tenant.ativo) {
+      return res.status(404).json({ sucesso: false, erro: { mensagem: 'Barbearia não encontrada' } })
+    }
+
+    const { servicoIds, profissionalId, data } = req.query
+    if (!servicoIds || !data) {
+      return res.status(400).json({ sucesso: false, erro: { mensagem: 'servicoIds e data são obrigatórios' } })
+    }
+
+    const ids = servicoIds.split(',').filter(Boolean)
+    const combos = await disponibilidadeServico.verificarDisponibilidadeCombo(tenant.id, {
+      servicoIds: ids,
+      profissionalId: profissionalId || undefined,
+      data,
+    })
+
+    const disponiveis = combos.filter(c => c.disponivel !== false)
+    res.json({ sucesso: true, dados: disponiveis })
+  } catch (erro) {
+    next(erro)
+  }
+}
+
 // POST /api/public/:slug/agendar
 const agendar = async (req, res, next) => {
   try {
@@ -340,90 +370,80 @@ const agendar = async (req, res, next) => {
       return res.status(404).json({ sucesso: false, erro: { mensagem: 'Barbearia não encontrada' } })
     }
 
-    const { nome, telefone, servicoId, profissionalId, inicio } = req.body
-    if (!nome || !telefone || !servicoId || !profissionalId || !inicio) {
+    const { nome, telefone, servicoId, servicoIds, profissionalId, inicio } = req.body
+    const idsServicos = servicoIds?.length > 0 ? servicoIds : servicoId ? [servicoId] : []
+    if (!nome || !telefone || !idsServicos.length || !profissionalId || !inicio) {
       return res.status(400).json({
         sucesso: false,
-        erro: { mensagem: 'nome, telefone, servicoId, profissionalId e inicio são obrigatórios' },
+        erro: { mensagem: 'nome, telefone, servicoId(s), profissionalId e inicio são obrigatórios' },
       })
     }
 
-    // Normaliza telefone (remove formatação) e garante DDI Brasil
     const telNorm = String(telefone).replace(/\D/g, '')
     const telFinal = telNorm.startsWith('55') && telNorm.length >= 12 ? `+${telNorm}` : `+55${telNorm}`
     const nomeLimpo = String(nome).trim()
-
-    logClienteTrace('link_publico_agendar_recebido', {
-      tenantId: tenant.id,
-      slug: req.params.slug,
-      nomeRecebido: nomeLimpo,
-      telefoneRecebido: telefone,
-      telefoneNormalizado: telFinal,
-      servicoId,
-      profissionalId,
-      inicio,
-    })
+    const isCombo = idsServicos.length > 1
 
     let cliente = await clientesServico.buscarOuCriarPorTelefone(tenant.id, telFinal, nomeLimpo)
 
-    logClienteTrace('link_publico_cliente_resolvido', {
-      tenantId: tenant.id,
-      slug: req.params.slug,
-      nomeRecebido: nomeLimpo,
-      telefoneNormalizado: telFinal,
-      cliente: resumirCliente(cliente),
-      nomeDivergenteDoCadastro: Boolean(cliente?.nome && nomeLimpo && cliente.nome !== nomeLimpo),
-    })
+    let agendamentos
+    if (isCombo) {
+      agendamentos = await agendamentosServico.criarCombo(tenant.id, {
+        clienteId: cliente.id,
+        servicoIds: idsServicos,
+        profissionalId,
+        inicio,
+        origem: 'LINK_PUBLICO',
+      })
+    } else {
+      const ag = await agendamentosServico.criar(tenant.id, {
+        clienteId: cliente.id,
+        servicoId: idsServicos[0],
+        profissionalId,
+        inicio,
+        origem: 'LINK_PUBLICO',
+      })
+      agendamentos = [ag]
+    }
 
-    // Cria agendamento via serviço (já valida conflito, dias, expediente)
-    const agendamento = await agendamentosServico.criar(tenant.id, {
-      clienteId: cliente.id,
-      servicoId,
-      profissionalId,
-      inicio,
-      origem: 'LINK_PUBLICO',
-    })
-
-    // Busca detalhes completos para a confirmação
-    const agFull = await banco.agendamento.findUnique({
-      where: { id: agendamento.id },
+    // Busca detalhes completos
+    const agsFull = await banco.agendamento.findMany({
+      where: { id: { in: agendamentos.map(a => a.id) } },
       include: {
         servico: { select: { nome: true, precoCentavos: true } },
         profissional: { select: { nome: true } },
       },
+      orderBy: { inicioEm: 'asc' },
     })
 
     const tz = tenant.timezone || 'America/Sao_Paulo'
-    const dataFmt = new Date(agFull.inicioEm).toLocaleString('pt-BR', {
+    const dataFmt = new Date(agsFull[0].inicioEm).toLocaleString('pt-BR', {
       weekday: 'long', day: 'numeric', month: 'long',
       hour: '2-digit', minute: '2-digit', timeZone: tz,
     })
     const primeiroNome = cliente.nome?.split(' ')[0] || cliente.nome
+    const nomesServicos = agsFull.map(a => a.servico.nome).join(' + ')
+    const totalCentavos = agsFull.reduce((s, a) => s + (a.servico.precoCentavos || 0), 0)
 
-    // Monta mensagem de confirmação
     const linhas = [
       `✅ Agendamento confirmado, ${primeiroNome}!`,
       ``,
-      `✂️ ${agFull.servico.nome}`,
-      `👤 Com ${agFull.profissional.nome}`,
+      `✂️ ${nomesServicos}`,
+      `👤 Com ${agsFull[0].profissional.nome}`,
       `📅 ${dataFmt}`,
     ]
-    if (agFull.servico.precoCentavos) {
-      linhas.push(`💰 ${(agFull.servico.precoCentavos / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}`)
+    if (totalCentavos) {
+      linhas.push(`💰 ${(totalCentavos / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}`)
     }
     linhas.push(``, `Até lá! 💈 — ${tenant.nome}`)
     const mensagemConfirmacao = linhas.join('\n')
 
-    // Registra na conversa SEMPRE (independente do WhatsApp)
     try {
       const conversa = await conversasServico.buscarOuCriarConversa(tenant.id, cliente.id, 'WHATSAPP')
       await banco.mensagem.createMany({
         data: [
           { conversaId: conversa.id, remetente: 'ia', conteudo: mensagemConfirmacao },
-          {
-            conversaId: conversa.id, remetente: 'sistema',
-            conteudo: `📅 Agendamento via link público — ${agFull.servico.nome} em ${dataFmt}`,
-          },
+          { conversaId: conversa.id, remetente: 'sistema', conteudo: `📅 Agendamento via link público — ${nomesServicos} em ${dataFmt}` },
         ],
       })
       await banco.conversa.update({ where: { id: conversa.id }, data: { atualizadoEm: new Date() } })
@@ -431,25 +451,22 @@ const agendar = async (req, res, next) => {
       console.warn('[Agendar] Erro ao registrar na conversa:', errConversa.message)
     }
 
-    // Envia via WhatsApp (não bloqueia o agendamento se falhar)
     if (tenant.configWhatsApp?.provedor) {
       try {
-        // lidJid garante entrega mesmo após restart do servidor (jidMap vazio)
         const lidJid = cliente.lidWhatsapp ? `${cliente.lidWhatsapp}@lid` : null
         await whatsappServico.enviarMensagem(tenant.configWhatsApp, cliente.telefone, mensagemConfirmacao, tenant.id, lidJid)
-        console.log(`[Agendar] WhatsApp de confirmação enviado para ${cliente.telefone}`)
       } catch (errWpp) {
-        console.error(`[Agendar] Falha ao enviar WhatsApp de confirmação para ${cliente.telefone}:`, errWpp.message)
+        console.error(`[Agendar] Falha WhatsApp:`, errWpp.message)
       }
     }
 
     res.status(201).json({
       sucesso: true,
       dados: {
-        agendamentoId: agendamento.id,
-        servico: agFull.servico.nome,
-        profissional: agFull.profissional.nome,
-        inicioEm: agFull.inicioEm,
+        agendamentoIds: agsFull.map(a => a.id),
+        servicos: nomesServicos,
+        profissional: agsFull[0].profissional.nome,
+        inicioEm: agsFull[0].inicioEm,
         mensagem: 'Agendamento confirmado!',
       },
     })
@@ -652,6 +669,8 @@ const meusAgendamentos = async (req, res, next) => {
     const tz = tenant.timezone || 'America/Sao_Paulo'
     const dados = agendamentos.map((ag) => ({
       id: ag.id,
+      servicoId: ag.servicoId,
+      profissionalId: ag.profissionalId,
       servico: ag.servico.nome,
       profissional: ag.profissional.nome,
       profissionalAvatar: ag.profissional.avatarUrl,
@@ -743,4 +762,261 @@ const verificarAssinatura = async (req, res, next) => {
   }
 }
 
-module.exports = { info, painelTv, slots, agendar, checkIn, planos, assinar, meusAgendamentos, verificarAssinatura }
+// POST /api/public/:slug/reagendar
+const reagendar = async (req, res, next) => {
+  try {
+    const identificador = req.params.slug
+    const tenant = await banco.tenant.findFirst({
+      where: { OR: [{ slug: identificador }, { hashPublico: identificador }] },
+      select: { id: true, ativo: true, nome: true, configWhatsApp: true, timezone: true, antecedenciaCancelar: true },
+    })
+    if (!tenant || !tenant.ativo) {
+      return res.status(404).json({ sucesso: false, erro: { mensagem: 'Barbearia não encontrada' } })
+    }
+
+    const { agendamentoId, telefone, novoInicio } = req.body
+    if (!agendamentoId || !telefone || !novoInicio) {
+      return res.status(400).json({ sucesso: false, erro: { mensagem: 'agendamentoId, telefone e novoInicio são obrigatórios' } })
+    }
+
+    // Busca cliente pelo telefone
+    const telNorm = String(telefone).replace(/\D/g, '')
+    const telFinal = telNorm.startsWith('55') && telNorm.length >= 12 ? `+${telNorm}` : `+55${telNorm}`
+    const cliente = await clientesServico.buscarPorTelefone(tenant.id, telFinal)
+    if (!cliente) {
+      return res.status(404).json({ sucesso: false, erro: { mensagem: 'Cliente não encontrado' } })
+    }
+
+    // Verifica se o agendamento pertence ao cliente
+    const agendamento = await banco.agendamento.findFirst({
+      where: { id: agendamentoId, tenantId: tenant.id, clienteId: cliente.id },
+    })
+    if (!agendamento) {
+      return res.status(404).json({ sucesso: false, erro: { mensagem: 'Agendamento não encontrado' } })
+    }
+
+    // Verifica antecedência mínima (padrão 2h)
+    const antecedenciaHoras = tenant.antecedenciaCancelar || 2
+    const horasRestantes = (agendamento.inicioEm - new Date()) / (1000 * 60 * 60)
+    if (horasRestantes > 0 && horasRestantes < antecedenciaHoras) {
+      return res.status(422).json({
+        sucesso: false,
+        erro: {
+          mensagem: `Reagendamento exige ${antecedenciaHoras}h de antecedência. Entre em contato com o estabelecimento.`,
+          codigo: 'ANTECEDENCIA_INSUFICIENTE',
+        },
+      })
+    }
+
+    // Remarca via serviço existente
+    const agRemarcado = await agendamentosServico.remarcar(tenant.id, agendamentoId, novoInicio)
+
+    // Busca detalhes completos
+    const agFull = await banco.agendamento.findUnique({
+      where: { id: agRemarcado.id },
+      include: {
+        servico: { select: { nome: true } },
+        profissional: { select: { nome: true } },
+      },
+    })
+
+    const tz = tenant.timezone || 'America/Sao_Paulo'
+    const dataFmt = new Date(agFull.inicioEm).toLocaleString('pt-BR', {
+      weekday: 'long', day: 'numeric', month: 'long',
+      hour: '2-digit', minute: '2-digit', timeZone: tz,
+    })
+
+    // Notifica via WhatsApp
+    if (tenant.configWhatsApp?.provedor) {
+      try {
+        const primeiroNome = cliente.nome?.split(' ')[0] || cliente.nome
+        const msg = `🔄 Horário reagendado, ${primeiroNome}!\n\n✂️ ${agFull.servico.nome}\n👤 Com ${agFull.profissional.nome}\n📅 ${dataFmt}\n\nTe esperamos! 💈 — ${tenant.nome}`
+        const lidJid = cliente.lidWhatsapp ? `${cliente.lidWhatsapp}@lid` : null
+        await whatsappServico.enviarMensagem(tenant.configWhatsApp, cliente.telefone, msg, tenant.id, lidJid)
+      } catch (err) {
+        console.error('[Reagendar] Falha WhatsApp:', err.message)
+      }
+    }
+
+    res.json({
+      sucesso: true,
+      dados: {
+        agendamentoId: agFull.id,
+        servico: agFull.servico.nome,
+        profissional: agFull.profissional.nome,
+        inicioEm: agFull.inicioEm,
+        mensagem: 'Horário reagendado com sucesso!',
+      },
+    })
+  } catch (erro) {
+    next(erro)
+  }
+}
+
+// GET /api/public/:slug/historico?tel=5562993050931
+const historico = async (req, res, next) => {
+  try {
+    const identificador = req.params.slug
+    const tel = (req.query.tel || '').replace(/\D/g, '')
+    if (!tel || tel.length < 10) {
+      return res.status(400).json({ sucesso: false, erro: { mensagem: 'Telefone inválido' } })
+    }
+
+    const tenant = await banco.tenant.findFirst({
+      where: { OR: [{ slug: identificador }, { hashPublico: identificador }] },
+      select: { id: true, timezone: true },
+    })
+    if (!tenant) return res.status(404).json({ sucesso: false, erro: { mensagem: 'Barbearia não encontrada' } })
+
+    const telFinal = tel.startsWith('55') && tel.length >= 12 ? `+${tel}` : `+55${tel}`
+    const cliente = await clientesServico.buscarPorTelefone(tenant.id, telFinal)
+    if (!cliente) return res.json({ sucesso: true, dados: [] })
+
+    const tz = tenant.timezone || 'America/Sao_Paulo'
+    const agendamentos = await banco.agendamento.findMany({
+      where: {
+        tenantId: tenant.id,
+        clienteId: cliente.id,
+        status: { in: ['CONCLUIDO', 'CANCELADO', 'NAO_COMPARECEU'] },
+      },
+      include: {
+        servico: { select: { nome: true, precoCentavos: true } },
+        profissional: { select: { nome: true } },
+      },
+      orderBy: { inicioEm: 'desc' },
+      take: 20,
+    })
+
+    const dados = agendamentos.map((ag) => ({
+      id: ag.id,
+      servico: ag.servico.nome,
+      profissional: ag.profissional.nome,
+      preco: ag.servico.precoCentavos,
+      status: ag.status,
+      nota: ag.feedbackNota,
+      inicioEm: ag.inicioEm,
+      dataFormatada: new Date(ag.inicioEm).toLocaleDateString('pt-BR', { day: 'numeric', month: 'short', timeZone: tz }),
+      horaFormatada: new Date(ag.inicioEm).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: tz }),
+    }))
+
+    res.json({ sucesso: true, dados })
+  } catch (erro) {
+    next(erro)
+  }
+}
+
+// ═══ OTP via WhatsApp (login no link de agendamento) ═══
+// Códigos em memória: { "tenantId:telefone" → { codigo, expira, tentativas } }
+const otpStore = new Map()
+
+// POST /api/public/:slug/enviar-codigo
+const enviarCodigo = async (req, res, next) => {
+  try {
+    const tenant = await banco.tenant.findFirst({
+      where: { OR: [{ slug: req.params.slug }, { hashPublico: req.params.slug }] },
+      select: { id: true, nome: true, ativo: true, configWhatsApp: true },
+    })
+    if (!tenant || !tenant.ativo) {
+      return res.status(404).json({ sucesso: false, erro: { mensagem: 'Barbearia não encontrada' } })
+    }
+
+    const { telefone } = req.body
+    if (!telefone) {
+      return res.status(400).json({ sucesso: false, erro: { mensagem: 'Telefone obrigatório' } })
+    }
+
+    const telNorm = String(telefone).replace(/\D/g, '')
+    const telFinal = telNorm.startsWith('55') && telNorm.length >= 12 ? `+${telNorm}` : `+55${telNorm}`
+    const chave = `${tenant.id}:${telFinal}`
+
+    // Rate limit: máximo 3 códigos por telefone a cada 5 min
+    const existente = otpStore.get(chave)
+    if (existente && existente.tentativas >= 3 && Date.now() < existente.expira) {
+      return res.status(429).json({ sucesso: false, erro: { mensagem: 'Muitas tentativas. Aguarde 5 minutos.' } })
+    }
+
+    // Gera código de 4 dígitos
+    const codigo = String(Math.floor(1000 + Math.random() * 9000))
+    otpStore.set(chave, { codigo, expira: Date.now() + 5 * 60 * 1000, tentativas: 0 })
+
+    // Envia via WhatsApp
+    if (tenant.configWhatsApp?.provedor) {
+      const msg = `🔐 Seu código de acesso: ${codigo}\n\nUse no link de agendamento da ${tenant.nome}.\nVálido por 5 minutos.`
+      await whatsappServico.enviarMensagem(tenant.configWhatsApp, telFinal, msg, tenant.id)
+      console.log(`[OTP] Código enviado para ${telFinal} — tenant ${tenant.id}`)
+    } else {
+      return res.status(422).json({ sucesso: false, erro: { mensagem: 'WhatsApp não conectado. Fale com a barbearia.' } })
+    }
+
+    res.json({ sucesso: true, dados: { mensagem: 'Código enviado no WhatsApp' } })
+  } catch (erro) {
+    next(erro)
+  }
+}
+
+// POST /api/public/:slug/verificar-codigo
+const verificarCodigo = async (req, res, next) => {
+  try {
+    const tenant = await banco.tenant.findFirst({
+      where: { OR: [{ slug: req.params.slug }, { hashPublico: req.params.slug }] },
+      select: { id: true, ativo: true },
+    })
+    if (!tenant || !tenant.ativo) {
+      return res.status(404).json({ sucesso: false, erro: { mensagem: 'Barbearia não encontrada' } })
+    }
+
+    const { telefone, codigo } = req.body
+    if (!telefone || !codigo) {
+      return res.status(400).json({ sucesso: false, erro: { mensagem: 'Telefone e código obrigatórios' } })
+    }
+
+    const telNorm = String(telefone).replace(/\D/g, '')
+    const telFinal = telNorm.startsWith('55') && telNorm.length >= 12 ? `+${telNorm}` : `+55${telNorm}`
+    const chave = `${tenant.id}:${telFinal}`
+
+    const otp = otpStore.get(chave)
+    if (!otp) {
+      return res.status(400).json({ sucesso: false, erro: { mensagem: 'Nenhum código enviado. Solicite um novo.' } })
+    }
+
+    otp.tentativas++
+    if (otp.tentativas > 5) {
+      otpStore.delete(chave)
+      return res.status(429).json({ sucesso: false, erro: { mensagem: 'Muitas tentativas. Solicite um novo código.' } })
+    }
+
+    if (Date.now() > otp.expira) {
+      otpStore.delete(chave)
+      return res.status(400).json({ sucesso: false, erro: { mensagem: 'Código expirado. Solicite um novo.' } })
+    }
+
+    if (otp.codigo !== String(codigo).trim()) {
+      return res.status(400).json({ sucesso: false, erro: { mensagem: 'Código incorreto.' } })
+    }
+
+    // Código válido — busca ou cria cliente
+    otpStore.delete(chave)
+    const cliente = await clientesServico.buscarPorTelefone(tenant.id, telFinal)
+
+    res.json({
+      sucesso: true,
+      dados: {
+        autenticado: true,
+        telefone: telFinal,
+        cliente: cliente ? { id: cliente.id, nome: cliente.nome, telefone: cliente.telefone } : null,
+      },
+    })
+  } catch (erro) {
+    next(erro)
+  }
+}
+
+// Limpa OTPs expirados a cada 10 min
+setInterval(() => {
+  const agora = Date.now()
+  for (const [chave, otp] of otpStore) {
+    if (agora > otp.expira) otpStore.delete(chave)
+  }
+}, 10 * 60 * 1000)
+
+module.exports = { info, painelTv, slots, slotsCombo, agendar, checkIn, planos, assinar, meusAgendamentos, historico, verificarAssinatura, reagendar, enviarCodigo, verificarCodigo }

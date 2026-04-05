@@ -34,7 +34,7 @@ const ferramentas = [
     type: 'function',
     function: {
       name: 'verificarDisponibilidadeCombo',
-      description: 'Verifica o melhor encaixe sequencial para dois servicos no mesmo atendimento, como corte + barba, com o mesmo profissional e na mesma data, respeitando expediente, intervalos, buffer e antecedência mínima prática.',
+      description: 'Verifica o melhor encaixe sequencial para dois ou mais servicos no mesmo atendimento (ex: corte + barba), com o mesmo profissional e na mesma data. Se a resposta disser "SEM VAGAS", voce DEVE chamar esta ferramenta de novo com a data do dia seguinte antes de responder ao cliente.',
       parameters: {
         type: 'object',
         properties: {
@@ -102,14 +102,15 @@ const ferramentas = [
     type: 'function',
     function: {
       name: 'remarcarAgendamento',
-      description: 'Remarca um agendamento existente para uma nova data/hora.',
+      description: 'Remarca um ou mais agendamentos existentes para uma nova data/hora. Para combo (corte+barba), passe todos os agendamentoIds juntos — os servicos serao reagendados sequencialmente.',
       parameters: {
         type: 'object',
         properties: {
-          agendamentoId: { type: 'string', description: 'ID do agendamento a remarcar.' },
+          agendamentoId: { type: 'string', description: 'ID do agendamento a remarcar (uso individual).' },
+          agendamentoIds: { type: 'array', items: { type: 'string' }, description: 'Lista de IDs para remarcar combo (corte+barba juntos).' },
           novoInicio: { type: 'string', description: 'Nova data e hora no formato ISO 8601.' },
         },
-        required: ['agendamentoId', 'novoInicio'],
+        required: ['novoInicio'],
       },
     },
   },
@@ -132,7 +133,7 @@ const ferramentas = [
     type: 'function',
     function: {
       name: 'buscarAgendamentosCliente',
-      description: 'Busca os agendamentos futuros de um cliente para retenção, remarcação ou confirmação.',
+      description: 'Busca os agendamentos futuros de um cliente. OBRIGATORIO chamar esta ferramenta no MESMO INSTANTE em que o cliente usar as palavras "remarcar", "cancelar" ou perguntar "qual meu horario", sem fazer perguntas intermediarias.',
       parameters: {
         type: 'object',
         properties: {

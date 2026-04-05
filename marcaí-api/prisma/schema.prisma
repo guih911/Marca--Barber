@@ -157,6 +157,8 @@ model Tenant {
   galeriaAtivo         Boolean   @default(false)  // Galeria de fotos
   listaEsperaAtivo     Boolean   @default(false)  // Lista de espera
   caixaAtivo           Boolean   @default(false)  // Caixa / financeiro
+  nomeIA               String?  // nome do assistente IA (padrão: Don Barber)
+  aprendizadoIA        Json?    // dados de aprendizado da IA (métricas, padrões)
   ativo                Boolean   @default(true)
   criadoEm             DateTime  @default(now())
   atualizadoEm         DateTime  @updatedAt
@@ -359,6 +361,7 @@ model Conversa {
   escalonadoPara  String?
   motivoEscalacao String?
   modoBarbeiro    Boolean        @default(false)  // true quando barbeiro/dono está avaliando
+  estadoEngine    Json?          // estado da engine de decisão (fase + dados)
   criadoEm        DateTime       @default(now())
   atualizadoEm    DateTime       @updatedAt
 

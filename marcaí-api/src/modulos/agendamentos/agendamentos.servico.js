@@ -324,10 +324,10 @@ const criar = async (tenantId, dados) => {
   // Valida se o profissional está configurado para trabalhar nesse dia da semana
   const profParaValidacao = await banco.profissional.findUnique({
     where: { id: dados.profissionalId },
-    select: { horarioTrabalho: true, ativo: true, tenantId: true },
+    select: { horarioTrabalho: true, ativo: true, tenantId: true, tenant: { select: { timezone: true } } },
   })
   if (profParaValidacao && profParaValidacao.tenantId === tenantId) {
-    const tz = 'America/Sao_Paulo'
+    const tz = profParaValidacao.tenant?.timezone || 'America/Sao_Paulo'
     const dataStr = inicioEm.toLocaleDateString('en-CA', { timeZone: tz })
     const dataBRT = new Date(`${dataStr}T12:00:00.000-03:00`)
     const diaSemana = dataBRT.getDay()
@@ -389,10 +389,11 @@ const criar = async (tenantId, dados) => {
 
   const origem = dados.origem || 'DASHBOARD'
   const clienteJaChegou = Boolean(dados.walkin)
-  // Status inicial: apenas walk-in e origem WHATSAPP entram como CONFIRMADO.
+  // Status inicial: walk-in, WHATSAPP e LINK_PUBLICO entram como CONFIRMADO.
+  // O cliente já confirmou durante a conversa com a IA ou ao preencher o link público.
   // Agendamentos criados pelo dashboard sempre iniciam como AGENDADO, independente do prazo,
   // para que o auto-cancelamento por não-confirmação funcione corretamente.
-  const statusInicial = clienteJaChegou || origem === 'WHATSAPP' ? 'CONFIRMADO' : 'AGENDADO'
+  const statusInicial = clienteJaChegou || origem === 'WHATSAPP' || origem === 'LINK_PUBLICO' ? 'CONFIRMADO' : 'AGENDADO'
   const profissionalAgenda = await banco.profissional.findUnique({
     where: { id: dados.profissionalId },
     select: { bufferMinutos: true },
@@ -587,8 +588,8 @@ const criarCombo = async (tenantId, dados) => {
           servicoId,
           inicioEm: inicioAtual,
           fimEm: fimAtual,
-          // Combos pelo WhatsApp já vêm confirmados — cliente confirmou na conversa
-          status: dados.origem === 'WHATSAPP' ? 'CONFIRMADO' : 'AGENDADO',
+          // Combos pelo WhatsApp/link público já vêm confirmados — cliente confirmou na conversa
+          status: dados.origem === 'WHATSAPP' || dados.origem === 'LINK_PUBLICO' ? 'CONFIRMADO' : 'AGENDADO',
           origem: dados.origem || 'DASHBOARD',
           notas: dados.notas || 'Combo agendado via WhatsApp.',
         },
@@ -772,7 +773,7 @@ const remarcar = async (tenantId, id, novoInicio) => {
         servicoId: agendamento.servicoId,
         inicioEm,
         fimEm,
-        status: agendamento.origem === 'WHATSAPP' ? 'CONFIRMADO' : 'AGENDADO',
+        status: agendamento.origem === 'WHATSAPP' || agendamento.origem === 'LINK_PUBLICO' ? 'CONFIRMADO' : 'AGENDADO',
         origem: agendamento.origem,
         notas: agendamento.notas,
       },

@@ -5,6 +5,7 @@ const whatsappServico = require('./whatsapp.servico')
 const wwebjsManager = require('./baileys.manager')
 const { iniciarCronLembretes } = require('./lembretes.servico')
 const { processarComandoAdmin, eNumeroAdministrador } = require('./admin-config.servico')
+const engine = require('./engine')
 const {
   limparDadosTesteCliente,
   rodarSuiteWhatsAppBrasil,
@@ -15,6 +16,129 @@ const { logClienteTrace, resumirCliente } = require('../../utils/clienteTrace')
 // Serializa processamento por numero para evitar respostas duplicadas em rajadas.
 const filaProcessamento = new Map()
 const normalizarTelefone = (telefone = '') => String(telefone || '').replace(/\D/g, '')
+const nomePareceTelefone = (nome = '') => /^\+?\d[\d\s()\-]{5,}$/.test(String(nome || '').trim())
+const telefonePareceReal = (telefone = '') => {
+  const digitos = normalizarTelefone(telefone)
+  return digitos.startsWith('55') && digitos.length >= 12 && digitos.length <= 13
+}
+const telefonePareceLid = (telefone = '') => {
+  const digitos = normalizarTelefone(telefone)
+  return digitos.length > 13 && !digitos.startsWith('55')
+}
+const extrairTelefoneCadastroDaMensagem = (mensagem = '') => {
+  const digitos = normalizarTelefone(mensagem)
+  if (digitos.length === 10 || digitos.length === 11) return `+55${digitos}`
+  if ((digitos.length === 12 || digitos.length === 13) && digitos.startsWith('55')) return `+${digitos}`
+  return null
+}
+const nomeCadastroConfiavel = (cliente) => {
+  const nome = String(cliente?.nome || '').trim()
+  if (!nome) return false
+  if (nome === cliente?.telefone) return false
+  if (nomePareceTelefone(nome)) return false
+  if (/^(cliente|cliente teste|teste|whatsapp|novo cliente)$/i.test(nome)) return false
+  return true
+}
+const obterPendenciasCadastro = (cliente) => {
+  const faltaNome = !nomeCadastroConfiavel(cliente)
+  const faltaTelefone = !telefonePareceReal(cliente?.telefone) || telefonePareceLid(cliente?.telefone)
+  return { faltaNome, faltaTelefone }
+}
+const montarMensagemCadastroPendente = ({ faltaNome, faltaTelefone, intencaoJaVeio = false }) => {
+  const prefixo = intencaoJaVeio
+    ? 'Blz. Antes de prosseguir com seu cadastro, '
+    : 'Blz. Antes de prosseguir com seu cadastro, '
+
+  if (faltaNome && faltaTelefone) {
+    return `${prefixo}me informa seu nome e seu WhatsApp com DDD?`
+  }
+  if (faltaNome) {
+    return `${prefixo}me informa seu nome?`
+  }
+  if (faltaTelefone) {
+    return `${prefixo}me passa seu WhatsApp com DDD pra eu salvar certinho?`
+  }
+  return null
+}
+const parseHorarioMinutos = (valor = '') => {
+  const [hora, minuto] = String(valor || '00:00').split(':').map(Number)
+  if (!Number.isInteger(hora) || !Number.isInteger(minuto)) return null
+  return hora * 60 + minuto
+}
+const formatarHorarioCurto = (minutos = 0) => {
+  const hora = String(Math.floor(minutos / 60)).padStart(2, '0')
+  const minuto = String(minutos % 60).padStart(2, '0')
+  return `${hora}h${minuto === '00' ? '' : minuto}`
+}
+const obterResumoFuncionamentoAgora = async (tenantId, timezone = 'America/Sao_Paulo') => {
+  const profs = await banco.profissional.findMany({ where: { tenantId, ativo: true }, select: { horarioTrabalho: true } })
+  const agoraLocal = new Date(new Date().toLocaleString('en-US', { timeZone: timezone }))
+  const diaAtual = agoraLocal.getDay()
+  const minutosAgora = agoraLocal.getHours() * 60 + agoraLocal.getMinutes()
+  const nomesDias = ['domingo', 'segunda-feira', 'terça-feira', 'quarta-feira', 'quinta-feira', 'sexta-feira', 'sábado']
+
+  const obterJanelasDia = (dia) => {
+    const janelas = []
+    for (const prof of profs) {
+      const h = prof.horarioTrabalho?.[dia] || prof.horarioTrabalho?.[String(dia)]
+      if (!h?.ativo) continue
+      const inicio = parseHorarioMinutos(h.inicio)
+      const fim = parseHorarioMinutos(h.fim)
+      if (inicio == null || fim == null) continue
+      janelas.push({ inicio, fim })
+    }
+    return janelas
+  }
+
+  const hoje = obterJanelasDia(diaAtual)
+  const menorInicioHoje = hoje.length ? Math.min(...hoje.map((j) => j.inicio)) : null
+  const maiorFimHoje = hoje.length ? Math.max(...hoje.map((j) => j.fim)) : null
+
+  let statusHoje = 'SEM_EXPEDIENTE'
+  if (hoje.length) {
+    if (minutosAgora < menorInicioHoje) statusHoje = 'ANTES_DE_ABRIR'
+    else if (minutosAgora >= maiorFimHoje) statusHoje = 'ENCERRADO'
+    else statusHoje = 'ABERTO'
+  }
+
+  let proximoDia = null
+  for (let offset = 1; offset <= 7; offset += 1) {
+    const dia = (diaAtual + offset) % 7
+    const janelas = obterJanelasDia(dia)
+    if (!janelas.length) continue
+    const menorInicio = Math.min(...janelas.map((j) => j.inicio))
+    proximoDia = {
+      dia,
+      offset,
+      label: offset === 1 ? 'amanhã' : nomesDias[dia],
+      inicioMinutos: menorInicio,
+      inicioFormatado: formatarHorarioCurto(menorInicio),
+    }
+    break
+  }
+
+  return { statusHoje, proximoDia }
+}
+
+const conversaTemContextoRecenteDeAgendamento = async (conversaId) => {
+  const recentes = await banco.mensagem.findMany({
+    where: { conversaId, remetente: { in: ['cliente', 'ia'] } },
+    orderBy: { criadoEm: 'desc' },
+    take: 6,
+    select: { remetente: true, conteudo: true },
+  })
+
+  const texto = recentes
+    .reverse()
+    .map((m) => String(m.conteudo || '').toLowerCase())
+    .join('\n')
+
+  const mencionouDiaOuRemarcacao = /\b(segunda|terca|terça|quarta|quinta|sexta|sabado|sábado|amanha|amanhã|remarc\w*)\b/.test(texto)
+  const iaOfereceuSlot = /(tenho .{0,80}\b\d{1,2}:\d{2}\b.*(\bserve\?|\bda certo\?))/i.test(texto)
+  const clientePerguntouFaixa = /\b(ultimo|último|primeiro)\s+horari\w*\b/.test(texto)
+
+  return mencionouDiaOuRemarcacao || iaOfereceuSlot || clientePerguntouFaixa
+}
 
 const processarWebhookSerializado = (chave, fn) => {
   const anterior = filaProcessamento.get(chave) || Promise.resolve()
@@ -63,7 +187,7 @@ const processarWebhook = async ({
     tamanhoMensagem: String(mensagem || '').trim().length,
   })
 
-  const cliente = await clientesServico.buscarOuCriarPorTelefone(tenantId, telefone, nome, lidWhatsapp)
+  let cliente = await clientesServico.buscarOuCriarPorTelefone(tenantId, telefone, nome, lidWhatsapp)
   const conversa = await conversasServico.buscarOuCriarConversa(tenantId, cliente.id, canal)
 
   logClienteTrace('webhook_cliente_e_conversa_resolvidos', {
@@ -99,8 +223,18 @@ const processarWebhook = async ({
     cliente.avatarUrl = avatarSincronizado
   }
 
-  // A primeira resposta sai sempre da IA.
-  // Isso evita duas saudacoes seguidas e reduz a sensacao de script.
+  let instrucaoCapturaCadastro = ''
+  const telefoneInformadoNoTexto = extrairTelefoneCadastroDaMensagem(mensagem)
+  if (telefoneInformadoNoTexto && (!telefonePareceReal(cliente.telefone) || telefonePareceLid(cliente.telefone))) {
+    cliente = await clientesServico.buscarOuCriarPorTelefone(tenantId, telefoneInformadoNoTexto, nome || cliente.nome, null)
+    instrucaoCapturaCadastro = `\n[Sistema: o cliente acabou de informar o WhatsApp com DDD (${telefoneInformadoNoTexto}). Continue exatamente do ponto em que a conversa parou e nao peca o telefone novamente.]`
+    logClienteTrace('telefone_capturado_pelo_texto', {
+      tenantId,
+      telefoneOriginal: telefone,
+      telefoneCapturado: telefoneInformadoNoTexto,
+      cliente: resumirCliente(cliente),
+    })
+  }
 
   if (conversa.status === 'ESCALONADA') {
     await banco.mensagem.create({
@@ -109,11 +243,145 @@ const processarWebhook = async ({
     return { tipo: 'escalonada' }
   }
 
-  const resultado = await iaServico.processarMensagem(tenantId, cliente.id, conversa.id, mensagem)
+  // ═══ ENGINE v4 — backend faz tudo que é crítico ═══
+  const intencao = engine.detectar(mensagem)
+  const tenant = await banco.tenant.findUnique({ where: { id: tenantId } })
+  const mensagemNormalizada = String(mensagem || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+  const pediuHoje = /\b(hoje|hj|ainda hoje|hoje ainda|mais tarde hoje)\b/.test(mensagemNormalizada)
+  const pediuAgendamentoGenerico = /\b(agend\w*|marc\w*|horari\w*|hora\w*)\b/.test(mensagemNormalizada)
+  const resumoFuncionamento = await obterResumoFuncionamentoAgora(tenantId, tenant?.timezone || 'America/Sao_Paulo')
+  const temContextoRecenteDeAgendamento = await conversaTemContextoRecenteDeAgendamento(conversa.id)
+
+  if (resumoFuncionamento.statusHoje === 'ENCERRADO' && pediuHoje) {
+    const prox = resumoFuncionamento.proximoDia
+    const resposta = prox
+      ? `Hoje já encerramos por aqui. O próximo dia com atendimento é ${prox.label}, a partir das ${prox.inicioFormatado}. Se quiser, já vejo um horário pra você nesse dia.`
+      : 'Hoje já encerramos por aqui. Se quiser, me diz um dia e horário que eu vejo a próxima vaga pra você.'
+
+    await banco.mensagem.createMany({
+      data: [
+        { conversaId: conversa.id, remetente: 'cliente', conteudo: mensagem },
+        { conversaId: conversa.id, remetente: 'ia', conteudo: resposta },
+      ],
+    })
+    if (configWhatsApp) await whatsappServico.enviarMensagem(configWhatsApp, telefone, resposta, tenantId)
+    console.log('[Engine] Bloqueio de sugestão para hoje após encerramento')
+    return { tipo: 'engine', resposta, conversaId: conversa.id }
+  }
+
+  if (resumoFuncionamento.statusHoje === 'ENCERRADO' && pediuAgendamentoGenerico && !pediuHoje && !temContextoRecenteDeAgendamento) {
+    const prox = resumoFuncionamento.proximoDia
+    const resposta = prox
+      ? `Boa! Hoje já encerramos por aqui. Quer que eu veja ${prox.label} ou outro dia pra você?`
+      : 'Boa! Hoje já encerramos por aqui. Me diz um dia que eu vejo a próxima vaga pra você.'
+
+    await banco.mensagem.createMany({
+      data: [
+        { conversaId: conversa.id, remetente: 'cliente', conteudo: mensagem },
+        { conversaId: conversa.id, remetente: 'ia', conteudo: resposta },
+      ],
+    })
+    if (configWhatsApp) await whatsappServico.enviarMensagem(configWhatsApp, telefone, resposta, tenantId)
+    console.log('[Engine] Redirecionamento de agendamento genérico após encerramento')
+    return { tipo: 'engine', resposta, conversaId: conversa.id }
+  }
+
+  // SAUDAÇÃO FIXA: primeiro contato + cliente com nome + saudação simples → envia template direto sem IA
+  const ehSaudacaoSimples = /^(oi|ol[aá]|e\s*a[ií]|fala|salve|bom\s*dia|boa\s*tarde|boa\s*noite|hey|eae|opa)\s*[!?.,]*$/i.test(mensagem.trim())
+  const nomeCliente = cliente?.nome && cliente.nome !== cliente.telefone ? cliente.nome : null
+  const { faltaNome, faltaTelefone } = obterPendenciasCadastro(cliente)
+  const cadastroConfiavel = !faltaNome && !faltaTelefone
+  const ultimaMsgIA = await banco.mensagem.findFirst({
+    where: { conversaId: conversa.id, remetente: 'ia' },
+    orderBy: { criadoEm: 'desc' },
+  })
+  const ehNovaSessao = !ultimaMsgIA || (Date.now() - new Date(ultimaMsgIA.criadoEm).getTime() > 2 * 60 * 60 * 1000)
+
+  if (ehSaudacaoSimples && ehNovaSessao && tenant) {
+    // Monta horário de funcionamento
+    const profs = await banco.profissional.findMany({ where: { tenantId, ativo: true }, select: { horarioTrabalho: true } })
+    const DIAS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab']
+    let menorI = '23:59', maiorF = '00:00'
+    const diasAtivos = new Set()
+    for (const p of profs) {
+      if (!p.horarioTrabalho) continue
+      for (let d = 0; d < 7; d++) {
+        const h = p.horarioTrabalho[d] || p.horarioTrabalho[String(d)]
+        if (h?.ativo) { diasAtivos.add(d); if (h.inicio < menorI) menorI = h.inicio; if (h.fim > maiorF) maiorF = h.fim }
+      }
+    }
+    const diasOrd = [...diasAtivos].sort((a, b) => a - b)
+    const rangeDias = diasOrd.length >= 5 ? `${DIAS[diasOrd[0]]}–${DIAS[diasOrd[diasOrd.length - 1]]}` : diasOrd.map(d => DIAS[d]).join(', ')
+    const fmtH = (h) => h.replace(':00', 'h').replace(':', 'h')
+    const horarioFunc = `${rangeDias} ${fmtH(menorI)} às ${fmtH(maiorF)}`
+
+    // Monta link
+    const appUrl = process.env.APP_URL || 'https://barber.marcaí.com'
+    const linkSlug = tenant.hashPublico || tenant.slug
+    const telDigitos = (cliente.telefone || '').replace(/\D/g, '')
+    const telReal = telDigitos.startsWith('55') && telDigitos.length >= 12 && telDigitos.length <= 13
+    let link = `${appUrl}/b/${linkSlug}`
+    if (telReal) {
+      link += `?tel=${encodeURIComponent(cliente.telefone)}`
+      if (nomeCliente) link += `&nome=${encodeURIComponent(nomeCliente)}`
+    }
+
+    // Diferenciais
+    const labelDif = { sinuca: 'sinuca', wifi: 'Wi-Fi', tv: 'TV', estacionamento: 'estacionamento', cafezinho: 'cafezinho', cerveja: 'cerveja/drinks', ar_condicionado: 'ar-condicionado', musica_ao_vivo: 'música ao vivo', venda_produtos: 'venda de produtos' }
+    const difs = Array.isArray(tenant.diferenciais) ? tenant.diferenciais.map(d => labelDif[d] || d) : []
+
+    const nomeIA = tenant.nomeIA || 'Don Barber'
+    const saudacaoBase = cadastroConfiavel && nomeCliente
+      ? `Oi, ${nomeCliente}! Aqui é o ${nomeIA}, Assistente Virtual da ${tenant.nome} 💈\n📅 Nosso horário de Funcionamento é de ${horarioFunc}\n${difs.length > 0 ? '\n✨ Temos ' + difs.join(', ') + '.\n' : ''}\nVocê pode agendar pelo link ou me fala aqui que eu marco pra você:\n🗓️ ${link}`
+      : `Oi! Aqui é o ${nomeIA}, Assistente Virtual da ${tenant.nome} 💈\n📅 Nosso horário de Funcionamento é de ${horarioFunc}\n${difs.length > 0 ? '\n✨ Temos ' + difs.join(', ') + '.\n' : ''}\nVocê pode agendar pelo link ou me fala aqui que eu marco pra você:\n🗓️ ${link}`
+    const saudacao = saudacaoBase
+
+    await banco.mensagem.createMany({
+      data: [
+        { conversaId: conversa.id, remetente: 'cliente', conteudo: mensagem },
+        { conversaId: conversa.id, remetente: 'ia', conteudo: saudacao },
+      ],
+    })
+    if (configWhatsApp) await whatsappServico.enviarMensagem(configWhatsApp, telefone, saudacao, tenantId)
+    console.log('[Engine] Saudação fixa enviada (sem LLM)')
+    return { tipo: 'engine', resposta: saudacao, conversaId: conversa.id }
+  }
+
+  if (intencao) console.log(`[Engine] ${intencao} | ${cliente.nome || cliente.telefone}`)
+
+  // Respostas diretas sem LLM (áudio, figurinha, reclamação, localização, pagamento)
+  const direta = intencao ? engine.respostaDireta(intencao, { tenant }) : null
+  if (direta?.pular && direta.resposta) {
+    await banco.mensagem.createMany({
+      data: [
+        { conversaId: conversa.id, remetente: 'cliente', conteudo: mensagem },
+        { conversaId: conversa.id, remetente: 'ia', conteudo: direta.resposta },
+      ],
+    })
+    if (direta.tool) {
+      try {
+        await iaServico.executarFerramentaDireta(tenantId, direta.tool, { clienteId: cliente.id, conversaId: conversa.id })
+      } catch {}
+    }
+    if (configWhatsApp) await whatsappServico.enviarMensagem(configWhatsApp, telefone, direta.resposta, tenantId)
+    console.log(`[Engine] Resposta direta: ${intencao} (sem LLM)`)
+    return { tipo: 'engine', resposta: direta.resposta, conversaId: conversa.id }
+  }
+
+  // Engine busca dados reais antes da IA
+  const dadosEngineBase = intencao
+    ? await engine.buscarDadosReais(intencao, { tenantId, clienteId: cliente.id, timezone: tenant?.timezone, tenant, mensagem })
+    : ''
+  const dadosEngine = `${dadosEngineBase || ''}${instrucaoCapturaCadastro}`.trim()
+
+  // Escolhe modelo: Haiku (rápido) ou Sonnet (complexo)
+  const usarComplexo = engine.deveUsarModeloComplexo(mensagem, intencao)
+  if (usarComplexo) console.log(`[Engine] Usando modelo complexo (Sonnet) para: "${mensagem.substring(0, 50)}"`)
+
+  // ═══ CHAMA A IA (com dados reais + modelo adequado) ═══
+  const resultado = await iaServico.processarMensagem(tenantId, cliente.id, conversa.id, mensagem, dadosEngine, usarComplexo)
 
   if (configWhatsApp) {
-    // Envia o link proativo PRIMEIRO (se existir), depois a resposta do LLM.
-    // Isso garante que o cliente recebe o link antes da saudação — padrão Anotaí.
     if (resultado.mensagemProativa) {
       await whatsappServico.enviarMensagem(configWhatsApp, telefone, resultado.mensagemProativa, tenantId)
     }
@@ -124,6 +392,7 @@ const processarWebhook = async ({
 
   return {
     tipo: 'ia',
+    intencao,
     resposta: resultado.resposta,
     mensagemProativa: resultado.mensagemProativa || null,
     conversaId: conversa.id,

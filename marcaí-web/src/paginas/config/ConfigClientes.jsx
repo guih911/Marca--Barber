@@ -41,6 +41,14 @@ const estadoFormInicial = {
   instagram: '',
 }
 
+const aplicarMascaraTelefone = (valor) => {
+  const digitos = valor.replace(/\D/g, '')
+  if (digitos.length <= 2) return digitos
+  if (digitos.length <= 4) return `(${digitos.slice(0, 2)}) ${digitos.slice(2)}`
+  if (digitos.length <= 10) return `(${digitos.slice(0, 2)}) ${digitos.slice(2, 6)}-${digitos.slice(6)}`
+  return `(${digitos.slice(0, 2)}) ${digitos.slice(2, 7)}-${digitos.slice(7, 11)}`
+}
+
 // Verifica se o nome parece ser um número de telefone (cliente sem nome real)
 const pareceTelefone = (nome) => /^\+?\d[\d\s()\-]{5,}$/.test((nome || '').trim()) || (nome || '').trim() === ''
 
@@ -123,9 +131,10 @@ const ModalCliente = ({ valorInicial, onFechar, onSalvar, salvando }) => {
             <label className="block text-sm font-medium text-texto mb-1.5">Telefone</label>
             <input
               value={form.telefone}
-              onChange={atualizar('telefone')}
+              onChange={(e) => setForm((p) => ({ ...p, telefone: aplicarMascaraTelefone(e.target.value) }))}
               onBlur={(e) => verificarTelefoneRepetido(e.target.value)}
-              placeholder="+5511999999999"
+              placeholder="(11) 99999-9999"
+              maxLength={15}
               className="w-full px-4 py-2.5 rounded-lg border border-borda text-sm focus:outline-none focus:ring-2 focus:ring-primaria/30"
             />
             {avisoTelefone && (

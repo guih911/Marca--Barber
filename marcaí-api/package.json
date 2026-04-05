@@ -15,6 +15,7 @@
     "seed": "node prisma/seed.js"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.82.0",
     "@prisma/client": "^5.14.0",
     "@whiskeysockets/baileys": "^6.17.16",
     "bcryptjs": "^2.4.3",

@@ -1,0 +1,45 @@
+services:
+  marcai-admin-api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://marcai:9lDU6zR9aAXXHA1ugndy61m11xYo0Zy2@marcai-postgres:5432/marcai_prod
+      ADMIN_JWT_SECRET: marcai-admin-jwt-secret-prod-2026
+      MAIN_JWT_SECRET: VckCBUsHuXJHKemCGEaf3lC5BriyzmSHFYbcdlJoqpyoEBzIrb3pZSoaFfq7OI
+      ADMIN_CORS_ORIGINS: https://admin.xn--marca-3sa.com,http://localhost:5174
+      ASAAS_API_KEY: ${ASAAS_API_KEY}
+      ASAAS_ENV: sandbox
+      GEMINI_API_KEY: AIzaSyBOhB_L1aV2OIRfTiGaFikQKLLT0690tBg
+      PORT: 4000
+    expose:
+      - "4000"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - vendas_baileys_auth:/app/.baileys_vendas
+    networks:
+      - soloflow-net
+
+  marcai-admin-web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+      args:
+        VITE_ADMIN_API_URL: ""
+    restart: unless-stopped
+    depends_on:
+      - marcai-admin-api
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    expose:
+      - "80"
+    networks:
+      - soloflow-net
+
+volumes:
+  vendas_baileys_auth:
+
+networks:
+  soloflow-net:
+    external: true

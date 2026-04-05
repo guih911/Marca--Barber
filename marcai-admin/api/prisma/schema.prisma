@@ -1,0 +1,766 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// === SUPER ADMIN (tabela exclusiva do painel admin) ===
+
+model SuperAdmin {
+  id        String   @id @default(uuid())
+  nome      String
+  email     String   @unique
+  senhaHash String
+  ativo     Boolean  @default(true)
+  criadoEm  DateTime @default(now())
+
+  @@map("super_admins")
+}
+
+// === ENUMS ===
+
+enum Segmento {
+  SAUDE
+  BELEZA
+  ADVOCACIA
+  FITNESS
+  EDUCACAO
+  OUTRO
+}
+
+enum Perfil {
+  ADMIN
+  PROFISSIONAL
+  ATENDENTE
+}
+
+enum StatusAgendamento {
+  AGENDADO
+  CONFIRMADO
+  CONCLUIDO
+  CANCELADO
+  NAO_COMPARECEU
+  REMARCADO
+}
+
+enum CanalOrigem {
+  WHATSAPP
+  WEBCHAT
+  DASHBOARD
+  API
+  LINK_PUBLICO
+}
+
+enum StatusConversa {
+  ATIVA
+  ESCALONADA
+  ENCERRADA
+}
+
+enum StatusFila {
+  AGUARDANDO
+  NOTIFICADO
+  CONVERTIDO
+  EXPIRADO
+}
+
+enum TomDeVoz {
+  FORMAL
+  DESCONTRALIDO
+  ACOLHEDOR
+}
+
+enum PlanoTenant {
+  STARTER
+  PRO
+  ELITE
+}
+
+enum StatusAssinaturaCliente {
+  ATIVA
+  PAUSADA
+  CANCELADA
+}
+
+enum TipoCampanhaGrowth {
+  REATIVACAO
+  RETENCAO
+  REENGAJAMENTO
+}
+
+enum TipoMovimentoEstoque {
+  ENTRADA
+  SAIDA
+  AJUSTE
+}
+
+enum TipoPacote {
+  FIXO    // Preço fixo pelo pacote
+  DESCONTO // Desconto percentual nos serviços
+}
+
+enum StatusCampanhaGrowth {
+  RASCUNHO
+  AGENDADA
+  EM_ANDAMENTO
+  CONCLUIDA
+  CANCELADA
+}
+
+enum StatusEnvioGrowth {
+  SIMULADO
+  ENVIADO
+  FALHOU
+}
+
+// === MODELS ===
+
+model Tenant {
+  id                   String    @id @default(uuid())
+  nome                 String
+  slug                 String    @unique
+  hashPublico          String?   @unique  // Hash curto para URL pública (ex: "a3f8b2c1")
+  segmento             Segmento  @default(OUTRO)
+  nicho                String?
+  planoTenant          PlanoTenant @default(STARTER)
+  growthAtivo          Boolean   @default(false)
+  membershipsAtivo     Boolean   @default(false)
+  biAvancadoAtivo      Boolean   @default(false)
+  cancelamentoMassaAtivo Boolean  @default(false)
+  telefone             String?
+  endereco             String?
+  logoUrl              String?
+  timezone             String    @default("America/Sao_Paulo")
+  tomDeVoz             TomDeVoz  @default(DESCONTRALIDO)
+  mensagemBoasVindas   String?
+  mensagemForaHorario  String?
+  mensagemRetorno      String?  // Template de retorno automático. Variáveis: {nome}, {servico}, {dias}
+  antecedenciaCancelar         Int       @default(2)
+  autoCancelarNaoConfirmados   Boolean   @default(false)
+  horasAutoCancelar            Int       @default(4)
+  lembreteMinutosAntes         Int       @default(60)  // 0 = desativado; opções: 15, 30, 60, 120, 240, 1440
+  exigirConfirmacaoPresenca    Boolean   @default(false)
+  configWhatsApp               Json?
+  onboardingCompleto   Boolean   @default(false)
+
+  // ── Informações do negócio para a IA e clientes ──
+  tiposPagamento       Json?     // ["PIX","DINHEIRO","CARTAO_CREDITO","CARTAO_DEBITO","VALE_PRESENTE"]
+  cortaCabeloInfantil  Boolean   @default(false)
+  idadeMinimaCabeloInfantilMeses Int?  // Ex: 36 = a partir de 3 anos
+  numeroDono           String?   // Telefone do dono para a IA enviar quando solicitado
+  diferenciais         Json?     // ["sinuca","wifi","tv","estacionamento","cafezinho","cerveja"]
+  linkMaps             String?   // Link Google Maps do salão
+  apresentacaoSalaoAtivo Boolean @default(true) // IA apresenta o salão na primeira visita
+
+  // ── Plano contratado pelo cliente (SOLO = 1 profissional, SALAO = equipe) ──
+  planoContratado      String    @default("SALAO")  // "SOLO" | "SALAO"
+  cicloCobranca        String?                       // "MENSAL" | "ANUAL"
+
+  // ── Feature flags (cada salão habilita o que quer) ──
+  npsAtivo             Boolean   @default(true)   // Pesquisa de satisfação pós-atendimento
+  fidelidadeAtivo      Boolean   @default(false)  // Programa de pontos/fidelidade
+  estoqueAtivo         Boolean   @default(false)  // Controle de estoque de produtos
+  comandaAtivo         Boolean   @default(false)  // Comanda digital por atendimento
+  comissoesAtivo       Boolean   @default(false)  // Controle de comissões de profissionais
+  pacotesAtivo         Boolean   @default(false)  // Pacotes/combos de serviços
+  relatorioDiarioAtivo Boolean   @default(false)  // Relatório diário via WhatsApp para gestor
+  galeriaAtivo         Boolean   @default(false)  // Galeria de fotos
+  listaEsperaAtivo     Boolean   @default(false)  // Lista de espera
+  caixaAtivo           Boolean   @default(false)  // Caixa / financeiro
+  ativo                Boolean   @default(true)
+  criadoEm             DateTime  @default(now())
+  atualizadoEm         DateTime  @updatedAt
+
+  usuarios      Usuario[]
+  servicos      Servico[]
+  profissionais Profissional[]
+  clientes      Cliente[]
+  agendamentos  Agendamento[]
+  conversas     Conversa[]
+  filaEspera    FilaEspera[]
+  planosAssinatura PlanoAssinatura[]
+  assinaturasCliente AssinaturaCliente[]
+  campanhasGrowth CampanhaGrowth[]
+  configFidelidade ConfigFidelidade?
+  pontosFidelidade PontosFidelidade[]
+  produtos         Produto[]
+  pacotes          Pacote[]
+  fotosGaleria     FotoGaleria[]
+  sessoesCaixa     SessaoCaixa[]
+  movimentacoesCaixa CaixaMovimentacao[]
+
+  @@map("tenants")
+}
+
+model Usuario {
+  id           String   @id @default(uuid())
+  tenantId     String
+  nome         String
+  email        String   @unique
+  senhaHash    String?
+  googleId     String?  @unique
+  avatarUrl    String?
+  perfil       Perfil   @default(ADMIN)
+  ativo        Boolean  @default(true)
+  criadoEm     DateTime @default(now())
+  atualizadoEm DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+
+  @@map("usuarios")
+}
+
+model Servico {
+  id             String   @id @default(uuid())
+  tenantId       String
+  nome           String
+  duracaoMinutos Int
+  precoCentavos  Int?
+  instrucoes     String?
+  retornoEmDias  Int?
+  ativo          Boolean  @default(true)
+  criadoEm       DateTime @default(now())
+  atualizadoEm   DateTime @updatedAt
+
+  tenant               Tenant                @relation(fields: [tenantId], references: [id])
+  profissionalServicos ProfissionalServico[]
+  agendamentos         Agendamento[]
+  filaEspera           FilaEspera[]
+  planosAssinaturaCreditos PlanoAssinaturaCredito[]
+  assinaturasClienteCreditos AssinaturaClienteCredito[]
+  pacoteServicos       PacoteServico[]
+
+  @@map("servicos")
+}
+
+model Profissional {
+  id              String   @id @default(uuid())
+  tenantId        String
+  nome            String
+  email           String?
+  telefone        String?
+  avatarUrl       String?
+  horarioTrabalho Json     @default("{}")
+  bufferMinutos   Int      @default(0)
+  ativo           Boolean  @default(true)
+  criadoEm        DateTime @default(now())
+  atualizadoEm    DateTime @updatedAt
+
+  tenant       Tenant                @relation(fields: [tenantId], references: [id])
+  servicos     ProfissionalServico[]
+  agendamentos Agendamento[]
+  bloqueios    BloqueioHorario[]
+  filaEspera   FilaEspera[]
+  fotos        FotoGaleria[]
+
+  @@map("profissionais")
+}
+
+model ProfissionalServico {
+  id             String @id @default(uuid())
+  profissionalId String
+  servicoId      String
+  duracaoCustom  Int?
+  precoCustom    Int?
+  comissaoPercent Float? // % de comissão sobre o valor do serviço (ex: 40.0)
+
+  profissional Profissional @relation(fields: [profissionalId], references: [id])
+  servico      Servico      @relation(fields: [servicoId], references: [id])
+
+  @@unique([profissionalId, servicoId])
+  @@map("profissional_servicos")
+}
+
+model Cliente {
+  id           String   @id @default(uuid())
+  tenantId     String
+  nome         String
+  telefone     String
+  lidWhatsapp  String?  // Linked ID do WhatsApp (mapeamento interno)
+  email        String?
+  avatarUrl    String?
+  notas                String?
+  tags                 String[] @default([])
+  tipoCortePreferido   String?
+  preferencias         String?  // Preferências detectadas pela IA (ex: "prefere manhã, sempre com Beatriz")
+  dataNascimento       DateTime?
+  instagram            String?   // Handle do Instagram (ex: @joao)
+  alergias             String?   // Alergias/sensibilidades ao couro cabeludo ou produtos
+  frequenciaRetornoIdealDias Int? // Frequência ideal de retorno em dias (ex: 14 = quinzenal)
+  reativacaoEnviadaEm  DateTime?
+  parabensEnviadoEm    DateTime?
+  ativo                Boolean  @default(true)
+  criadoEm     DateTime @default(now())
+  atualizadoEm DateTime @updatedAt
+
+  tenant       Tenant        @relation(fields: [tenantId], references: [id])
+  agendamentos Agendamento[]
+  conversas    Conversa[]
+  filaEspera   FilaEspera[]
+  assinaturasCliente AssinaturaCliente[]
+  campanhasGrowthEnvios CampanhaGrowthEnvio[]
+  pontosFidelidade PontosFidelidade[]
+
+  @@unique([tenantId, telefone])
+  @@map("clientes")
+}
+
+model Agendamento {
+  id                 String            @id @default(uuid())
+  tenantId           String
+  clienteId          String
+  profissionalId     String
+  servicoId          String
+  inicioEm           DateTime
+  fimEm              DateTime
+  status             StatusAgendamento @default(AGENDADO)
+  origem             CanalOrigem       @default(DASHBOARD)
+  notas                String?
+  canceladoEm          DateTime?
+  motivoCancelamento   String?
+  formaPagamento       String?  // PIX, DINHEIRO, CREDITO, DEBITO, null=não informado
+  formaPagamento2      String?  // segundo método (pagamento dividido)
+  valorPagamento2Centavos Int?  // valor do segundo método em centavos
+  descontoCentavos     Int?     // desconto aplicado (R$ centavos)
+  gorjetaCentavos      Int?     // gorjeta do cliente (R$ centavos)
+  concluidoEm          DateTime? // Quando o atendimento foi finalizado (status→CONCLUIDO)
+  presencaConfirmadaEm DateTime?
+  lembreteEnviadoEm    DateTime?
+  lembrete2hEnviadoEm  DateTime?
+  retornoEnviadoEm     DateTime?
+  feedbackNota         Int?     // Avaliação do cliente após o serviço (1-5)
+  feedbackComentario   String?  // Comentário livre do cliente
+  npsEnviadoEm         DateTime? // Quando o pedido de NPS foi enviado — evita reenvio duplicado
+  criadoEm             DateTime @default(now())
+  atualizadoEm         DateTime @updatedAt
+
+  tenant       Tenant       @relation(fields: [tenantId], references: [id])
+  cliente      Cliente      @relation(fields: [clienteId], references: [id])
+  profissional Profissional @relation(fields: [profissionalId], references: [id])
+  servico      Servico      @relation(fields: [servicoId], references: [id])
+  comandaItens ComandaItem[]
+
+  @@index([tenantId, inicioEm])
+  @@index([profissionalId, inicioEm])
+  @@index([clienteId])
+  @@map("agendamentos")
+}
+
+model BloqueioHorario {
+  id             String   @id @default(uuid())
+  profissionalId String
+  inicioEm       DateTime
+  fimEm          DateTime
+  motivo         String?
+  recorrencia    Json?
+  criadoEm       DateTime @default(now())
+
+  profissional Profissional @relation(fields: [profissionalId], references: [id])
+
+  @@map("bloqueios_horario")
+}
+
+model Conversa {
+  id              String         @id @default(uuid())
+  tenantId        String
+  clienteId       String
+  canal           CanalOrigem    @default(WHATSAPP)
+  status          StatusConversa @default(ATIVA)
+  escalonadoPara  String?
+  motivoEscalacao String?
+  modoBarbeiro    Boolean        @default(false)  // true quando barbeiro/dono está avaliando
+  criadoEm        DateTime       @default(now())
+  atualizadoEm    DateTime       @updatedAt
+
+  tenant    Tenant     @relation(fields: [tenantId], references: [id])
+  cliente   Cliente    @relation(fields: [clienteId], references: [id])
+  mensagens Mensagem[]
+
+  @@index([tenantId, atualizadoEm])
+  @@map("conversas")
+}
+
+model Mensagem {
+  id         String   @id @default(uuid())
+  conversaId String
+  remetente  String
+  conteudo   String
+  criadoEm   DateTime @default(now())
+
+  conversa Conversa @relation(fields: [conversaId], references: [id])
+
+  @@index([conversaId, criadoEm])
+  @@map("mensagens")
+}
+
+model FilaEspera {
+  id             String     @id @default(uuid())
+  tenantId       String
+  clienteId      String
+  servicoId      String
+  profissionalId String?
+  dataDesejada   DateTime
+  status         StatusFila @default(AGUARDANDO)
+  notificadoEm   DateTime?
+  criadoEm       DateTime   @default(now())
+
+  tenant       Tenant        @relation(fields: [tenantId], references: [id])
+  cliente      Cliente       @relation(fields: [clienteId], references: [id])
+  servico      Servico       @relation(fields: [servicoId], references: [id])
+  profissional Profissional? @relation(fields: [profissionalId], references: [id])
+
+  @@index([tenantId, servicoId, dataDesejada])
+  @@map("fila_espera")
+}
+
+model TokenResetSenha {
+  id        String   @id @default(uuid())
+  email     String
+  token     String   @unique
+  expiresAt DateTime
+  usado     Boolean  @default(false)
+  criadoEm  DateTime @default(now())
+
+  @@map("tokens_reset_senha")
+}
+
+model PlanoAssinatura {
+  id             String   @id @default(uuid())
+  tenantId       String
+  nome           String
+  descricao      String?
+  precoCentavos  Int      @default(0)
+  cicloDias      Int      @default(30)
+  diasPermitidos Int[]    @default([]) // dias da semana permitidos: 0=Dom,1=Seg,...,6=Sáb. Vazio = todos os dias
+  ativo          Boolean  @default(true)
+  criadoEm       DateTime @default(now())
+  atualizadoEm   DateTime @updatedAt
+
+  tenant     Tenant                  @relation(fields: [tenantId], references: [id])
+  creditos    PlanoAssinaturaCredito[]
+  assinaturas AssinaturaCliente[]
+
+  @@index([tenantId, ativo])
+  @@map("planos_assinatura")
+}
+
+model PlanoAssinaturaCredito {
+  id                String   @id @default(uuid())
+  planoAssinaturaId String
+  servicoId         String
+  creditos          Int      @default(1)
+  criadoEm          DateTime @default(now())
+
+  planoAssinatura PlanoAssinatura @relation(fields: [planoAssinaturaId], references: [id], onDelete: Cascade)
+  servico         Servico         @relation(fields: [servicoId], references: [id])
+
+  @@unique([planoAssinaturaId, servicoId])
+  @@index([servicoId])
+  @@map("planos_assinatura_creditos")
+}
+
+model AssinaturaCliente {
+  id                  String                  @id @default(uuid())
+  tenantId            String
+  clienteId           String
+  planoAssinaturaId   String
+  status              StatusAssinaturaCliente @default(ATIVA)
+  inicioEm            DateTime                @default(now())
+  fimEm               DateTime?
+  proximaCobrancaEm   DateTime?
+  renovacaoAutomatica  Boolean                 @default(true)
+  observacoes         String?
+  criadoEm            DateTime                @default(now())
+  atualizadoEm        DateTime                @updatedAt
+
+  tenant          Tenant                  @relation(fields: [tenantId], references: [id])
+  cliente         Cliente                 @relation(fields: [clienteId], references: [id])
+  planoAssinatura PlanoAssinatura         @relation(fields: [planoAssinaturaId], references: [id])
+  creditos        AssinaturaClienteCredito[]
+
+  @@index([tenantId, clienteId, status])
+  @@map("assinaturas_clientes")
+}
+
+model AssinaturaClienteCredito {
+  id                  String   @id @default(uuid())
+  assinaturaClienteId String
+  servicoId           String
+  creditosIniciais    Int      @default(0)
+  creditosRestantes   Int      @default(0)
+  consumidos          Int      @default(0)
+  criadoEm            DateTime @default(now())
+  atualizadoEm        DateTime @updatedAt
+
+  assinaturaCliente AssinaturaCliente @relation(fields: [assinaturaClienteId], references: [id], onDelete: Cascade)
+  servico           Servico           @relation(fields: [servicoId], references: [id])
+
+  @@unique([assinaturaClienteId, servicoId])
+  @@index([servicoId])
+  @@map("assinaturas_cliente_creditos")
+}
+
+model CampanhaGrowth {
+  id             String                @id @default(uuid())
+  tenantId       String
+  nome           String
+  tipo           TipoCampanhaGrowth
+  mensagem       String
+  diasSemRetorno Int
+  status         StatusCampanhaGrowth  @default(RASCUNHO)
+  totalAlvo      Int                   @default(0)
+  totalEnviado   Int                   @default(0)
+  criadoEm       DateTime              @default(now())
+  atualizadoEm   DateTime              @updatedAt
+
+  tenant Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  envios CampanhaGrowthEnvio[]
+
+  @@index([tenantId, status])
+  @@map("campanhas_growth")
+}
+
+model CampanhaGrowthEnvio {
+  id               String            @id @default(uuid())
+  campanhaGrowthId String
+  clienteId        String
+  telefone         String
+  status           StatusEnvioGrowth @default(SIMULADO)
+  mensagemErro     String?
+  enviadoEm        DateTime?
+  criadoEm         DateTime          @default(now())
+
+  campanhaGrowth CampanhaGrowth @relation(fields: [campanhaGrowthId], references: [id], onDelete: Cascade)
+  cliente        Cliente        @relation(fields: [clienteId], references: [id])
+
+  @@unique([campanhaGrowthId, clienteId])
+  @@index([clienteId, status])
+  @@map("campanhas_growth_envios")
+}
+
+// ════════════════════════════════════════════════════════════════
+// FIDELIDADE
+// ════════════════════════════════════════════════════════════════
+
+model ConfigFidelidade {
+  id              String   @id @default(uuid())
+  tenantId        String   @unique
+  pontosPerServico Int     @default(1)   // pontos ganhos por atendimento
+  pontosParaResgate Int    @default(10)  // pontos necessários para 1 resgate
+  descricaoResgate String  @default("1 serviço grátis") // o que ganha ao resgatar
+  ativo           Boolean  @default(true)
+  criadoEm        DateTime @default(now())
+  atualizadoEm    DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+
+  @@map("config_fidelidade")
+}
+
+model PontosFidelidade {
+  id         String   @id @default(uuid())
+  tenantId   String
+  clienteId  String
+  pontos     Int      @default(0) // saldo atual de pontos
+  totalGanho Int      @default(0) // total histórico ganho
+  totalResgatado Int  @default(0) // total histórico resgatado
+  criadoEm   DateTime @default(now())
+  atualizadoEm DateTime @updatedAt
+
+  tenant  Tenant  @relation(fields: [tenantId], references: [id])
+  cliente Cliente @relation(fields: [clienteId], references: [id])
+  historico HistoricoFidelidade[]
+
+  @@unique([tenantId, clienteId])
+  @@index([tenantId])
+  @@map("pontos_fidelidade")
+}
+
+model HistoricoFidelidade {
+  id                String   @id @default(uuid())
+  pontosFidelidadeId String
+  tipo              String   // GANHO | RESGATE
+  pontos            Int
+  descricao         String?
+  agendamentoId     String?
+  criadoEm          DateTime @default(now())
+
+  pontosFidelidade PontosFidelidade @relation(fields: [pontosFidelidadeId], references: [id], onDelete: Cascade)
+
+  @@index([pontosFidelidadeId, criadoEm])
+  @@map("historico_fidelidade")
+}
+
+// ════════════════════════════════════════════════════════════════
+// ESTOQUE DE PRODUTOS
+// ════════════════════════════════════════════════════════════════
+
+model Produto {
+  id                 String   @id @default(uuid())
+  tenantId           String
+  nome               String
+  descricao          String?
+  unidade            String   @default("unid") // unid, ml, g, etc.
+  precoCustoCentavos Int?     // custo de aquisição
+  precoVendaCentavos Int?     // preço de venda (se vender)
+  quantidadeAtual    Float    @default(0)
+  quantidadeMinima   Float    @default(2)  // alerta de estoque baixo
+  ativo              Boolean  @default(true)
+  alertaEnviadoEm    DateTime? // última vez que alerta foi enviado
+  criadoEm           DateTime @default(now())
+  atualizadoEm       DateTime @updatedAt
+
+  tenant     Tenant             @relation(fields: [tenantId], references: [id])
+  movimentos MovimentoEstoque[]
+  comandaItens ComandaItem[]
+
+  @@index([tenantId, ativo])
+  @@map("produtos")
+}
+
+model MovimentoEstoque {
+  id         String               @id @default(uuid())
+  produtoId  String
+  tipo       TipoMovimentoEstoque
+  quantidade Float
+  motivo     String?
+  criadoEm   DateTime             @default(now())
+
+  produto Produto @relation(fields: [produtoId], references: [id], onDelete: Cascade)
+
+  @@index([produtoId, criadoEm])
+  @@map("movimentos_estoque")
+}
+
+// ════════════════════════════════════════════════════════════════
+// COMANDA DIGITAL
+// ════════════════════════════════════════════════════════════════
+
+model ComandaItem {
+  id             String   @id @default(uuid())
+  agendamentoId  String
+  produtoId      String?  // produto usado/vendido (opcional)
+  descricao      String   // descrição livre (ex: "Pomada Minas Gerais")
+  quantidade     Float    @default(1)
+  precoCentavos  Int      @default(0)
+  criadoEm       DateTime @default(now())
+
+  agendamento Agendamento @relation(fields: [agendamentoId], references: [id], onDelete: Cascade)
+  produto     Produto?    @relation(fields: [produtoId], references: [id])
+
+  @@index([agendamentoId])
+  @@map("comanda_itens")
+}
+
+// ════════════════════════════════════════════════════════════════
+// PACOTES / COMBOS
+// ════════════════════════════════════════════════════════════════
+
+model Pacote {
+  id              String    @id @default(uuid())
+  tenantId        String
+  nome            String
+  descricao       String?
+  tipo            TipoPacote @default(FIXO)
+  precoCentavos   Int        @default(0) // preço total do pacote (tipo FIXO)
+  descontoPorcent Float?                 // % desconto (tipo DESCONTO)
+  ativo           Boolean    @default(true)
+  criadoEm        DateTime   @default(now())
+  atualizadoEm    DateTime   @updatedAt
+
+  tenant   Tenant         @relation(fields: [tenantId], references: [id])
+  servicos PacoteServico[]
+
+  @@index([tenantId, ativo])
+  @@map("pacotes")
+}
+
+model PacoteServico {
+  id        String @id @default(uuid())
+  pacoteId  String
+  servicoId String
+
+  pacote  Pacote  @relation(fields: [pacoteId], references: [id], onDelete: Cascade)
+  servico Servico @relation(fields: [servicoId], references: [id])
+
+  @@unique([pacoteId, servicoId])
+  @@map("pacote_servicos")
+}
+
+// ════════════════════════════════════════════════════════════════
+// GALERIA DE CORTES / PORTFÓLIO
+// ════════════════════════════════════════════════════════════════
+
+model FotoGaleria {
+  id             String   @id @default(uuid())
+  tenantId       String
+  profissionalId String?
+  clienteId      String?
+  agendamentoId  String?
+  fotoUrl        String
+  titulo         String?
+  descricao      String?
+  servicoNome    String?
+  destaque       Boolean  @default(false)
+  criadoEm       DateTime @default(now())
+  atualizadoEm   DateTime @updatedAt
+
+  tenant       Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  profissional Profissional? @relation(fields: [profissionalId], references: [id])
+
+  @@index([tenantId, criadoEm])
+  @@map("fotos_galeria")
+}
+
+// ════════════════════════════════════════════════════════════════
+// CONTROLE DE CAIXA
+// ════════════════════════════════════════════════════════════════
+
+enum StatusCaixa {
+  ABERTO
+  FECHADO
+}
+
+model SessaoCaixa {
+  id               String      @id @default(uuid())
+  tenantId         String
+  usuarioId        String?
+  status           StatusCaixa @default(ABERTO)
+  saldoInicial     Int         @default(0)  // em centavos
+  saldoFinal       Int?                      // em centavos (preenchido ao fechar)
+  observacoes      String?
+  aberturaEm       DateTime    @default(now())
+  fechamentoEm     DateTime?
+  criadoEm         DateTime    @default(now())
+  atualizadoEm     DateTime    @updatedAt
+
+  tenant        Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  movimentacoes CaixaMovimentacao[]
+
+  @@index([tenantId, status])
+  @@map("sessoes_caixa")
+}
+
+enum TipoMovimentacao {
+  SANGRIA
+  REFORCO
+}
+
+model CaixaMovimentacao {
+  id          String           @id @default(uuid())
+  tenantId    String
+  sessaoId    String
+  tipo        TipoMovimentacao
+  valor       Int              // em centavos
+  descricao   String?
+  criadoEm   DateTime         @default(now())
+
+  tenant  Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  sessao  SessaoCaixa @relation(fields: [sessaoId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, sessaoId])
+  @@map("caixa_movimentacoes")
+}

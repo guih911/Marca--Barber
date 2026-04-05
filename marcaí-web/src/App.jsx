@@ -33,9 +33,6 @@ import ConfigIntegracoes from './paginas/config/ConfigIntegracoes'
 import ConfigRecursos from './paginas/config/ConfigRecursos'
 import ConfigPacotes from './paginas/config/ConfigPacotes'
 import ConfigPlanoSalao from './paginas/config/ConfigPlanoSalao'
-import ConfigIA from './paginas/config/ConfigIA'
-import TesteIA from './paginas/config/TesteIA'
-
 // Public
 import AgendaPublica from './paginas/public/AgendaPublica'
 import Totem from './paginas/public/Totem'
@@ -262,8 +259,6 @@ const App = () => {
         <Route path="config/usuarios" element={<GuardaPlano planoPermitido="SALAO" nome="Usuários"><ConfigUsuarios /></GuardaPlano>} />
         <Route path="config/integracoes" element={<ConfigIntegracoes />} />
 
-        <Route path="config/ia" element={<ConfigIA />} />
-        <Route path="config/teste-ia" element={<TesteIA />} />
         <Route path="config/plano" element={<ConfigPlanoSalao />} />
       </Route>
 

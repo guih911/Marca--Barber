@@ -179,7 +179,7 @@ const iniciarSessao = async (tenantId, onMensagem) => {
         const statusCode = lastDisconnect?.error?.output?.statusCode
         const shouldReconnect = statusCode !== DisconnectReason.loggedOut
 
-        console.log(`[Baileys] Desconectado (${statusCode}) — tenant ${tenantId}${shouldReconnect ? '. Reconectando...' : '. Logout.'}`)
+        console.log(`[Baileys] Desconectado (${statusCode}) — tenant ${tenantId}${shouldReconnect ? '. Reconectando...' : '. Logout — limpando auth para permitir novo QR.'}`)
 
         sessao.status = STATUS.DESCONECTADO
         sessao.sock = null
@@ -191,7 +191,15 @@ const iniciarSessao = async (tenantId, onMensagem) => {
             if (cb) iniciarSessao(tenantId, cb)
           }, 5000)
         } else {
+          // Logout: limpa credenciais para que o próximo iniciarSessao gere QR novo
           sessoes.delete(tenantId)
+          const authDir = path.join(AUTH_DIR, tenantId)
+          try {
+            fs.rmSync(authDir, { recursive: true, force: true })
+            console.log(`[Baileys] Auth limpo para tenant ${tenantId} — próxima conexão gera QR novo`)
+          } catch (e) {
+            console.warn(`[Baileys] Falha ao limpar auth: ${e.message}`)
+          }
         }
       }
     })
@@ -266,8 +274,28 @@ const iniciarSessao = async (tenantId, onMensagem) => {
                   break
                 }
               }
-              // 3. Último recurso: usa LID como identificador temporário
-              if (!numero) numero = lidId
+
+              // 3. Tenta resolver via onWhatsApp (converte LID → número real)
+              if (!numero) {
+                try {
+                  const check = await sock.onWhatsApp(jid)
+                  if (check && check.length > 0 && check[0].exists) {
+                    const resolvedJid = check[0].jid
+                    if (resolvedJid && resolvedJid.endsWith('@s.whatsapp.net')) {
+                      numero = resolvedJid.replace('@s.whatsapp.net', '')
+                      lidToPhone.set(`${tenantId}:${lidId}`, numero)
+                      jidMap.set(`${tenantId}:${numero}`, jid)
+                      console.log(`[Baileys] LID resolvido via onWhatsApp: ${lidId} → ${numero}`)
+                    }
+                  }
+                } catch {}
+              }
+
+              // 4. Último recurso: usa LID como identificador temporário
+              if (!numero) {
+                console.warn(`[Baileys] AVISO: não conseguiu resolver LID ${lidId} — usando como fallback`)
+                numero = lidId
+              }
             }
           }
         } else {
@@ -378,11 +406,27 @@ const enviarMensagem = async (tenantId, para, texto, lidJid = null) => {
     console.log(`[Baileys] JID resolvido via lidJid do banco: ${numero} → ${jidReal}`)
   }
   if (!jidReal) {
-    jidReal = `${numero}@s.whatsapp.net`
+    // Verifica o JID real via onWhatsApp (resolve 9º dígito e LIDs)
+    try {
+      const check = await sessao.sock.onWhatsApp(`${numero}@s.whatsapp.net`)
+      if (check && check.length > 0 && check[0].exists) {
+        jidReal = check[0].jid
+        jidMap.set(`${tenantId}:${numero}`, jidReal)
+        if (jidReal !== `${numero}@s.whatsapp.net`) {
+          console.log(`[Baileys] JID corrigido via onWhatsApp: ${numero} → ${jidReal}`)
+        }
+      } else {
+        jidReal = `${numero}@s.whatsapp.net`
+      }
+    } catch {
+      jidReal = `${numero}@s.whatsapp.net`
+    }
   }
 
   console.log(`[Baileys] Enviando para ${jidReal} — tenant ${tenantId}`)
-  return await sessao.sock.sendMessage(jidReal, { text: texto })
+  const resultado = await sessao.sock.sendMessage(jidReal, { text: texto })
+  console.log(`[Baileys] Resultado envio:`, resultado?.status, resultado?.key?.id ? 'msgId=' + resultado.key.id : 'sem key')
+  return resultado
 }
 
 /**
@@ -407,13 +451,21 @@ const obterFotoPerfil = async (tenantId, para) => {
  */
 const destruirSessao = async (tenantId) => {
   const sessao = sessoes.get(tenantId)
-  if (!sessao) return
-  try {
-    await sessao.sock?.logout()
-  } catch {}
-  sessao.sock = null
+  if (sessao) {
+    try {
+      sessao.sock?.ev?.removeAllListeners()
+      await sessao.sock?.logout()
+    } catch {}
+    sessao.sock = null
+  }
   sessoes.delete(tenantId)
-  console.log(`[Baileys] Sessão destruída — tenant ${tenantId}`)
+
+  // Limpa auth para permitir novo QR na próxima conexão
+  const authDir = path.join(AUTH_DIR, tenantId)
+  try {
+    fs.rmSync(authDir, { recursive: true, force: true })
+  } catch {}
+  console.log(`[Baileys] Sessão destruída e auth limpo — tenant ${tenantId}`)
 }
 
 module.exports = { iniciarSessao, obterStatus, enviarMensagem, obterFotoPerfil, destruirSessao, obterNumeroConectado, STATUS }

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Loader2, Save, Star, Package, BarChart2, Gift, Archive, Smartphone, MessageSquare, Images, ClipboardList, Landmark } from 'lucide-react'
+import { Loader2, Save, Star, Package, BarChart2, Gift, Archive, Smartphone, MessageSquare, Images, ClipboardList, Landmark, Lock } from 'lucide-react'
 import api from '../../servicos/api'
 import { useToast } from '../../contextos/ToastContexto'
 import useAuth from '../../hooks/useAuth'
@@ -159,6 +159,7 @@ const ConfigRecursos = () => {
   }
 
   const recursosDisponiveis = recursos.filter((recurso) => !recurso.plano || recurso.plano === planoAtual)
+  const recursosUpgrade = recursos.filter((recurso) => recurso.plano && recurso.plano !== planoAtual)
   const ativos = recursosDisponiveis.filter((recurso) => flags[recurso.chave]).length
 
   return (
@@ -181,7 +182,7 @@ const ConfigRecursos = () => {
         </div>
       </div>
 
-      {/* Lista de recursos */}
+      {/* Lista de recursos incluídos no plano */}
       <div className="space-y-3">
         {recursosDisponiveis.map((r) => {
           const Icone = r.icone
@@ -204,6 +205,9 @@ const ConfigRecursos = () => {
                           Recomendado
                         </span>
                       )}
+                      <span className="text-[10px] font-medium uppercase tracking-wide bg-emerald-50 text-emerald-600 px-2 py-0.5 rounded-full">
+                        Incluído no seu plano
+                      </span>
                     </div>
                     <p className="text-xs text-texto-sec mt-1 leading-relaxed">{r.descricao}</p>
                   </div>
@@ -214,6 +218,45 @@ const ConfigRecursos = () => {
           )
         })}
       </div>
+
+      {/* Recursos disponíveis em plano superior */}
+      {recursosUpgrade.length > 0 && (
+        <div className="space-y-3">
+          <div className="flex items-center gap-2 pt-2">
+            <Lock size={14} className="text-texto-sec" />
+            <p className="text-sm font-semibold text-texto-sec">
+              Disponível no plano {recursosUpgrade[0].plano === 'SALAO' ? 'Salão' : recursosUpgrade[0].plano}
+            </p>
+          </div>
+          {recursosUpgrade.map((r) => {
+            const Icone = r.icone
+            return (
+              <div
+                key={r.chave}
+                className="bg-fundo rounded-2xl border border-borda p-4 md:p-5 opacity-70"
+              >
+                <div className="flex items-start justify-between gap-4">
+                  <div className="flex items-start gap-3 flex-1 min-w-0">
+                    <div className={`p-2.5 rounded-xl shrink-0 bg-gray-100`}>
+                      <Icone size={18} className="text-texto-sec" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <p className="text-sm font-semibold text-texto">{r.titulo}</p>
+                        <span className="text-[10px] font-medium uppercase tracking-wide bg-amber-50 text-amber-600 px-2 py-0.5 rounded-full inline-flex items-center gap-1">
+                          <Lock size={9} /> Plano {r.plano === 'SALAO' ? 'Salão' : r.plano}
+                        </span>
+                      </div>
+                      <p className="text-xs text-texto-sec mt-1 leading-relaxed">{r.descricao}</p>
+                    </div>
+                  </div>
+                  <div className="shrink-0 w-12 h-6 rounded-full bg-borda/50 cursor-not-allowed" title="Disponível no plano Salão" />
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
 
       <div className="flex justify-end pt-2">
         <button

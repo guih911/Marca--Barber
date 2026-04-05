@@ -487,11 +487,11 @@ const ConfigProfissionais = () => {
                     </div>
                   )}
                 </div>
-                <div className="flex-1 min-w-0">
-                  <p className="font-semibold text-texto text-sm">{p.nome}</p>
-                  <p className="text-xs text-texto-sec">{p.email || 'Sem e-mail'}</p>
+                <div className="flex-1 min-w-0 overflow-hidden">
+                  <p className="font-semibold text-texto text-sm truncate">{p.nome}</p>
+                  <p className="text-xs text-texto-sec truncate">{p.email || 'Sem e-mail'}</p>
                 </div>
-                <Pencil size={14} className="text-texto-sec/50 shrink-0 group-hover:text-primaria transition-colors" />
+                <Pencil size={14} className="text-texto-sec/50 shrink-0 ml-2 group-hover:text-primaria transition-colors" />
               </div>
               {p.servicos?.length > 0 && (
                 <div className="flex flex-wrap gap-1.5">

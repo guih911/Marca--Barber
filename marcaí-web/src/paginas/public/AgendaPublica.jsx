@@ -119,6 +119,185 @@ const limparDadosLocais = (slug) => {
   } catch {}
 }
 
+// ─── Tela de Login OTP ──────────────────────────────────────────────────────
+const TelaLoginOTP = ({ slug, onLogin, tenant }) => {
+  const [telefone, setTelefone] = useState('')
+  const [codigo, setCodigo] = useState('')
+  const [etapaOTP, setEtapaOTP] = useState('inicio') // inicio | codigo
+  const [enviando, setEnviando] = useState(false)
+  const [erro, setErro] = useState('')
+
+  const enviarCodigo = async (tel) => {
+    const digitos = (tel || telefone).replace(/\D/g, '')
+    if (digitos.length < 10) { setErro('Telefone inválido'); return }
+    setEnviando(true)
+    setErro('')
+    try {
+      await apiFetch(`/api/public/${slug}/enviar-codigo`, {
+        method: 'POST',
+        body: JSON.stringify({ telefone: digitos }),
+      })
+      if (!tel) setTelefone(digitos)
+      setEtapaOTP('codigo')
+    } catch (e) {
+      setErro(e.message || 'Erro ao enviar código')
+    } finally {
+      setEnviando(false)
+    }
+  }
+
+  const verificarCodigo = async () => {
+    if (codigo.length < 4) { setErro('Digite o código de 4 dígitos'); return }
+    setEnviando(true)
+    setErro('')
+    try {
+      const digitos = telefone.replace(/\D/g, '')
+      const res = await apiFetch(`/api/public/${slug}/verificar-codigo`, {
+        method: 'POST',
+        body: JSON.stringify({ telefone: digitos, codigo }),
+      })
+      const telFinal = digitos.startsWith('55') && digitos.length >= 12 ? digitos : `55${digitos}`
+      const dados = { nome: res.cliente?.nome || '', telefone: telFinal, autenticado: true }
+      salvarDadosLocais(slug, dados)
+      onLogin(dados)
+    } catch (e) {
+      setErro(e.message || 'Código inválido')
+    } finally {
+      setEnviando(false)
+    }
+  }
+
+  // Número do WhatsApp da barbearia (pra mostrar pro cliente)
+  const whatsappNumero = tenant?.whatsappNumero
+    ? tenant.whatsappNumero.replace(/^55/, '').replace(/(\d{2})(\d{5})(\d{4})/, '($1) $2-$3')
+    : null
+
+  return (
+    <div style={{ minHeight: '100vh', background: C.bg, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
+      <div style={{ width: '100%', maxWidth: 380 }}>
+        {/* Logo */}
+        <div style={{ textAlign: 'center', marginBottom: 32 }}>
+          {tenant?.logoUrl ? (
+            <img src={`${API_URL}${tenant.logoUrl}`} alt={tenant.nome} style={{ width: 64, height: 64, borderRadius: 16, objectFit: 'cover', marginBottom: 12 }} />
+          ) : (
+            <div style={{ width: 56, height: 56, background: C.gold, borderRadius: 16, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', marginBottom: 12 }}>
+              <Scissors size={24} style={{ color: '#fff' }} />
+            </div>
+          )}
+          <h1 style={{ color: C.textPrimary, fontSize: 22, fontWeight: 700, margin: '0 0 4px' }}>{tenant?.nome || 'Barbearia'}</h1>
+          <p style={{ color: C.textDim, fontSize: 13, margin: 0 }}>Agende seu horário em segundos 💈</p>
+        </div>
+
+        <div style={{ background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 16, padding: 24 }}>
+          {etapaOTP === 'inicio' ? (
+            <>
+              <div style={{ textAlign: 'center', marginBottom: 20 }}>
+                <div style={{ width: 48, height: 48, background: C.greenDim, borderRadius: 12, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', marginBottom: 12 }}>
+                  <Phone size={22} style={{ color: C.green }} />
+                </div>
+                <p style={{ color: C.textPrimary, fontSize: 16, fontWeight: 700, margin: '0 0 8px' }}>Entre com seu WhatsApp</p>
+                <p style={{ color: C.textDim, fontSize: 13, margin: 0, lineHeight: 1.5 }}>
+                  Digite seu número e enviaremos um código de verificação no seu WhatsApp. Rápido e seguro!
+                </p>
+              </div>
+
+              <input
+                value={telefone}
+                onChange={(e) => setTelefone(mascaraTelefone(e.target.value))}
+                placeholder="(11) 99999-9999"
+                maxLength={15}
+                style={{
+                  width: '100%', padding: '14px 16px', borderRadius: 12, border: `1.5px solid ${C.border}`,
+                  background: C.bg, color: C.textPrimary, fontSize: 16, outline: 'none', boxSizing: 'border-box',
+                  textAlign: 'center', fontWeight: 600,
+                }}
+              />
+
+              {erro && <p style={{ color: '#ef4444', fontSize: 12, margin: '10px 0 0', textAlign: 'center' }}>{erro}</p>}
+
+              <button
+                onClick={() => enviarCodigo()}
+                disabled={enviando || telefone.replace(/\D/g, '').length < 10}
+                style={{
+                  width: '100%', padding: '14px 0', borderRadius: 12, border: 'none', marginTop: 16,
+                  background: telefone.replace(/\D/g, '').length >= 10 ? C.green : C.border,
+                  color: telefone.replace(/\D/g, '').length >= 10 ? '#fff' : C.textDim,
+                  fontWeight: 700, fontSize: 14, cursor: 'pointer', opacity: enviando ? 0.6 : 1,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+                }}
+              >
+                {enviando ? (
+                  <><Loader2 size={16} className="spin" /> Enviando...</>
+                ) : (
+                  'Receber código no WhatsApp'
+                )}
+              </button>
+
+              <p style={{ color: C.textDim, fontSize: 11, textAlign: 'center', marginTop: 12 }}>
+                Primeiro acesso? Sem problema! Vamos criar sua conta automaticamente.
+              </p>
+            </>
+          ) : (
+            <>
+              <div style={{ textAlign: 'center', marginBottom: 20 }}>
+                <p style={{ color: C.textPrimary, fontSize: 16, fontWeight: 700, margin: '0 0 8px' }}>Código enviado! 📱</p>
+                <p style={{ color: C.textDim, fontSize: 13, margin: 0, lineHeight: 1.5 }}>
+                  Verifique seu WhatsApp e digite o código de 4 dígitos abaixo
+                </p>
+              </div>
+
+              <input
+                value={codigo}
+                onChange={(e) => setCodigo(e.target.value.replace(/\D/g, '').slice(0, 4))}
+                placeholder="0000"
+                maxLength={4}
+                inputMode="numeric"
+                style={{
+                  width: '100%', padding: '18px', borderRadius: 12, border: `1.5px solid ${codigo.length >= 4 ? C.gold : C.border}`,
+                  background: C.bg, color: C.textPrimary, fontSize: 32, fontWeight: 700,
+                  textAlign: 'center', letterSpacing: 16, outline: 'none', boxSizing: 'border-box',
+                }}
+                autoFocus
+              />
+
+              {erro && <p style={{ color: '#ef4444', fontSize: 12, margin: '10px 0 0', textAlign: 'center' }}>{erro}</p>}
+
+              <button
+                onClick={verificarCodigo}
+                disabled={enviando || codigo.length < 4}
+                style={{
+                  width: '100%', padding: '14px 0', borderRadius: 12, border: 'none', marginTop: 16,
+                  background: codigo.length >= 4 ? C.gold : C.border,
+                  color: codigo.length >= 4 ? C.textOnGold : C.textDim,
+                  fontWeight: 700, fontSize: 14, cursor: 'pointer', opacity: enviando ? 0.6 : 1,
+                }}
+              >
+                {enviando ? 'Verificando...' : 'Entrar'}
+              </button>
+
+              <div style={{ display: 'flex', justifyContent: 'center', gap: 16, marginTop: 12 }}>
+                <button
+                  onClick={() => enviarCodigo(telefone)}
+                  disabled={enviando}
+                  style={{ background: 'transparent', border: 'none', color: C.gold, fontSize: 12, cursor: 'pointer', fontWeight: 600 }}
+                >
+                  Reenviar código
+                </button>
+                <button
+                  onClick={() => { setEtapaOTP('inicio'); setCodigo(''); setErro('') }}
+                  style={{ background: 'transparent', border: 'none', color: C.textDim, fontSize: 12, cursor: 'pointer' }}
+                >
+                  Trocar número
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ─── Etapas: 1=Serviço 2=Profissional 3=Data/Hora 4=Dados pessoais 5=Sucesso ─
 
 const AgendaPublica = () => {
@@ -134,6 +313,7 @@ const AgendaPublica = () => {
 
   // Seleções de agendamento
   const [servicoId, setServicoId] = useState('')
+  const [servicoIds, setServicoIds] = useState([])
   const [profissionalId, setProfissionalId] = useState('')
   const [data, setData] = useState('')
   const [slot, setSlot] = useState(null)
@@ -149,8 +329,22 @@ const AgendaPublica = () => {
   const [meusAgs, setMeusAgs] = useState([])
   const [meusAgsCarregando, setMeusAgsCarregando] = useState(false)
 
+  // Histórico
+  const [historicoAberto, setHistoricoAberto] = useState(false)
+  const [historicoLista, setHistoricoLista] = useState([])
+  const [historicoCarregando, setHistoricoCarregando] = useState(false)
+
   // Assinatura/plano do cliente (serviços inclusos)
   const [assinatura, setAssinatura] = useState(null)
+
+  // Reagendamento
+  const [reagendando, setReagendando] = useState(null) // agendamento sendo reagendado
+  const [reagendandoSlot, setReagendandoSlot] = useState(null)
+  const [reagendandoData, setReagendandoData] = useState('')
+  const [reagendandoSlots, setReagendandoSlots] = useState([])
+  const [reagendandoCarregando, setReagendandoCarregando] = useState(false)
+  const [reagendandoSalvando, setReagendandoSalvando] = useState(false)
+  const [reagendandoErro, setReagendandoErro] = useState(null)
 
   // Navegação e estado
   const [etapa, setEtapa] = useState(1)
@@ -213,22 +407,80 @@ const AgendaPublica = () => {
     if (etapa === 3 && !data && dias.length > 0) setData(dias[0])
   }, [etapa]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── Carrega slots ─────────────────────────────────────────────────────────
+  // ── Carrega slots (combo ou single) ──────────────────────────────────────
   useEffect(() => {
-    if (!data || !servicoId) return
+    if (!data || (!servicoId && servicoIds.length === 0)) return
     setCarregandoSlots(true)
     setSlot(null)
-    const params = new URLSearchParams({ servicoId, data })
-    if (profissionalId) params.set('profissionalId', profissionalId)
-    apiFetch(`/api/public/${slug}/slots?${params}`)
+
+    const isCombo = servicoIds.length > 1
+    let url
+    if (isCombo) {
+      const params = new URLSearchParams({ servicoIds: servicoIds.join(','), data })
+      if (profissionalId) params.set('profissionalId', profissionalId)
+      url = `/api/public/${slug}/slots-combo?${params}`
+    } else {
+      const sid = servicoIds[0] || servicoId
+      const params = new URLSearchParams({ servicoId: sid, data })
+      if (profissionalId) params.set('profissionalId', profissionalId)
+      url = `/api/public/${slug}/slots?${params}`
+    }
+
+    apiFetch(url)
       .then((s) => setSlots(s))
       .catch(() => setSlots([]))
       .finally(() => setCarregandoSlots(false))
-  }, [data, servicoId, profissionalId, slug])
+  }, [data, servicoId, servicoIds, profissionalId, slug])
 
-  const profsFiltrados = servicoId
-    ? profissionais.filter((p) => p.servicoIds.includes(servicoId))
-    : profissionais
+  // ── Reagendamento: carrega slots quando muda data ──────────────────────
+  useEffect(() => {
+    if (!reagendando || !reagendandoData) return
+    setReagendandoCarregando(true)
+    setReagendandoSlot(null)
+    const params = new URLSearchParams({ servicoId: reagendando.servicoId, profissionalId: reagendando.profissionalId, data: reagendandoData })
+    apiFetch(`/api/public/${slug}/slots?${params}`)
+      .then((s) => setReagendandoSlots(s))
+      .catch(() => setReagendandoSlots([]))
+      .finally(() => setReagendandoCarregando(false))
+  }, [reagendandoData, reagendando, slug])
+
+  const iniciarReagendamento = (ag) => {
+    setReagendando({ id: ag.id, servicoId: ag.servicoId, profissionalId: ag.profissionalId, servico: ag.servico, profissional: ag.profissional })
+    setReagendandoData(gerarDias(new Date(), 14)[0])
+    setReagendandoSlot(null)
+    setReagendandoErro(null)
+  }
+
+  const confirmarReagendamento = async () => {
+    if (!reagendandoSlot || !reagendando) return
+    setReagendandoSalvando(true)
+    setReagendandoErro(null)
+    try {
+      const telLimpo = dadosSalvos.telefone.replace(/\D/g, '')
+      await apiFetch(`/api/public/${slug}/reagendar`, {
+        method: 'POST',
+        body: JSON.stringify({
+          agendamentoId: reagendando.id,
+          telefone: telLimpo,
+          novoInicio: reagendandoSlot.inicio,
+        }),
+      })
+      // Recarrega agendamentos
+      const ags = await apiFetch(`/api/public/${slug}/meus-agendamentos?tel=${telLimpo}`).catch(() => [])
+      setMeusAgs(ags || [])
+      setReagendando(null)
+    } catch (e) {
+      setReagendandoErro(e.message || 'Não foi possível reagendar.')
+    } finally {
+      setReagendandoSalvando(false)
+    }
+  }
+
+  const profsFiltrados = servicoIds.length > 0
+    ? profissionais.filter((p) => servicoIds.every(id => p.servicoIds.includes(id)))
+    : servicoId
+      ? profissionais.filter((p) => p.servicoIds.includes(servicoId))
+      : profissionais
 
   // ── Confirma agendamento via API ─────────────────────────────────────────
   const confirmarAgendamento = async (nome, telefone) => {
@@ -241,15 +493,21 @@ const AgendaPublica = () => {
       const profIdFinal = profissionalId || slot?.profissional?.id
       if (!profIdFinal) throw new Error('Profissional não identificado. Volte e selecione um horário.')
 
+      const bodyAgendar = {
+        nome: nome.trim(),
+        telefone: telComCodigo,
+        profissionalId: profIdFinal,
+        inicio: slot.inicio,
+      }
+      if (servicoIds.length > 1) {
+        bodyAgendar.servicoIds = servicoIds
+      } else {
+        bodyAgendar.servicoId = servicoIds[0] || servicoId
+      }
+
       const dados = await apiFetch(`/api/public/${slug}/agendar`, {
         method: 'POST',
-        body: JSON.stringify({
-          nome: nome.trim(),
-          telefone: telComCodigo,
-          servicoId,
-          profissionalId: profIdFinal,
-          inicio: slot.inicio,
-        }),
+        body: JSON.stringify(bodyAgendar),
       })
 
       // Salva dados no localStorage para próximas visitas
@@ -312,6 +570,22 @@ const AgendaPublica = () => {
         <style>{`@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}.spin{animation:spin 1s linear infinite}`}</style>
         <Loader2 size={32} className="spin" style={{ color: C.gold }} />
       </div>
+    )
+  }
+
+  // ─── Login OTP (se não tem dados salvos e não veio pela URL) ────────────
+  const telUrl = searchParams.get('tel') || ''
+  if (!dadosSalvos && !telUrl && tenant) {
+    return (
+      <TelaLoginOTP
+        slug={slug}
+        tenant={tenant}
+        onLogin={(dados) => {
+          setDadosSalvos(dados)
+          if (dados.nome) setNomeCliente(dados.nome)
+          if (dados.telefone) setTelefoneCliente(dados.telefone)
+        }}
+      />
     )
   }
 
@@ -516,18 +790,43 @@ const AgendaPublica = () => {
         </div>
       </div>
 
-      {/* ── Meus agendamentos ── */}
-      {clienteConhecido && etapa < 5 && (meusAgsCarregando || meusAgs.length > 0) && (
+      {/* ── Meus agendamentos + Histórico ── */}
+      {clienteConhecido && etapa < 5 && (
         <div style={{ background: C.bgHeader, borderBottom: `1px solid ${C.borderHeader}`, padding: '12px 20px' }}>
           <div className="public-appointments-shell">
-            <p style={{ color: C.textDim, fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>
-              📅 Meus agendamentos
-            </p>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+              <p style={{ color: C.textDim, fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5, margin: 0 }}>
+                📅 Meus agendamentos
+              </p>
+              <button
+                onClick={() => {
+                  setHistoricoAberto(true)
+                  if (historicoLista.length === 0) {
+                    setHistoricoCarregando(true)
+                    const telLimpo = (dadosSalvos?.telefone || '').replace(/\D/g, '')
+                    apiFetch(`/api/public/${slug}/historico?tel=${telLimpo}`)
+                      .then(d => setHistoricoLista(d || []))
+                      .catch(() => setHistoricoLista([]))
+                      .finally(() => setHistoricoCarregando(false))
+                  }
+                }}
+                style={{
+                  background: 'transparent', border: `1px solid ${C.border}`, borderRadius: 8,
+                  padding: '4px 10px', fontSize: 10, fontWeight: 600, color: C.textDim,
+                  cursor: 'pointer', textTransform: 'uppercase', letterSpacing: 0.5,
+                }}
+              >
+                <Clock size={10} style={{ marginRight: 4 }} />
+                Histórico
+              </button>
+            </div>
             {meusAgsCarregando ? (
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <Loader2 size={14} className="spin" style={{ color: C.gold }} />
                 <span style={{ color: C.textDim, fontSize: 12 }}>Carregando...</span>
               </div>
+            ) : meusAgs.length === 0 ? (
+              <p style={{ color: C.textDim, fontSize: 12, margin: 0 }}>Nenhum agendamento futuro. Agende abaixo! 👇</p>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                 {meusAgs.map((ag) => (
@@ -553,14 +852,176 @@ const AgendaPublica = () => {
                         com {ag.profissional.split(' ')[0]}
                       </p>
                     </div>
-                    <div className="appointment-card-meta">
+                    <div className="appointment-card-meta" style={{ textAlign: 'right' }}>
                       <p style={{ color: C.gold, fontWeight: 700, fontSize: 12, margin: 0 }}>{ag.horaFormatada}</p>
                       <p style={{ color: C.textDim, fontSize: 11, margin: '2px 0 0' }}>{ag.dataFormatada}</p>
+                      <button
+                        onClick={() => iniciarReagendamento(ag)}
+                        style={{
+                          marginTop: 4, padding: '3px 10px', fontSize: 10, fontWeight: 700,
+                          background: 'transparent', color: C.gold, border: `1px solid ${C.gold}`,
+                          borderRadius: 6, cursor: 'pointer', textTransform: 'uppercase', letterSpacing: 0.5,
+                        }}
+                      >
+                        Reagendar
+                      </button>
                     </div>
                   </div>
                 ))}
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* ── Modal de histórico ── */}
+      {historicoAberto && (
+        <div style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', zIndex: 100,
+          display: 'flex', alignItems: 'flex-end', justifyContent: 'center',
+        }} onClick={() => setHistoricoAberto(false)}>
+          <div style={{
+            background: C.bg, borderTop: `2px solid ${C.gold}`, borderRadius: '20px 20px 0 0',
+            width: '100%', maxWidth: 480, maxHeight: '80vh', overflow: 'auto', padding: '20px 16px 24px',
+          }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+              <p style={{ color: C.textPrimary, fontWeight: 700, fontSize: 16, margin: 0 }}>Histórico de atendimentos</p>
+              <button onClick={() => setHistoricoAberto(false)} style={{ background: 'none', border: 'none', color: C.textDim, fontSize: 20, cursor: 'pointer' }}>✕</button>
+            </div>
+
+            {historicoCarregando ? (
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 30, gap: 8 }}>
+                <Loader2 size={16} className="spin" style={{ color: C.gold }} />
+                <span style={{ color: C.textDim, fontSize: 13 }}>Carregando...</span>
+              </div>
+            ) : historicoLista.length === 0 ? (
+              <p style={{ color: C.textDim, fontSize: 13, textAlign: 'center', padding: 30 }}>Nenhum atendimento anterior encontrado.</p>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {historicoLista.map((h) => (
+                  <div key={h.id} style={{
+                    background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 12, padding: '12px 14px',
+                    display: 'flex', alignItems: 'center', gap: 12,
+                  }}>
+                    <div style={{
+                      width: 36, height: 36, borderRadius: '50%', flexShrink: 0,
+                      background: h.status === 'CONCLUIDO' ? 'rgba(37,211,102,0.15)' : h.status === 'CANCELADO' ? 'rgba(239,68,68,0.15)' : C.goldDim,
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    }}>
+                      {h.status === 'CONCLUIDO' ? <CheckCircle size={16} style={{ color: C.green }} />
+                        : h.status === 'CANCELADO' ? <Calendar size={16} style={{ color: '#ef4444' }} />
+                        : <Scissors size={14} style={{ color: C.gold }} />}
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <p style={{ color: C.textPrimary, fontWeight: 600, fontSize: 13, margin: 0 }}>{h.servico}</p>
+                      <p style={{ color: C.textDim, fontSize: 11, margin: '2px 0 0' }}>
+                        {h.profissional} — {h.dataFormatada}
+                      </p>
+                    </div>
+                    <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                      {h.nota && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 2, justifyContent: 'flex-end', marginBottom: 2 }}>
+                          {[1,2,3,4,5].map(n => (
+                            <span key={n} style={{ color: n <= h.nota ? '#facc15' : C.border, fontSize: 10 }}>★</span>
+                          ))}
+                        </div>
+                      )}
+                      <span style={{
+                        fontSize: 10, fontWeight: 600, padding: '2px 6px', borderRadius: 4,
+                        background: h.status === 'CONCLUIDO' ? 'rgba(37,211,102,0.15)' : h.status === 'CANCELADO' ? 'rgba(239,68,68,0.15)' : C.goldDim,
+                        color: h.status === 'CONCLUIDO' ? C.green : h.status === 'CANCELADO' ? '#ef4444' : C.gold,
+                      }}>
+                        {h.status === 'CONCLUIDO' ? 'Concluído' : h.status === 'CANCELADO' ? 'Cancelado' : 'Faltou'}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ── Modal de reagendamento ── */}
+      {reagendando && (
+        <div style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', zIndex: 100,
+          display: 'flex', alignItems: 'flex-end', justifyContent: 'center',
+        }} onClick={() => setReagendando(null)}>
+          <div style={{
+            background: C.bg, borderTop: `2px solid ${C.gold}`, borderRadius: '20px 20px 0 0',
+            width: '100%', maxWidth: 480, maxHeight: '85vh', overflow: 'auto', padding: '20px 16px 24px',
+          }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+              <div>
+                <p style={{ color: C.textPrimary, fontWeight: 700, fontSize: 16, margin: 0 }}>Reagendar</p>
+                <p style={{ color: C.textDim, fontSize: 12, margin: '2px 0 0' }}>
+                  {reagendando.servico} com {reagendando.profissional?.split(' ')[0]}
+                </p>
+              </div>
+              <button onClick={() => setReagendando(null)} style={{ background: 'none', border: 'none', color: C.textDim, fontSize: 20, cursor: 'pointer' }}>✕</button>
+            </div>
+
+            {/* Seletor de dia */}
+            <p style={{ color: C.textDim, fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>Escolha o novo dia</p>
+            <div style={{ display: 'flex', gap: 6, overflowX: 'auto', paddingBottom: 8, marginBottom: 12 }}>
+              {gerarDias(new Date(), 14).map((d) => {
+                const dt = new Date(d + 'T12:00:00')
+                const sel = reagendandoData === d
+                return (
+                  <button key={d} onClick={() => setReagendandoData(d)} style={{
+                    flexShrink: 0, width: 52, padding: '8px 0', borderRadius: 10, border: sel ? `1.5px solid ${C.gold}` : `1px solid ${C.border}`,
+                    background: sel ? C.bgSelected : 'transparent', cursor: 'pointer', textAlign: 'center',
+                  }}>
+                    <p style={{ color: sel ? C.gold : C.textDim, fontSize: 10, fontWeight: 600, margin: 0 }}>{DIAS_SEMANA[dt.getDay()]}</p>
+                    <p style={{ color: sel ? C.textPrimary : C.textSecondary, fontSize: 18, fontWeight: 700, margin: '2px 0 0' }}>{dt.getDate()}</p>
+                    <p style={{ color: sel ? C.gold : C.textDim, fontSize: 9, margin: '1px 0 0' }}>{MESES[dt.getMonth()]}</p>
+                  </button>
+                )
+              })}
+            </div>
+
+            {/* Slots disponíveis */}
+            {reagendandoCarregando ? (
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20, gap: 8 }}>
+                <Loader2 size={16} className="spin" style={{ color: C.gold }} />
+                <span style={{ color: C.textDim, fontSize: 13 }}>Carregando horários...</span>
+              </div>
+            ) : reagendandoSlots.length === 0 ? (
+              <p style={{ color: C.textDim, fontSize: 13, textAlign: 'center', padding: 20 }}>Nenhum horário disponível neste dia.</p>
+            ) : (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 16 }}>
+                {reagendandoSlots.map((s, i) => {
+                  const sel = reagendandoSlot?.inicio === s.inicio
+                  return (
+                    <button key={i} onClick={() => setReagendandoSlot(s)} style={{
+                      padding: '8px 14px', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer',
+                      border: sel ? `1.5px solid ${C.gold}` : `1px solid ${C.border}`,
+                      background: sel ? C.bgSelected : 'transparent',
+                      color: sel ? C.gold : C.textSecondary,
+                    }}>
+                      {formatarHora(s.inicio)}
+                    </button>
+                  )
+                })}
+              </div>
+            )}
+
+            {reagendandoErro && (
+              <p style={{ color: '#ef4444', fontSize: 12, marginBottom: 12, textAlign: 'center' }}>{reagendandoErro}</p>
+            )}
+
+            <button
+              onClick={confirmarReagendamento}
+              disabled={!reagendandoSlot || reagendandoSalvando}
+              style={{
+                width: '100%', padding: '14px 0', borderRadius: 12, border: 'none', fontWeight: 700, fontSize: 14,
+                background: reagendandoSlot ? C.gold : C.border, color: reagendandoSlot ? C.textOnGold : C.textDim,
+                cursor: reagendandoSlot ? 'pointer' : 'not-allowed', opacity: reagendandoSalvando ? 0.6 : 1,
+              }}
+            >
+              {reagendandoSalvando ? 'Reagendando...' : 'Confirmar novo horário'}
+            </button>
           </div>
         </div>
       )}
@@ -605,13 +1066,13 @@ const AgendaPublica = () => {
         {/* ════ Etapa 1: Serviço ════ */}
         {etapa === 1 && (
           <div className="fade-in">
-            <h2 style={{ color: C.textPrimary, fontWeight: 700, fontSize: 16, marginBottom: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
+            <h2 style={{ color: C.textPrimary, fontWeight: 700, fontSize: 16, marginBottom: 4, display: 'flex', alignItems: 'center', gap: 8 }}>
               <Scissors size={18} style={{ color: C.gold }} />
-              Escolha o serviço
+              Escolha o(s) serviço(s)
             </h2>
+            <p style={{ color: C.textDim, fontSize: 12, marginBottom: 16 }}>Selecione um ou mais serviços</p>
             {servicos.map((s) => {
-              const sel = servicoId === s.id
-              // Verifica se o serviço está incluso no plano do cliente
+              const sel = servicoIds.includes(s.id)
               const creditoPlano = assinatura?.servicosComCredito?.find((c) => c.servicoId === s.id)
               const inclusoNoPlano = creditoPlano && creditoPlano.creditosRestantes > 0
               return (
@@ -619,18 +1080,9 @@ const AgendaPublica = () => {
                   key={s.id}
                   className="card-sel"
                   onClick={() => {
-                    const profsDoServico = profissionais.filter((p) => p.servicoIds.includes(s.id))
-                    setServicoId(s.id)
+                    setServicoIds(prev => prev.includes(s.id) ? prev.filter(id => id !== s.id) : [...prev, s.id])
                     setData('')
                     setSlot(null)
-                    if (profsDoServico.length === 1) {
-                      // Único profissional — auto-seleciona e pula etapa 2
-                      setProfissionalId(profsDoServico[0].id)
-                      setEtapa(3)
-                    } else {
-                      setProfissionalId('')
-                      setEtapa(2)
-                    }
                   }}
                   style={{
                     background: sel ? C.bgSelected : inclusoNoPlano ? 'rgba(37,211,102,0.08)' : C.bgCard,
@@ -639,26 +1091,74 @@ const AgendaPublica = () => {
                   }}
                 >
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                    <div>
-                      <p style={{ color: C.textPrimary, fontWeight: 600, fontSize: 14, margin: 0 }}>{s.nome}</p>
-                      <p style={{ color: C.textDim, fontSize: 12, margin: '3px 0 0' }}>{s.duracaoMinutos} min</p>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <div style={{
+                        width: 20, height: 20, borderRadius: 6, border: `2px solid ${sel ? C.gold : C.border}`,
+                        background: sel ? C.gold : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        flexShrink: 0,
+                      }}>
+                        {sel && <CheckCircle size={12} style={{ color: '#fff' }} />}
+                      </div>
+                      <div>
+                        <p style={{ color: C.textPrimary, fontWeight: 600, fontSize: 14, margin: 0 }}>{s.nome}</p>
+                        <p style={{ color: C.textDim, fontSize: 12, margin: '3px 0 0' }}>{s.duracaoMinutos} min</p>
+                      </div>
                     </div>
                     {inclusoNoPlano ? (
                       <div style={{ textAlign: 'right' }}>
-                        <span style={{ color: C.green, fontWeight: 700, fontSize: 13 }}>Incluso no plano</span>
-                        <p style={{ color: C.textDim, fontSize: 11, margin: '2px 0 0' }}>
-                          {creditoPlano.creditosRestantes}x restante{creditoPlano.creditosRestantes > 1 ? 's' : ''}
-                        </p>
+                        <span style={{ color: C.green, fontWeight: 700, fontSize: 13 }}>Incluso</span>
+                        <p style={{ color: C.textDim, fontSize: 11, margin: '2px 0 0' }}>{creditoPlano.creditosRestantes}x</p>
                       </div>
                     ) : s.precoCentavos != null && (
-                      <span style={{ color: C.gold, fontWeight: 700, fontSize: 14 }}>
-                        {formatarReais(s.precoCentavos)}
-                      </span>
+                      <span style={{ color: C.gold, fontWeight: 700, fontSize: 14 }}>{formatarReais(s.precoCentavos)}</span>
                     )}
                   </div>
                 </div>
               )
             })}
+            {servicoIds.length > 0 && (
+              <>
+                {servicoIds.length > 1 && (
+                  <div style={{ background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 10, padding: '10px 14px', marginBottom: 12 }}>
+                    <p style={{ color: C.textDim, fontSize: 11, margin: 0 }}>
+                      {servicoIds.length} serviços — {servicoIds.reduce((t, id) => t + (servicos.find(s => s.id === id)?.duracaoMinutos || 0), 0)} min total
+                      {(() => { const total = servicoIds.reduce((t, id) => t + (servicos.find(s => s.id === id)?.precoCentavos || 0), 0); return total ? ` — ${formatarReais(total)}` : '' })()}
+                    </p>
+                  </div>
+                )}
+                <button
+                  onClick={() => {
+                    const primeiroId = servicoIds[0]
+                    setServicoId(primeiroId)
+                    // Filtra profissionais que fazem TODOS os serviços selecionados
+                    const profsComTodos = profissionais.filter(p => servicoIds.every(id => p.servicoIds.includes(id)))
+                    if (profsComTodos.length === 1) {
+                      setProfissionalId(profsComTodos[0].id)
+                      setEtapa(3)
+                    } else if (profsComTodos.length === 0) {
+                      // Nenhum profissional faz todos — usa o primeiro serviço para filtrar
+                      const profsDoServico = profissionais.filter(p => p.servicoIds.includes(primeiroId))
+                      if (profsDoServico.length === 1) {
+                        setProfissionalId(profsDoServico[0].id)
+                        setEtapa(3)
+                      } else {
+                        setProfissionalId('')
+                        setEtapa(2)
+                      }
+                    } else {
+                      setProfissionalId('')
+                      setEtapa(2)
+                    }
+                  }}
+                  style={{
+                    width: '100%', padding: '14px 0', borderRadius: 12, border: 'none',
+                    background: C.gold, color: C.textOnGold, fontWeight: 700, fontSize: 14, cursor: 'pointer',
+                  }}
+                >
+                  Continuar
+                </button>
+              </>
+            )}
           </div>
         )}
 

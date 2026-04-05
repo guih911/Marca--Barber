@@ -71,6 +71,7 @@ const atualizar = async (tenantId, dados) => {
   if (dados.numeroDono !== undefined) campos.numeroDono = dados.numeroDono?.trim() || null
   if (dados.diferenciais !== undefined) campos.diferenciais = Array.isArray(dados.diferenciais) ? dados.diferenciais : null
   if (dados.linkMaps !== undefined) campos.linkMaps = dados.linkMaps?.trim() || null
+  if (dados.nomeIA !== undefined) campos.nomeIA = dados.nomeIA?.trim() || null
   if (dados.apresentacaoSalaoAtivo !== undefined) campos.apresentacaoSalaoAtivo = Boolean(dados.apresentacaoSalaoAtivo)
 
   return banco.tenant.update({ where: { id: tenantId }, data: campos })

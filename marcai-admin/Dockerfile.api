@@ -1,0 +1,19 @@
+FROM node:20-slim
+
+RUN apt-get update && apt-get install -y openssl git --no-install-recommends && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY api/package*.json ./
+COPY api/node_modules ./node_modules
+
+COPY api/prisma ./prisma
+RUN npx prisma generate
+
+COPY api/src ./src
+
+RUN mkdir -p .baileys_vendas
+
+EXPOSE 4000
+
+CMD ["sh", "-c", "npx prisma db push --accept-data-loss 2>/dev/null; node src/server.js"]

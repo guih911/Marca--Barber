@@ -1,0 +1,1 @@
+ALTER TABLE "conversas" ADD COLUMN IF NOT EXISTS "estadoEngine" JSONB;

@@ -579,19 +579,34 @@ const enviarRelatorioDiario = async () => {
 
         const dataFmt = inicioHoje.toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: 'long' })
 
-        let msg = `📊 *Relatório do dia — ${tenant.nome}*\n`
-        msg += `_${dataFmt}_\n\n`
-        msg += `✅ Concluídos: *${concluidos.length}*\n`
-        msg += `📅 Agendados/Confirmados: *${agendados.length}*\n`
-        msg += `❌ Cancelamentos: *${cancelados.length}*\n`
-        msg += `💰 Receita realizada: *${receitaFmt}*\n`
-        msg += `👥 Profissionais ativos: *${profissionais.length}*\n\n`
+        // Desempenho baseado em concluídos
+        const totalHoje = agendamentos.length
+        let desempenho = '📈 Desempenho: Excelente 🔥'
+        if (concluidos.length === 0) desempenho = '📈 Desempenho: Sem atendimentos hoje'
+        else if (concluidos.length <= 2) desempenho = '📈 Desempenho: Pode melhorar 💪'
+        else if (concluidos.length <= 5) desempenho = '📈 Desempenho: Bom 👍'
 
-        if (agendados.length > 0) {
-          msg += `_${agendados.length} agendamento(s) ainda estão abertos para amanhã._\n`
-        }
+        // Oportunidade
+        const temHorariosLivres = agendados.length < 3 && concluidos.length < 8
+        const oportunidade = temHorariosLivres
+          ? '\n⚠️ Oportunidade: Você ainda tem horários livres que poderiam gerar mais faturamento'
+          : '\n✅ Agenda bem preenchida hoje!'
 
-        msg += `\nBom trabalho! 💪 — Sistema Don`
+        // Cancelamentos
+        const cancelamentoTexto = cancelados.length === 0
+          ? `❌ ${cancelados.length} cancelamentos (excelente!)`
+          : `❌ ${cancelados.length} cancelamento(s)`
+
+        let msg = `📊 Relatório do Dia — ${tenant.nome}\n\n`
+        msg += `✂️ ${concluidos.length} atendimento(s) realizado(s)\n`
+        msg += `📅 ${agendados.length} agendamento(s) futuro(s)\n`
+        msg += `💰 ${receitaFmt} faturados hoje\n`
+        msg += `${cancelamentoTexto}\n\n`
+        msg += `${desempenho}\n`
+        msg += `${oportunidade}\n\n`
+        msg += `💡 Sugestão do DON:\n`
+        msg += `Que tal ativar promoções automáticas ou encaixes rápidos via WhatsApp? Posso fazer isso pra você 😉\n\n`
+        msg += `— 🤖 DON`
 
         await enviarWhatsApp(tenant, numeroAdmin, msg)
         console.log(`[Relatório] Diário enviado → ${numeroAdmin} (${tenant.nome})`)
