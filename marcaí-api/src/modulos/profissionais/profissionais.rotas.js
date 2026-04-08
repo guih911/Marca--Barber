@@ -6,8 +6,11 @@ const { autenticar } = require('../../middlewares/autenticacao')
 const { validar } = require('../../middlewares/validacao')
 const profissionaisControlador = require('./profissionais.controlador')
 
+const uploadsDir = path.join(__dirname, '../../../uploads/avatares')
+require('fs').mkdirSync(uploadsDir, { recursive: true })
+
 const storage = multer.diskStorage({
-  destination: path.join(__dirname, '../../../../uploads/avatares'),
+  destination: uploadsDir,
   filename: (req, file, cb) => {
     const ext = path.extname(file.originalname).toLowerCase() || '.jpg'
     cb(null, `prof-${req.params.id}-${Date.now()}${ext}`)

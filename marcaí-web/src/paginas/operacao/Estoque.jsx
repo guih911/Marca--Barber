@@ -5,12 +5,27 @@ import { useToast } from '../../contextos/ToastContexto'
 import { formatarMoeda } from '../../lib/utils'
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '../../componentes/ui/select'
 
+const UNIDADES_ESTOQUE = [
+  { value: 'unid', label: 'unid — unidade' },
+  { value: 'ml', label: 'ml — mililitro' },
+  { value: 'g', label: 'g — grama' },
+  { value: 'kg', label: 'kg — quilograma' },
+  { value: 'L', label: 'L — litro' },
+  { value: 'pacote', label: 'pacote — pacote' },
+  { value: 'caixa', label: 'caixa — caixa' },
+  { value: 'duzia', label: 'duzia — dúzia' },
+  { value: 'fardo', label: 'fardo — fardo' },
+]
+
+const unidadeValida = (unidade) => (UNIDADES_ESTOQUE.some((item) => item.value === unidade) ? unidade : 'unid')
+const unidadeLabel = (unidade) => UNIDADES_ESTOQUE.find((item) => item.value === unidade)?.label || unidade
+
 const ModalProduto = ({ produto, onFechar, onSalvar }) => {
   const toast = useToast()
   const [form, setForm] = useState({
     nome: produto?.nome || '',
     descricao: produto?.descricao || '',
-    unidade: produto?.unidade || 'unid',
+    unidade: unidadeValida(produto?.unidade),
     precoCustoCentavos: produto?.precoCustoCentavos ? produto.precoCustoCentavos / 100 : '',
     precoVendaCentavos: produto?.precoVendaCentavos ? produto.precoVendaCentavos / 100 : '',
     quantidadeAtual: produto?.quantidadeAtual ?? 0,
@@ -61,11 +76,9 @@ const ModalProduto = ({ produto, onFechar, onSalvar }) => {
               <Select value={form.unidade} onValueChange={(v) => setForm((p) => ({ ...p, unidade: v }))}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="unid">unid — unidade</SelectItem>
-                  <SelectItem value="ml">ml — mililitro</SelectItem>
-                  <SelectItem value="g">g — grama</SelectItem>
-                  <SelectItem value="kg">kg — quilograma</SelectItem>
-                  <SelectItem value="L">L — litro</SelectItem>
+                  {UNIDADES_ESTOQUE.map((item) => (
+                    <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
@@ -141,7 +154,7 @@ const ModalMovimento = ({ produto, onFechar, onSalvar }) => {
         <div className="flex items-center gap-2 bg-fundo rounded-xl px-3 py-2.5 mb-4">
           <Archive size={14} className="text-primaria" />
           <p className="text-sm text-texto">{produto.nome}</p>
-          <span className="ml-auto text-xs font-semibold text-texto-sec">{produto.quantidadeAtual} {produto.unidade}</span>
+          <span className="ml-auto text-xs font-semibold text-texto-sec">{produto.quantidadeAtual} {unidadeLabel(produto.unidade)}</span>
         </div>
         <div className="space-y-3">
           <div className="flex gap-2">
@@ -310,7 +323,7 @@ const Estoque = () => {
                     <div className="flex items-center gap-3 mt-0.5 flex-wrap">
                       <p className="text-xs text-texto-sec">
                         <strong className={baixo ? 'text-red-600' : 'text-texto'}>{p.quantidadeAtual}</strong>
-                        {' '}{p.unidade}
+                        {' '}{unidadeLabel(p.unidade)}
                         {p.quantidadeMinima > 0 && <span className="text-texto-ter"> · mín: {p.quantidadeMinima}</span>}
                       </p>
                       {p.precoVendaCentavos ? (

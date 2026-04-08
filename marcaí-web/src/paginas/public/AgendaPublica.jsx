@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
-import { useParams, useSearchParams } from 'react-router-dom'
-import { Loader2, Calendar, Clock, User, Scissors, ChevronLeft, Phone, CheckCircle } from 'lucide-react'
+import { useLocation, useParams, useSearchParams } from 'react-router-dom'
+import { Loader2, Calendar, Clock, User, Scissors, ChevronLeft, Phone, CheckCircle, MapPin, Search, ExternalLink } from 'lucide-react'
 
 const API_URL = import.meta.env.VITE_API_URL ?? ''
 const MARCAI_LOGO = '/logo.svg'
@@ -13,6 +13,20 @@ const apiFetch = async (path, opts = {}) => {
   const data = await res.json()
   if (!data.sucesso) throw new Error(data.erro?.mensagem || 'Erro')
   return data.dados
+}
+
+const resolverMediaUrl = (path = '') => {
+  if (!path) return ''
+  if (/^https?:\/\//i.test(path)) return path
+
+  const caminho = path.startsWith('/') ? path : `/${path}`
+  const base = API_URL || (typeof window !== 'undefined' ? window.location.origin : '')
+
+  try {
+    return new URL(caminho, `${base}/`).toString()
+  } catch {
+    return `${base}${caminho}`
+  }
 }
 
 const formatarReais = (centavos) =>
@@ -35,6 +49,26 @@ const formatarDataHoraCompleta = (iso) =>
     hour: '2-digit', minute: '2-digit',
     timeZone: 'America/Sao_Paulo',
   })
+
+const formatarTelefoneExibicao = (valor = '') => {
+  const digitos = valor.replace(/\D/g, '')
+  const semCodigo = digitos.startsWith('55') && digitos.length > 11 ? digitos.slice(2) : digitos
+  return mascaraTelefone(semCodigo)
+}
+
+const formatarDataInput = (valor) => {
+  if (!valor) return ''
+  const data = new Date(valor)
+  if (Number.isNaN(data.getTime())) return ''
+  return data.toISOString().slice(0, 10)
+}
+
+const normalizarTextoComparacao = (valor = '') =>
+  valor
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim()
 
 const DIAS_SEMANA = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb']
 const MESES = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez']
@@ -178,7 +212,7 @@ const TelaLoginOTP = ({ slug, onLogin, tenant }) => {
         {/* Logo */}
         <div style={{ textAlign: 'center', marginBottom: 32 }}>
           {tenant?.logoUrl ? (
-            <img src={`${API_URL}${tenant.logoUrl}`} alt={tenant.nome} style={{ width: 64, height: 64, borderRadius: 16, objectFit: 'cover', marginBottom: 12 }} />
+            <img src={resolverMediaUrl(tenant.logoUrl)} alt={tenant.nome} style={{ width: 64, height: 64, borderRadius: 16, objectFit: 'cover', marginBottom: 12 }} />
           ) : (
             <div style={{ width: 56, height: 56, background: C.gold, borderRadius: 16, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', marginBottom: 12 }}>
               <Scissors size={24} style={{ color: '#fff' }} />
@@ -247,6 +281,7 @@ const TelaLoginOTP = ({ slug, onLogin, tenant }) => {
               </div>
 
               <input
+                className="public-otp-input"
                 value={codigo}
                 onChange={(e) => setCodigo(e.target.value.replace(/\D/g, '').slice(0, 4))}
                 placeholder="0000"
@@ -302,6 +337,7 @@ const TelaLoginOTP = ({ slug, onLogin, tenant }) => {
 
 const AgendaPublica = () => {
   const { slug } = useParams()
+  const location = useLocation()
   const [searchParams] = useSearchParams()
 
   // Dados do tenant / catálogo
@@ -310,6 +346,9 @@ const AgendaPublica = () => {
   const [tenant, setTenant] = useState(null)
   const [servicos, setServicos] = useState([])
   const [profissionais, setProfissionais] = useState([])
+  const [galeria, setGaleria] = useState([])
+  const [abaAtiva, setAbaAtiva] = useState('detalhes')
+  const [buscaProfissional, setBuscaProfissional] = useState('')
 
   // Seleções de agendamento
   const [servicoId, setServicoId] = useState('')
@@ -321,9 +360,17 @@ const AgendaPublica = () => {
   // Dados pessoais (novo cliente)
   const [nomeCliente, setNomeCliente] = useState('')
   const [telefoneCliente, setTelefoneCliente] = useState('')
+  const [clienteConsultado, setClienteConsultado] = useState(null)
+  const [consultandoCliente, setConsultandoCliente] = useState(false)
+  const [erroCliente, setErroCliente] = useState(null)
 
   // Dados salvos no localStorage
   const [dadosSalvos, setDadosSalvos] = useState(null)
+  const [perfilCliente, setPerfilCliente] = useState(null)
+  const [perfilCarregando, setPerfilCarregando] = useState(false)
+  const [perfilSalvando, setPerfilSalvando] = useState(false)
+  const [perfilErro, setPerfilErro] = useState(null)
+  const [pacotesCliente, setPacotesCliente] = useState([])
 
   // Meus agendamentos
   const [meusAgs, setMeusAgs] = useState([])
@@ -360,6 +407,12 @@ const AgendaPublica = () => {
   const clienteConhecido = !!(dadosSalvos?.nome && dadosSalvos?.telefone)
   // Etapas visíveis na barra de progresso (sem a tela de sucesso)
   const totalEtapas = clienteConhecido ? 3 : 4
+  const instagramRede = tenant?.redesSociais?.find((rede) => rede.tipo === 'instagram')
+  const whatsappHref = tenant?.whatsappNumero ? `https://wa.me/${tenant.whatsappNumero.replace(/\D/g, '')}` : null
+  const diaAtualNormalizado = normalizarTextoComparacao(
+    new Date().toLocaleDateString('pt-BR', { weekday: 'long', timeZone: 'America/Sao_Paulo' }),
+  )
+  const telClienteLimpo = dadosSalvos?.telefone ? dadosSalvos.telefone.replace(/\D/g, '') : ''
 
   // ── Carrega info do tenant ───────────────────────────────────────────────
   useEffect(() => {
@@ -369,10 +422,16 @@ const AgendaPublica = () => {
     const nomeUrl = searchParams.get('nome') || ''
     if (dadosLocal) {
       setDadosSalvos(dadosLocal)
+      setTelefoneCliente(formatarTelefoneExibicao(dadosLocal.telefone || ''))
+      setNomeCliente(dadosLocal.nome || '')
     } else if (telUrl && nomeUrl) {
       const dadosUrl = { nome: decodeURIComponent(nomeUrl), telefone: decodeURIComponent(telUrl) }
       setDadosSalvos(dadosUrl)
+      setTelefoneCliente(formatarTelefoneExibicao(dadosUrl.telefone))
+      setNomeCliente(dadosUrl.nome || '')
       salvarDadosLocais(slug, dadosUrl) // migra URL params para localStorage
+    } else if (telUrl) {
+      setTelefoneCliente(formatarTelefoneExibicao(decodeURIComponent(telUrl)))
     }
 
     apiFetch(`/api/public/${slug}/info`)
@@ -380,10 +439,19 @@ const AgendaPublica = () => {
         setTenant(dados.tenant)
         setServicos(dados.servicos)
         setProfissionais(dados.profissionais)
+        setGaleria(dados.galeria || [])
       })
       .catch((e) => setErro(e.message || 'Barbearia não encontrada'))
       .finally(() => setCarregando(false))
   }, [slug])
+
+  useEffect(() => {
+    if (location.pathname.endsWith('/details')) setAbaAtiva('detalhes')
+    else if (location.pathname.endsWith('/profissionais')) setAbaAtiva('profissionais')
+    else if (location.pathname.endsWith('/agendar')) setAbaAtiva('agendar')
+    else if (location.pathname.endsWith('/conta')) setAbaAtiva('conta')
+    else setAbaAtiva('detalhes')
+  }, [location.pathname])
 
   // ── Carrega meus agendamentos e verifica assinatura quando cliente é conhecido
   useEffect(() => {
@@ -401,6 +469,31 @@ const AgendaPublica = () => {
       setAssinatura(assinaturaData?.temPlano ? assinaturaData.assinatura : null)
     }).finally(() => setMeusAgsCarregando(false))
   }, [dadosSalvos, slug])
+
+  useEffect(() => {
+    if (!telClienteLimpo || !slug) return
+    setPerfilCarregando(true)
+
+    Promise.all([
+      apiFetch(`/api/public/${slug}/perfil?tel=${telClienteLimpo}`).catch(() => null),
+      apiFetch(`/api/public/${slug}/pacotes`).catch(() => []),
+    ])
+      .then(([perfilData, pacotesData]) => {
+        if (perfilData) {
+          setPerfilCliente({
+            nome: perfilData.nome || '',
+            telefone: perfilData.telefone || dadosSalvos?.telefone || '',
+            email: perfilData.email || '',
+            dataNascimento: formatarDataInput(perfilData.dataNascimento),
+            instagram: perfilData.instagram || '',
+            tipoCortePreferido: perfilData.tipoCortePreferido || '',
+            preferencias: perfilData.preferencias || '',
+          })
+        }
+        setPacotesCliente(Array.isArray(pacotesData) ? pacotesData : [])
+      })
+      .finally(() => setPerfilCarregando(false))
+  }, [telClienteLimpo, slug, dadosSalvos?.telefone])
 
   // ── Auto-seleciona hoje ao entrar na etapa 3 ─────────────────────────────
   useEffect(() => {
@@ -482,6 +575,11 @@ const AgendaPublica = () => {
       ? profissionais.filter((p) => p.servicoIds.includes(servicoId))
       : profissionais
 
+  const termoProfissional = buscaProfissional.trim().toLowerCase()
+  const profissionaisVisiveis = termoProfissional
+    ? profsFiltrados.filter((p) => p.nome.toLowerCase().includes(termoProfissional))
+    : profsFiltrados
+
   // ── Confirma agendamento via API ─────────────────────────────────────────
   const confirmarAgendamento = async (nome, telefone) => {
     setAgendando(true)
@@ -526,19 +624,112 @@ const AgendaPublica = () => {
     }
   }
 
+  const consultarClientePorTelefone = async () => {
+    const telLimpo = telefoneCliente.replace(/\D/g, '')
+    if (telLimpo.length < 10) {
+      setErroCliente('Informe um WhatsApp válido.')
+      return
+    }
+
+    setConsultandoCliente(true)
+    setErroCliente(null)
+    try {
+      const dados = await apiFetch(`/api/public/${slug}/cliente?tel=${telLimpo}`)
+      if (dados?.existe && dados.cliente) {
+        setClienteConsultado({ existe: true, nome: dados.cliente.nome, telefone: dados.cliente.telefone })
+        setNomeCliente(dados.cliente.nome || '')
+      } else {
+        setClienteConsultado({ existe: false, telefone: telLimpo })
+        setNomeCliente('')
+      }
+    } catch (e) {
+      setErroCliente(e.message || 'Não foi possível validar esse número.')
+    } finally {
+      setConsultandoCliente(false)
+    }
+  }
+
+  const editarTelefone = () => {
+    setClienteConsultado(null)
+    setErroCliente(null)
+    if (!dadosSalvos) setNomeCliente('')
+  }
+
   // ── Avança após escolher slot ──────────────────────────────────────────
   const avancarAposSlot = () => {
     if (clienteConhecido) {
       // Usuário já conhecido — confirma direto com dados do localStorage
       confirmarAgendamento(dadosSalvos.nome, dadosSalvos.telefone)
     } else {
+      setClienteConsultado(null)
+      setErroCliente(null)
       setEtapa(4)
     }
   }
 
   // ── Confirmar na etapa 4 (dados pessoais) ─────────────────────────────
   const confirmarDadosPessoais = () => {
+    if (!clienteConsultado) {
+      setErroCliente('Valide seu WhatsApp antes de confirmar.')
+      return
+    }
     confirmarAgendamento(nomeCliente, telefoneCliente)
+  }
+
+  const salvarPerfilCliente = async () => {
+    if (!perfilCliente || !telClienteLimpo) return
+    setPerfilSalvando(true)
+    setPerfilErro(null)
+    try {
+      const atualizado = await apiFetch(`/api/public/${slug}/perfil`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          tel: telClienteLimpo,
+          telefone: telClienteLimpo,
+          nome: perfilCliente.nome,
+          email: perfilCliente.email,
+          dataNascimento: perfilCliente.dataNascimento || null,
+          instagram: perfilCliente.instagram,
+          tipoCortePreferido: perfilCliente.tipoCortePreferido,
+          preferencias: perfilCliente.preferencias,
+        }),
+      })
+
+      const novosDados = {
+        nome: atualizado.nome || dadosSalvos?.nome || '',
+        telefone: atualizado.telefone || dadosSalvos?.telefone || '',
+      }
+      salvarDadosLocais(slug, novosDados)
+      setDadosSalvos(novosDados)
+      setPerfilCliente({
+        nome: atualizado.nome || '',
+        telefone: atualizado.telefone || '',
+        email: atualizado.email || '',
+        dataNascimento: formatarDataInput(atualizado.dataNascimento),
+        instagram: atualizado.instagram || '',
+        tipoCortePreferido: atualizado.tipoCortePreferido || '',
+        preferencias: atualizado.preferencias || '',
+      })
+    } catch (e) {
+      setPerfilErro(e.message || 'Não foi possível salvar seu perfil.')
+    } finally {
+      setPerfilSalvando(false)
+    }
+  }
+
+  const avancarEtapaServico = () => {
+    const primeiroId = servicoIds[0]
+    setServicoId(primeiroId)
+    const profPreSelecionadoValido = profissionais.some((p) => p.id === profissionalId && servicoIds.every((id) => p.servicoIds.includes(id)))
+    if (!profPreSelecionadoValido) setProfissionalId('')
+    setBuscaProfissional('')
+    setEtapa(2)
+  }
+
+  const avancarEtapaProfissional = () => {
+    setData('')
+    setSlot(null)
+    setEtapa(3)
   }
 
   // ── Resetar para novo agendamento ─────────────────────────────────────
@@ -550,9 +741,12 @@ const AgendaPublica = () => {
     setSlots([])
     setNomeCliente('')
     setTelefoneCliente('')
+    setClienteConsultado(null)
+    setErroCliente(null)
     setErroAgendamento(null)
     setAgendamentoConfirmado(null)
     setEtapa(1)
+    setAbaAtiva('agendar')
   }
 
   // ── Trocar usuário (limpa localStorage) ───────────────────────────────
@@ -561,6 +755,8 @@ const AgendaPublica = () => {
     setDadosSalvos(null)
     setNomeCliente('')
     setTelefoneCliente('')
+    setClienteConsultado(null)
+    setErroCliente(null)
   }
 
   // ─── Loading ─────────────────────────────────────────────────────────────
@@ -570,22 +766,6 @@ const AgendaPublica = () => {
         <style>{`@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}.spin{animation:spin 1s linear infinite}`}</style>
         <Loader2 size={32} className="spin" style={{ color: C.gold }} />
       </div>
-    )
-  }
-
-  // ─── Login OTP (se não tem dados salvos e não veio pela URL) ────────────
-  const telUrl = searchParams.get('tel') || ''
-  if (!dadosSalvos && !telUrl && tenant) {
-    return (
-      <TelaLoginOTP
-        slug={slug}
-        tenant={tenant}
-        onLogin={(dados) => {
-          setDadosSalvos(dados)
-          if (dados.nome) setNomeCliente(dados.nome)
-          if (dados.telefone) setTelefoneCliente(dados.telefone)
-        }}
-      />
     )
   }
 
@@ -723,7 +903,68 @@ const AgendaPublica = () => {
           grid-template-columns: repeat(auto-fit, minmax(88px, 1fr));
           gap: 8px;
         }
+        .public-tabs-shell {
+          display: flex;
+          gap: 8px;
+        }
+        .details-hero {
+          position: relative;
+          overflow: hidden;
+          background: radial-gradient(circle at top left, rgba(184,137,77,0.28), transparent 38%), linear-gradient(145deg, #1b1712 0%, #121212 58%, #0d0d0d 100%);
+          border: 1px solid ${C.borderStrong};
+          border-radius: 24px;
+          padding: 20px;
+          box-shadow: 0 18px 40px rgba(0,0,0,0.28);
+        }
+        .details-hero-top {
+          display: flex;
+          align-items: center;
+          gap: 14px;
+        }
+        .details-stats-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+          gap: 10px;
+        }
+        .details-contact-grid,
+        .details-info-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+          gap: 12px;
+        }
+        .details-hours-row {
+          display: grid;
+          grid-template-columns: minmax(118px, 148px) 1fr;
+          gap: 12px;
+          align-items: center;
+          padding: 12px 14px;
+          border-radius: 16px;
+        }
+        .details-gallery-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+          gap: 10px;
+        }
+        .details-gallery-card-feature {
+          grid-column: span 2;
+        }
+        .details-gallery-media-feature {
+          aspect-ratio: 1.8 / 1;
+        }
+        .details-gallery-media {
+          aspect-ratio: 1 / 1;
+        }
+        @media (max-width: 520px) {
+          .public-content-shell {
+            padding-left: 14px !important;
+            padding-right: 14px !important;
+          }
+        }
         @media (max-width: 420px) {
+          .public-content-shell {
+            padding-left: 12px !important;
+            padding-right: 12px !important;
+          }
           .public-header-shell {
             flex-wrap: wrap;
             align-items: flex-start;
@@ -750,6 +991,65 @@ const AgendaPublica = () => {
             justify-content: space-between;
             text-align: left;
           }
+          .public-tabs-shell {
+            gap: 6px;
+          }
+          .details-hero {
+            border-radius: 20px;
+            padding: 16px;
+          }
+          .details-hero-top {
+            align-items: flex-start;
+          }
+          .details-stats-grid {
+            grid-template-columns: 1fr;
+          }
+          .details-contact-grid,
+          .details-info-grid {
+            grid-template-columns: 1fr;
+          }
+          .details-hours-row {
+            grid-template-columns: 1fr;
+            gap: 10px;
+            padding: 12px;
+          }
+          .details-gallery-grid {
+            grid-template-columns: 1fr 1fr;
+          }
+          .details-gallery-card-feature {
+            grid-column: span 2;
+          }
+          .public-otp-input {
+            font-size: 28px !important;
+            letter-spacing: 12px !important;
+            padding: 16px !important;
+          }
+        }
+        @media (max-width: 360px) {
+          .public-brand-logo {
+            width: 92px;
+          }
+          .public-tabs-shell button {
+            font-size: 11px !important;
+            padding: 10px 8px !important;
+          }
+          .details-hero-top {
+            flex-direction: column;
+          }
+          .details-gallery-grid {
+            grid-template-columns: 1fr;
+          }
+          .details-gallery-card-feature {
+            grid-column: span 1;
+          }
+          .details-gallery-media-feature,
+          .details-gallery-media {
+            aspect-ratio: 1 / 1;
+          }
+          .public-otp-input {
+            font-size: 24px !important;
+            letter-spacing: 10px !important;
+          }
         }
       `}</style>
 
@@ -758,17 +1058,25 @@ const AgendaPublica = () => {
         <div className="public-header-shell">
           <div className="public-brand-block">
             <img
-              src={MARCAI_LOGO}
-              alt="Marcaí Barber"
+              src={tenant?.logoUrl ? resolverMediaUrl(tenant.logoUrl) : MARCAI_LOGO}
+              alt={tenant?.nome || 'Marcaí Barber'}
               className="public-brand-logo"
             />
             <div className="public-brand-copy">
-              <p className="public-brand-kicker">Agendamento online</p>
+              <p className="public-brand-kicker">
+                {abaAtiva === 'detalhes'
+                  ? 'Detalhes da barbearia'
+                  : abaAtiva === 'profissionais'
+                    ? 'Escolha seu barbeiro'
+                    : abaAtiva === 'conta'
+                      ? 'Área do cliente'
+                      : 'Agendamento online'}
+              </p>
               <h1 style={{ color: C.textPrimary, fontWeight: 700, fontSize: 15, lineHeight: 1.2, margin: 0 }}>
                 {tenant?.nome}
               </h1>
               <p style={{ color: C.textDim, fontSize: 11, margin: '4px 0 0' }}>
-                Escolha seu horário em poucos passos.
+                {tenant?.horarioFuncionamento || 'Escolha seu horário em poucos passos.'}
               </p>
             </div>
           </div>
@@ -790,8 +1098,40 @@ const AgendaPublica = () => {
         </div>
       </div>
 
+      <div style={{ background: C.bgHeader, borderBottom: `1px solid ${C.borderHeader}`, padding: '10px 20px' }}>
+        <div className="public-content-shell public-tabs-shell">
+          {[
+            { id: 'detalhes', label: 'Detalhes' },
+            { id: 'profissionais', label: 'Profissionais' },
+            { id: 'agendar', label: 'Agendar' },
+            { id: 'conta', label: 'Minha conta' },
+          ].map((aba) => {
+            const ativa = abaAtiva === aba.id
+            return (
+              <button
+                key={aba.id}
+                onClick={() => setAbaAtiva(aba.id)}
+                style={{
+                  flex: 1,
+                  padding: '10px 12px',
+                  borderRadius: 12,
+                  border: `1px solid ${ativa ? C.gold : C.border}`,
+                  background: ativa ? C.bgSelected : C.bgCard,
+                  color: ativa ? C.gold : C.textSecondary,
+                  fontWeight: 700,
+                  fontSize: 12,
+                  cursor: 'pointer',
+                }}
+              >
+                {aba.label}
+              </button>
+            )
+          })}
+        </div>
+      </div>
+
       {/* ── Meus agendamentos + Histórico ── */}
-      {clienteConhecido && etapa < 5 && (
+      {clienteConhecido && etapa < 5 && abaAtiva === 'agendar' && (
         <div style={{ background: C.bgHeader, borderBottom: `1px solid ${C.borderHeader}`, padding: '12px 20px' }}>
           <div className="public-appointments-shell">
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
@@ -841,7 +1181,7 @@ const AgendaPublica = () => {
                       overflow: 'hidden',
                     }}>
                       {ag.profissionalAvatar
-                        ? <img src={`${API_URL}${ag.profissionalAvatar}`} alt={ag.profissional} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                        ? <img src={resolverMediaUrl(ag.profissionalAvatar)} alt={ag.profissional} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                         : <Scissors size={14} style={{ color: C.gold }} />}
                     </div>
                     <div style={{ flex: 1, minWidth: 0 }}>
@@ -1027,7 +1367,7 @@ const AgendaPublica = () => {
       )}
 
       {/* ── Barra de progresso (oculta na tela de sucesso) ── */}
-      {etapa <= totalEtapas && (
+      {abaAtiva === 'agendar' && etapa <= totalEtapas && (
         <div style={{ background: C.bgHeader, borderBottom: `1px solid ${C.borderHeader}`, padding: '10px 20px' }}>
           <div className="public-progress-shell" style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
             {Array.from({ length: totalEtapas }, (_, i) => i + 1).map((e) => (
@@ -1061,10 +1401,613 @@ const AgendaPublica = () => {
       )}
 
       {/* ── Conteúdo ── */}
-      <div className="public-content-shell" style={{ flex: 1, padding: '20px 16px 32px', boxSizing: 'border-box' }}>
+      <div className="public-content-shell" style={{ flex: 1, padding: '20px 16px 112px', boxSizing: 'border-box' }}>
+
+        {abaAtiva === 'detalhes' && (
+          <div className="fade-in" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+            <div className="details-hero">
+              <div style={{
+                position: 'absolute',
+                top: -38,
+                right: -24,
+                width: 132,
+                height: 132,
+                borderRadius: '50%',
+                background: 'rgba(184,137,77,0.08)',
+                filter: 'blur(2px)',
+              }} />
+              <div style={{ position: 'relative', display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 18 }}>
+                <div className="details-hero-top">
+                  <img
+                    src={tenant?.logoUrl ? resolverMediaUrl(tenant.logoUrl) : MARCAI_LOGO}
+                    alt={tenant?.nome}
+                    style={{
+                      width: 74,
+                      height: 74,
+                      borderRadius: 22,
+                      objectFit: 'cover',
+                      border: '1px solid rgba(255,255,255,0.08)',
+                      boxShadow: '0 12px 24px rgba(0,0,0,0.24)',
+                      background: '#0f0f0f',
+                    }}
+                  />
+                  <div style={{ minWidth: 0 }}>
+                    <p style={{ color: '#d5b38a', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1.6, margin: 0 }}>Sua próxima visita começa aqui</p>
+                    <h2 style={{ color: C.textPrimary, fontSize: 24, lineHeight: 1.1, margin: '6px 0 8px' }}>{tenant?.nome}</h2>
+                    {tenant?.horarioFuncionamento && (
+                      <p style={{ color: '#d2d2d2', fontSize: 13, lineHeight: 1.5, margin: 0 }}>
+                        Atendimento {tenant.horarioFuncionamento}
+                      </p>
+                    )}
+                  </div>
+                </div>
+
+                <div className="details-stats-grid">
+                  <div style={{ padding: 14, borderRadius: 16, background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                    <p style={{ color: C.textDim, fontSize: 11, textTransform: 'uppercase', letterSpacing: 1.2, margin: '0 0 6px' }}>Profissionais</p>
+                    <p style={{ color: C.textPrimary, fontSize: 20, fontWeight: 700, margin: 0 }}>{profissionais.length}</p>
+                  </div>
+                  <div style={{ padding: 14, borderRadius: 16, background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                    <p style={{ color: C.textDim, fontSize: 11, textTransform: 'uppercase', letterSpacing: 1.2, margin: '0 0 6px' }}>Serviços</p>
+                    <p style={{ color: C.textPrimary, fontSize: 20, fontWeight: 700, margin: 0 }}>{servicos.length}</p>
+                  </div>
+                  <div style={{ padding: 14, borderRadius: 16, background: 'rgba(184,137,77,0.1)', border: '1px solid rgba(184,137,77,0.22)' }}>
+                    <p style={{ color: '#d7b389', fontSize: 11, textTransform: 'uppercase', letterSpacing: 1.2, margin: '0 0 6px' }}>Experiência</p>
+                    <p style={{ color: C.textPrimary, fontSize: 15, fontWeight: 700, margin: 0 }}>
+                      {tenant?.comodidades?.length ? `${tenant.comodidades.length} comodidades` : 'Atendimento premium'}
+                    </p>
+                  </div>
+                </div>
+
+                {(tenant?.endereco || whatsappHref || instagramRede || tenant?.linkMaps) && (
+                  <div className="details-contact-grid">
+                    {(tenant?.endereco || tenant?.linkMaps) && (
+                      <div style={{ padding: 16, borderRadius: 18, background: 'rgba(0,0,0,0.22)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+                          <div style={{ width: 36, height: 36, borderRadius: 12, background: 'rgba(184,137,77,0.14)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                            <MapPin size={17} style={{ color: C.gold }} />
+                          </div>
+                          <div>
+                            <p style={{ color: C.textPrimary, fontWeight: 700, fontSize: 14, margin: 0 }}>Onde estamos</p>
+                            {tenant?.endereco && <p style={{ color: '#d2d2d2', fontSize: 13, lineHeight: 1.6, margin: '6px 0 0' }}>{tenant.endereco}</p>}
+                            {tenant?.linkMaps && (
+                              <a href={tenant.linkMaps} target="_blank" rel="noreferrer" style={{ color: '#f0c893', fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 6, marginTop: 10, textDecoration: 'none', fontWeight: 700, flexWrap: 'wrap' }}>
+                                Abrir no mapa <ExternalLink size={12} />
+                              </a>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {(whatsappHref || instagramRede) && (
+                      <div style={{ padding: 16, borderRadius: 18, background: 'rgba(0,0,0,0.22)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                        <p style={{ color: C.textPrimary, fontWeight: 700, fontSize: 14, margin: '0 0 12px' }}>Contato rápido</p>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+                          {whatsappHref && (
+                            <a
+                              href={whatsappHref}
+                              target="_blank"
+                              rel="noreferrer"
+                              style={{
+                                flex: 1,
+                                minWidth: 140,
+                                padding: '12px 14px',
+                                borderRadius: 14,
+                                background: 'linear-gradient(135deg, rgba(37,211,102,0.2), rgba(37,211,102,0.08))',
+                                border: '1px solid rgba(37,211,102,0.28)',
+                                color: '#b6f3c9',
+                                fontSize: 13,
+                                fontWeight: 700,
+                                textDecoration: 'none',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                gap: 8,
+                              }}
+                            >
+                              <Phone size={15} /> WhatsApp
+                            </a>
+                          )}
+                          {instagramRede && (
+                            <a
+                              href={instagramRede.url}
+                              target="_blank"
+                              rel="noreferrer"
+                              style={{
+                                flex: 1,
+                                minWidth: 140,
+                                padding: '12px 14px',
+                                borderRadius: 14,
+                                background: 'linear-gradient(135deg, rgba(184,137,77,0.22), rgba(184,137,77,0.07))',
+                                border: '1px solid rgba(184,137,77,0.32)',
+                                color: '#f0c893',
+                                fontSize: 13,
+                                fontWeight: 700,
+                                textDecoration: 'none',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                gap: 8,
+                              }}
+                            >
+                              <ExternalLink size={15} /> Instagram
+                            </a>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {Array.isArray(tenant?.horarioDetalhado) && tenant.horarioDetalhado.length > 0 && (
+              <div style={{ background: 'linear-gradient(180deg, rgba(22,22,22,0.98), rgba(18,18,18,0.98))', border: `1px solid ${C.border}`, borderRadius: 20, padding: 18 }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 12 }}>
+                  <div>
+                    <p style={{ color: C.gold, fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1.4, margin: 0 }}>Rotina da barbearia</p>
+                    <p style={{ color: C.textPrimary, fontWeight: 700, fontSize: 18, margin: '4px 0 0' }}>Horário de funcionamento</p>
+                  </div>
+                  <div style={{ padding: '8px 10px', borderRadius: 999, background: C.goldDim, color: '#f0c893', fontSize: 11, fontWeight: 700 }}>
+                    Atualizado por dia
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {tenant.horarioDetalhado.map((dia) => {
+                    const isHoje = normalizarTextoComparacao(dia.dia) === diaAtualNormalizado
+                    return (
+                      <div
+                        className="details-hours-row"
+                        key={dia.dia}
+                        style={{
+                          background: isHoje ? 'rgba(184,137,77,0.12)' : 'rgba(255,255,255,0.02)',
+                          border: isHoje ? '1px solid rgba(184,137,77,0.24)' : `1px solid ${C.border}`,
+                        }}
+                      >
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                          <p style={{ color: C.textPrimary, fontSize: 13, fontWeight: 700, margin: 0 }}>{dia.dia}</p>
+                          {isHoje && <span style={{ color: '#f0c893', fontSize: 11, fontWeight: 700 }}>Hoje</span>}
+                        </div>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                          {dia.fechado ? (
+                            <span style={{ color: C.textDim, fontSize: 12, fontWeight: 600 }}>Fechado</span>
+                          ) : (
+                            dia.faixas.map((faixa, index) => (
+                              <span
+                                key={`${dia.dia}-${index}`}
+                                style={{
+                                  padding: '7px 10px',
+                                  borderRadius: 999,
+                                  background: 'rgba(0,0,0,0.18)',
+                                  border: `1px solid ${C.border}`,
+                                  color: C.textSecondary,
+                                  fontSize: 12,
+                                  fontWeight: 600,
+                                }}
+                              >
+                                {faixa.inicio} às {faixa.fim}
+                              </span>
+                            ))
+                          )}
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
+
+            <div className="details-info-grid" style={{ gap: 14 }}>
+              {Array.isArray(tenant?.comodidades) && tenant.comodidades.length > 0 && (
+                <div style={{ background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 20, padding: 18 }}>
+                  <p style={{ color: C.textPrimary, fontWeight: 700, fontSize: 16, margin: '0 0 6px' }}>Comodidades</p>
+                  <p style={{ color: C.textDim, fontSize: 12, lineHeight: 1.5, margin: '0 0 12px' }}>Tudo o que melhora sua experiência durante o atendimento.</p>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                    {tenant.comodidades.map((item) => (
+                      <span key={item} style={{ padding: '9px 11px', borderRadius: 999, background: 'rgba(255,255,255,0.03)', border: `1px solid ${C.border}`, color: C.textSecondary, fontSize: 12, fontWeight: 600 }}>
+                        {item}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {Array.isArray(tenant?.pagamentos) && tenant.pagamentos.length > 0 && (
+                <div style={{ background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 20, padding: 18 }}>
+                  <p style={{ color: C.textPrimary, fontWeight: 700, fontSize: 16, margin: '0 0 6px' }}>Formas de pagamento</p>
+                  <p style={{ color: C.textDim, fontSize: 12, lineHeight: 1.5, margin: '0 0 12px' }}>Escolha a forma mais prática para fechar seu atendimento.</p>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                    {tenant.pagamentos.map((item) => (
+                      <span key={item} style={{ padding: '9px 11px', borderRadius: 999, background: 'rgba(184,137,77,0.08)', border: '1px solid rgba(184,137,77,0.18)', color: '#e9c08e', fontSize: 12, fontWeight: 700 }}>
+                        {item}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {Array.isArray(tenant?.redesSociais) && tenant.redesSociais.length > 0 && (
+                <div style={{ background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 20, padding: 18 }}>
+                  <p style={{ color: C.textPrimary, fontWeight: 700, fontSize: 16, margin: '0 0 6px' }}>Redes sociais</p>
+                  <p style={{ color: C.textDim, fontSize: 12, lineHeight: 1.5, margin: '0 0 12px' }}>Veja trabalhos recentes, novidades e acompanhe a rotina da casa.</p>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                    {tenant.redesSociais.map((rede) => (
+                      <a
+                        key={rede.tipo}
+                        href={rede.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        style={{
+                          padding: '10px 12px',
+                          borderRadius: 14,
+                          background: 'rgba(255,255,255,0.03)',
+                          border: `1px solid ${C.border}`,
+                          color: C.textSecondary,
+                          fontSize: 12,
+                          fontWeight: 700,
+                          textDecoration: 'none',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: 6,
+                        }}
+                      >
+                        {rede.label} <ExternalLink size={12} />
+                      </a>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {Array.isArray(galeria) && galeria.length > 0 && (
+              <div style={{ background: 'linear-gradient(180deg, rgba(22,22,22,0.98), rgba(16,16,16,0.98))', border: `1px solid ${C.border}`, borderRadius: 20, padding: 18 }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 14 }}>
+                  <div>
+                    <p style={{ color: C.gold, fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1.4, margin: 0 }}>Inspiração visual</p>
+                    <p style={{ color: C.textPrimary, fontWeight: 700, fontSize: 18, margin: '4px 0 0' }}>Galeria de trabalhos</p>
+                  </div>
+                  <div style={{ color: C.textDim, fontSize: 12 }}>{galeria.length} fotos</div>
+                </div>
+                <div className="details-gallery-grid">
+                  {galeria.map((foto, index) => (
+                    <div
+                      key={foto.id}
+                      className={index === 0 ? 'details-gallery-card-feature' : ''}
+                      style={{
+                        borderRadius: 18,
+                        overflow: 'hidden',
+                        background: C.bg,
+                        border: `1px solid ${C.border}`,
+                      }}
+                    >
+                      <div className={index === 0 ? 'details-gallery-media-feature' : 'details-gallery-media'} style={{ background: '#0f0f0f' }}>
+                        <img src={resolverMediaUrl(foto.fotoUrl)} alt={foto.titulo || foto.servicoNome || 'Foto da galeria'} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                      </div>
+                      {(foto.titulo || foto.servicoNome || foto.profissional) && (
+                        <div style={{ padding: 12 }}>
+                          <p style={{ color: C.textPrimary, fontSize: 13, fontWeight: 700, margin: 0 }}>{foto.titulo || foto.servicoNome || 'Trabalho recente'}</p>
+                          {(foto.profissional || foto.servicoNome) && (
+                            <p style={{ color: C.textDim, fontSize: 11, margin: '5px 0 0' }}>{[foto.profissional, foto.servicoNome].filter(Boolean).join(' • ')}</p>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <button
+              onClick={() => setAbaAtiva('agendar')}
+              style={{
+                width: '100%',
+                padding: '16px 0',
+                borderRadius: 16,
+                border: 'none',
+                background: 'linear-gradient(135deg, #c39257, #a9783f)',
+                color: C.textOnGold,
+                fontWeight: 700,
+                fontSize: 15,
+                cursor: 'pointer',
+                boxShadow: '0 18px 26px rgba(184,137,77,0.18)',
+              }}
+            >
+              Ir para o agendamento
+            </button>
+          </div>
+        )}
+
+        {abaAtiva === 'conta' && (
+          clienteConhecido ? (
+            <div className="fade-in" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+              <div style={{ background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 18, padding: 18 }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 14 }}>
+                  <div>
+                    <p style={{ color: C.gold, fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1.2, margin: 0 }}>Minha conta</p>
+                    <h2 style={{ color: C.textPrimary, fontSize: 20, margin: '6px 0 0' }}>{perfilCliente?.nome || dadosSalvos?.nome || 'Cliente'}</h2>
+                  </div>
+                  <button
+                    className="btn-link"
+                    onClick={trocarUsuario}
+                    style={{ color: C.textDim, fontSize: 12, textDecoration: 'underline' }}
+                  >
+                    Sair
+                  </button>
+                </div>
+
+                {perfilCarregando && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: C.textDim, fontSize: 12 }}>
+                    <Loader2 size={14} className="spin" style={{ color: C.gold }} />
+                    Carregando seu perfil...
+                  </div>
+                )}
+
+                {perfilCliente && (
+                  <div style={{ display: 'grid', gap: 12 }}>
+                    <label style={{ display: 'block' }}>
+                      <span style={{ color: C.textSecondary, fontSize: 12, fontWeight: 600, display: 'block', marginBottom: 6 }}>Nome</span>
+                      <input
+                        type="text"
+                        value={perfilCliente.nome}
+                        onChange={(e) => setPerfilCliente((prev) => ({ ...prev, nome: e.target.value }))}
+                        style={{ width: '100%', padding: '12px 14px', borderRadius: 12, background: C.bg, border: `1px solid ${C.border}`, color: C.textPrimary, boxSizing: 'border-box' }}
+                      />
+                    </label>
+
+                    <label style={{ display: 'block' }}>
+                      <span style={{ color: C.textSecondary, fontSize: 12, fontWeight: 600, display: 'block', marginBottom: 6 }}>WhatsApp</span>
+                      <input
+                        type="text"
+                        value={formatarTelefoneExibicao(perfilCliente.telefone || dadosSalvos?.telefone || '')}
+                        disabled
+                        style={{ width: '100%', padding: '12px 14px', borderRadius: 12, background: C.bgCard, border: `1px solid ${C.border}`, color: C.textDim, boxSizing: 'border-box' }}
+                      />
+                    </label>
+
+                    <label style={{ display: 'block' }}>
+                      <span style={{ color: C.textSecondary, fontSize: 12, fontWeight: 600, display: 'block', marginBottom: 6 }}>E-mail</span>
+                      <input
+                        type="email"
+                        value={perfilCliente.email}
+                        onChange={(e) => setPerfilCliente((prev) => ({ ...prev, email: e.target.value }))}
+                        placeholder="voce@email.com"
+                        style={{ width: '100%', padding: '12px 14px', borderRadius: 12, background: C.bg, border: `1px solid ${C.border}`, color: C.textPrimary, boxSizing: 'border-box' }}
+                      />
+                    </label>
+
+                    <label style={{ display: 'block' }}>
+                      <span style={{ color: C.textSecondary, fontSize: 12, fontWeight: 600, display: 'block', marginBottom: 6 }}>Data de nascimento</span>
+                      <input
+                        type="date"
+                        value={perfilCliente.dataNascimento}
+                        onChange={(e) => setPerfilCliente((prev) => ({ ...prev, dataNascimento: e.target.value }))}
+                        style={{ width: '100%', padding: '12px 14px', borderRadius: 12, background: C.bg, border: `1px solid ${C.border}`, color: C.textPrimary, boxSizing: 'border-box' }}
+                      />
+                    </label>
+
+                    <label style={{ display: 'block' }}>
+                      <span style={{ color: C.textSecondary, fontSize: 12, fontWeight: 600, display: 'block', marginBottom: 6 }}>Instagram</span>
+                      <input
+                        type="text"
+                        value={perfilCliente.instagram}
+                        onChange={(e) => setPerfilCliente((prev) => ({ ...prev, instagram: e.target.value }))}
+                        placeholder="@seuperfil"
+                        style={{ width: '100%', padding: '12px 14px', borderRadius: 12, background: C.bg, border: `1px solid ${C.border}`, color: C.textPrimary, boxSizing: 'border-box' }}
+                      />
+                    </label>
+
+                    <label style={{ display: 'block' }}>
+                      <span style={{ color: C.textSecondary, fontSize: 12, fontWeight: 600, display: 'block', marginBottom: 6 }}>Corte preferido</span>
+                      <input
+                        type="text"
+                        value={perfilCliente.tipoCortePreferido}
+                        onChange={(e) => setPerfilCliente((prev) => ({ ...prev, tipoCortePreferido: e.target.value }))}
+                        placeholder="Ex: degradê baixo"
+                        style={{ width: '100%', padding: '12px 14px', borderRadius: 12, background: C.bg, border: `1px solid ${C.border}`, color: C.textPrimary, boxSizing: 'border-box' }}
+                      />
+                    </label>
+
+                    <label style={{ display: 'block' }}>
+                      <span style={{ color: C.textSecondary, fontSize: 12, fontWeight: 600, display: 'block', marginBottom: 6 }}>Preferências</span>
+                      <textarea
+                        value={perfilCliente.preferencias}
+                        onChange={(e) => setPerfilCliente((prev) => ({ ...prev, preferencias: e.target.value }))}
+                        placeholder="Ex: prefiro atendimento à noite"
+                        rows={3}
+                        style={{ width: '100%', padding: '12px 14px', borderRadius: 12, background: C.bg, border: `1px solid ${C.border}`, color: C.textPrimary, boxSizing: 'border-box', resize: 'vertical' }}
+                      />
+                    </label>
+
+                    {perfilErro && <p style={{ color: '#f87171', fontSize: 12, margin: 0 }}>{perfilErro}</p>}
+
+                    <button
+                      onClick={salvarPerfilCliente}
+                      disabled={perfilSalvando || !perfilCliente.nome.trim()}
+                      style={{ width: '100%', padding: '14px 0', borderRadius: 12, border: 'none', background: perfilSalvando ? C.border : C.gold, color: '#fff', fontWeight: 700, cursor: 'pointer' }}
+                    >
+                      {perfilSalvando ? 'Salvando...' : 'Salvar perfil'}
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              <div style={{ background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 18, padding: 18 }}>
+                <p style={{ color: C.textPrimary, fontWeight: 700, fontSize: 16, margin: '0 0 10px' }}>Meus agendamentos</p>
+                {meusAgsCarregando ? (
+                  <p style={{ color: C.textDim, fontSize: 12, margin: 0 }}>Carregando...</p>
+                ) : meusAgs.length === 0 ? (
+                  <p style={{ color: C.textDim, fontSize: 12, margin: 0 }}>Você não tem horários futuros no momento.</p>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                    {meusAgs.map((ag) => (
+                      <div key={ag.id} style={{ padding: 12, borderRadius: 12, background: C.bg, border: `1px solid ${C.border}` }}>
+                        <p style={{ color: C.textPrimary, fontWeight: 700, fontSize: 13, margin: 0 }}>{ag.servico}</p>
+                        <p style={{ color: C.textSecondary, fontSize: 12, margin: '4px 0 0' }}>{ag.profissional}</p>
+                        <p style={{ color: C.gold, fontSize: 12, margin: '4px 0 0' }}>{ag.dataFormatada} às {ag.horaFormatada}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div style={{ background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 18, padding: 18 }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 10 }}>
+                  <p style={{ color: C.textPrimary, fontWeight: 700, fontSize: 16, margin: 0 }}>Histórico</p>
+                  <button
+                    onClick={() => {
+                      setHistoricoAberto(true)
+                      if (historicoLista.length === 0) {
+                        setHistoricoCarregando(true)
+                        apiFetch(`/api/public/${slug}/historico?tel=${telClienteLimpo}`)
+                          .then((d) => setHistoricoLista(d || []))
+                          .catch(() => setHistoricoLista([]))
+                          .finally(() => setHistoricoCarregando(false))
+                      }
+                    }}
+                    style={{ background: 'transparent', border: `1px solid ${C.border}`, borderRadius: 10, color: C.gold, fontSize: 12, fontWeight: 700, padding: '8px 10px', cursor: 'pointer' }}
+                  >
+                    Ver histórico
+                  </button>
+                </div>
+                <p style={{ color: C.textDim, fontSize: 12, margin: 0 }}>Acompanhe seus atendimentos anteriores e avaliações.</p>
+              </div>
+
+              <div style={{ background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 18, padding: 18 }}>
+                <p style={{ color: C.textPrimary, fontWeight: 700, fontSize: 16, margin: '0 0 10px' }}>Minha assinatura</p>
+                {assinatura ? (
+                  <div style={{ display: 'grid', gap: 10 }}>
+                    <div style={{ padding: 12, borderRadius: 12, background: C.bg, border: `1px solid ${C.border}` }}>
+                      <p style={{ color: C.textPrimary, fontWeight: 700, fontSize: 13, margin: 0 }}>{assinatura.planoNome || 'Plano ativo'}</p>
+                      <p style={{ color: C.textDim, fontSize: 12, margin: '4px 0 0' }}>Créditos disponíveis neste ciclo</p>
+                    </div>
+                    {assinatura.servicosComCredito?.map((item) => (
+                      <div key={item.servicoId} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, padding: 12, borderRadius: 12, background: C.bg, border: `1px solid ${C.border}` }}>
+                        <span style={{ color: C.textSecondary, fontSize: 12 }}>{item.servicoNome}</span>
+                        <span style={{ color: C.gold, fontWeight: 700, fontSize: 12 }}>{item.creditosRestantes} restante(s)</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p style={{ color: C.textDim, fontSize: 12, margin: 0 }}>Você não tem assinatura ativa nesta barbearia.</p>
+                )}
+              </div>
+
+              <div style={{ background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 18, padding: 18 }}>
+                <p style={{ color: C.textPrimary, fontWeight: 700, fontSize: 16, margin: '0 0 10px' }}>Combos e pacotes</p>
+                {pacotesCliente.length === 0 ? (
+                  <p style={{ color: C.textDim, fontSize: 12, margin: 0 }}>Nenhum combo ativo disponível no momento.</p>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                    {pacotesCliente.map((pacote) => (
+                      <div key={pacote.id} style={{ padding: 12, borderRadius: 12, background: C.bg, border: `1px solid ${C.border}` }}>
+                        <p style={{ color: C.textPrimary, fontWeight: 700, fontSize: 13, margin: 0 }}>{pacote.nome}</p>
+                        {pacote.descricao && <p style={{ color: C.textDim, fontSize: 12, margin: '4px 0 0' }}>{pacote.descricao}</p>}
+                        <p style={{ color: C.gold, fontSize: 12, margin: '6px 0 0' }}>
+                          {pacote.tipo === 'DESCONTO' && pacote.descontoPorcent
+                            ? `${pacote.descontoPorcent}% de desconto`
+                            : formatarReais(pacote.precoCentavos)}
+                        </p>
+                        <p style={{ color: C.textSecondary, fontSize: 12, margin: '6px 0 0' }}>{pacote.servicos.map((s) => s.nome).join(' + ')}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          ) : (
+            <TelaLoginOTP
+              slug={slug}
+              tenant={tenant}
+              onLogin={(dados) => {
+                setDadosSalvos(dados)
+                setTelefoneCliente(formatarTelefoneExibicao(dados.telefone || ''))
+                setNomeCliente(dados.nome || '')
+              }}
+            />
+          )
+        )}
+
+        {abaAtiva === 'profissionais' && (
+          <div className="fade-in">
+            <div style={{ marginBottom: 16 }}>
+              <h2 style={{ color: C.textPrimary, fontWeight: 700, fontSize: 16, margin: '0 0 4px', display: 'flex', alignItems: 'center', gap: 8 }}>
+                <User size={18} style={{ color: C.gold }} />
+                Profissionais
+              </h2>
+              <p style={{ color: C.textDim, fontSize: 12, margin: 0 }}>Veja quem atende e escolha com quem quer agendar.</p>
+            </div>
+
+            <label style={{ display: 'block', marginBottom: 14 }}>
+              <span style={{ color: C.textSecondary, fontSize: 12, fontWeight: 600, display: 'block', marginBottom: 6 }}>Buscar profissional</span>
+              <div style={{ position: 'relative' }}>
+                <Search size={14} style={{ color: C.textDim, position: 'absolute', left: 12, top: 12 }} />
+                <input
+                  type="text"
+                  value={buscaProfissional}
+                  onChange={(e) => setBuscaProfissional(e.target.value)}
+                  placeholder="Digite o nome do profissional"
+                  style={{
+                    width: '100%',
+                    padding: '10px 12px 10px 34px',
+                    borderRadius: 12,
+                    background: C.bgCard,
+                    border: `1.5px solid ${C.border}`,
+                    color: C.textPrimary,
+                    fontSize: 14,
+                    boxSizing: 'border-box',
+                  }}
+                />
+              </div>
+            </label>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {profissionaisVisiveis.length === 0 && (
+                <div style={{ background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 14, padding: 18, textAlign: 'center' }}>
+                  <p style={{ color: C.textDim, fontSize: 13, margin: 0 }}>Nenhum profissional encontrado.</p>
+                </div>
+              )}
+              {profissionaisVisiveis.map((p) => (
+                <div key={p.id} style={{ background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 16, padding: 16, display: 'flex', alignItems: 'center', gap: 12 }}>
+                  {p.avatarUrl ? (
+                    <img src={resolverMediaUrl(p.avatarUrl)} alt={p.nome} style={{ width: 52, height: 52, borderRadius: '50%', objectFit: 'cover', border: `1px solid ${C.border}` }} />
+                  ) : (
+                    <div style={{ width: 52, height: 52, borderRadius: '50%', background: C.bgSelected, border: `1px solid ${C.gold}`, color: C.gold, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700 }}>
+                      {p.nome[0]?.toUpperCase()}
+                    </div>
+                  )}
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <p style={{ color: C.textPrimary, fontWeight: 700, fontSize: 14, margin: 0 }}>{p.nome}</p>
+                    <p style={{ color: C.textDim, fontSize: 12, margin: '4px 0 0' }}>Profissional disponível para agendamento.</p>
+                  </div>
+                  <button
+                    onClick={() => {
+                      setProfissionalId(p.id)
+                      setAbaAtiva('agendar')
+                      setEtapa(1)
+                    }}
+                    style={{
+                      padding: '10px 12px',
+                      borderRadius: 12,
+                      border: `1px solid ${C.gold}`,
+                      background: C.bgSelected,
+                      color: C.gold,
+                      fontWeight: 700,
+                      fontSize: 12,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    Agendar
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* ════ Etapa 1: Serviço ════ */}
-        {etapa === 1 && (
+        {abaAtiva === 'agendar' && etapa === 1 && (
           <div className="fade-in">
             <h2 style={{ color: C.textPrimary, fontWeight: 700, fontSize: 16, marginBottom: 4, display: 'flex', alignItems: 'center', gap: 8 }}>
               <Scissors size={18} style={{ color: C.gold }} />
@@ -1127,29 +2070,7 @@ const AgendaPublica = () => {
                   </div>
                 )}
                 <button
-                  onClick={() => {
-                    const primeiroId = servicoIds[0]
-                    setServicoId(primeiroId)
-                    // Filtra profissionais que fazem TODOS os serviços selecionados
-                    const profsComTodos = profissionais.filter(p => servicoIds.every(id => p.servicoIds.includes(id)))
-                    if (profsComTodos.length === 1) {
-                      setProfissionalId(profsComTodos[0].id)
-                      setEtapa(3)
-                    } else if (profsComTodos.length === 0) {
-                      // Nenhum profissional faz todos — usa o primeiro serviço para filtrar
-                      const profsDoServico = profissionais.filter(p => p.servicoIds.includes(primeiroId))
-                      if (profsDoServico.length === 1) {
-                        setProfissionalId(profsDoServico[0].id)
-                        setEtapa(3)
-                      } else {
-                        setProfissionalId('')
-                        setEtapa(2)
-                      }
-                    } else {
-                      setProfissionalId('')
-                      setEtapa(2)
-                    }
-                  }}
+                  onClick={avancarEtapaServico}
                   style={{
                     width: '100%', padding: '14px 0', borderRadius: 12, border: 'none',
                     background: C.gold, color: C.textOnGold, fontWeight: 700, fontSize: 14, cursor: 'pointer',
@@ -1163,7 +2084,7 @@ const AgendaPublica = () => {
         )}
 
         {/* ════ Etapa 2: Profissional ════ */}
-        {etapa === 2 && (
+        {abaAtiva === 'agendar' && etapa === 2 && (
           <div className="fade-in">
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
               <button
@@ -1196,7 +2117,25 @@ const AgendaPublica = () => {
               <p style={{ color: C.textDim, fontSize: 12, margin: '3px 0 0' }}>Mostrar todos os horários disponíveis</p>
             </div>
 
-            {profsFiltrados.map((p) => {
+            <label style={{ display: 'block', marginBottom: 12 }}>
+              <span style={{ color: C.textSecondary, fontSize: 12, fontWeight: 600, display: 'block', marginBottom: 6 }}>Buscar profissional</span>
+              <div style={{ position: 'relative' }}>
+                <Search size={14} style={{ color: C.textDim, position: 'absolute', left: 12, top: 12 }} />
+                <input
+                  type="text"
+                  value={buscaProfissional}
+                  onChange={(e) => setBuscaProfissional(e.target.value)}
+                  placeholder="Digite o nome do profissional"
+                  style={{
+                    width: '100%', padding: '10px 12px 10px 34px', borderRadius: 12,
+                    background: C.bgCard, border: `1.5px solid ${C.border}`, color: C.textPrimary,
+                    fontSize: 14, boxSizing: 'border-box',
+                  }}
+                />
+              </div>
+            </label>
+
+            {profissionaisVisiveis.map((p) => {
               const sel = profissionalId === p.id
               return (
                 <div
@@ -1212,7 +2151,7 @@ const AgendaPublica = () => {
                 >
                   {p.avatarUrl ? (
                     <img
-                      src={`${API_URL}${p.avatarUrl}`}
+                      src={resolverMediaUrl(p.avatarUrl)}
                       alt={p.nome}
                       style={{ width: 40, height: 40, borderRadius: '50%', objectFit: 'cover', border: `1.5px solid ${sel ? C.gold : C.border}`, flexShrink: 0 }}
                     />
@@ -1231,20 +2170,21 @@ const AgendaPublica = () => {
                 </div>
               )
             })}
+            {profissionaisVisiveis.length === 0 && (
+              <div style={{ background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 14, padding: 18, textAlign: 'center' }}>
+                <p style={{ color: C.textDim, fontSize: 13, margin: 0 }}>Nenhum profissional encontrado para esse serviço.</p>
+              </div>
+            )}
           </div>
         )}
 
         {/* ════ Etapa 3: Data e Hora ════ */}
-        {etapa === 3 && (
+        {abaAtiva === 'agendar' && etapa === 3 && (
           <div className="fade-in">
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
               <button
                 className="btn-back"
-                onClick={() => {
-                  // Se há só 1 profissional para o serviço, etapa 2 foi pulada — volta para etapa 1
-                  const profsDoServico = profissionais.filter((p) => p.servicoIds.includes(servicoId))
-                  setEtapa(profsDoServico.length === 1 ? 1 : 2)
-                }}
+                onClick={() => setEtapa(2)}
                 style={{
                   background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 10,
                   width: 32, height: 32, display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -1403,7 +2343,7 @@ const AgendaPublica = () => {
         )}
 
         {/* ════ Etapa 4: Dados pessoais (apenas novos clientes) ════ */}
-        {etapa === 4 && !clienteConhecido && (
+        {abaAtiva === 'agendar' && etapa === 4 && !clienteConhecido && (
           <div className="fade-in">
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
               <button
@@ -1424,47 +2364,79 @@ const AgendaPublica = () => {
             </div>
 
             <p style={{ color: C.textDim, fontSize: 13, marginBottom: 20 }}>
-              Apenas no primeiro agendamento. Nas próximas vezes, não precisará preencher novamente.
+              Primeiro validamos seu WhatsApp. Se já existir cadastro, seguimos sem pedir mais nada.
             </p>
 
-            {/* Nome */}
-            <label style={{ display: 'block', marginBottom: 16 }}>
-              <span style={{ color: C.textSecondary, fontSize: 12, fontWeight: 600, display: 'block', marginBottom: 6 }}>Nome</span>
-              <input
-                type="text"
-                value={nomeCliente}
-                onChange={(e) => setNomeCliente(e.target.value)}
-                placeholder="Seu nome"
-                autoComplete="name"
-                style={{
-                  width: '100%', padding: '12px 14px', borderRadius: 12,
-                  background: C.bgCard, border: `1.5px solid ${C.border}`,
-                  color: C.textPrimary, fontSize: 14, fontFamily: 'inherit',
-                  outline: 'none', boxSizing: 'border-box', transition: 'border-color 0.15s',
-                }}
-              />
-            </label>
-
-            {/* Telefone */}
             <label style={{ display: 'block', marginBottom: 24 }}>
               <span style={{ color: C.textSecondary, fontSize: 12, fontWeight: 600, display: 'block', marginBottom: 6 }}>WhatsApp</span>
-              <input
-                type="tel"
-                value={telefoneCliente}
-                onChange={(e) => setTelefoneCliente(mascaraTelefone(e.target.value))}
-                placeholder="(11) 99999-9999"
-                autoComplete="tel"
-                style={{
-                  width: '100%', padding: '12px 14px', borderRadius: 12,
-                  background: C.bgCard, border: `1.5px solid ${C.border}`,
-                  color: C.textPrimary, fontSize: 14, fontFamily: 'inherit',
-                  outline: 'none', boxSizing: 'border-box', transition: 'border-color 0.15s',
-                }}
-              />
-              <span style={{ color: C.textDim, fontSize: 11, marginTop: 4, display: 'block' }}>
-                A confirmação será enviada por WhatsApp
-              </span>
+              {!clienteConsultado ? (
+                <>
+                  <input
+                    type="tel"
+                    value={telefoneCliente}
+                    onChange={(e) => {
+                      setTelefoneCliente(mascaraTelefone(e.target.value))
+                      setClienteConsultado(null)
+                      setErroCliente(null)
+                    }}
+                    placeholder="(11) 99999-9999"
+                    autoComplete="tel"
+                    style={{
+                      width: '100%', padding: '12px 14px', borderRadius: 12,
+                      background: C.bgCard, border: `1.5px solid ${C.border}`,
+                      color: C.textPrimary, fontSize: 14, fontFamily: 'inherit',
+                      outline: 'none', boxSizing: 'border-box', transition: 'border-color 0.15s',
+                    }}
+                  />
+                  <span style={{ color: C.textDim, fontSize: 11, marginTop: 4, display: 'block' }}>
+                    A confirmação será enviada por WhatsApp
+                  </span>
+                </>
+              ) : (
+                <div style={{ background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 12, padding: '12px 14px', display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center' }}>
+                  <div>
+                    <p style={{ color: C.textPrimary, fontWeight: 600, fontSize: 14, margin: 0 }}>{formatarTelefoneExibicao(telefoneCliente)}</p>
+                    <p style={{ color: C.textDim, fontSize: 11, margin: '4px 0 0' }}>
+                      {clienteConsultado.existe ? 'Cadastro encontrado' : 'Novo cliente'}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={editarTelefone}
+                    style={{ background: 'transparent', border: 'none', color: C.gold, fontSize: 12, fontWeight: 700, cursor: 'pointer' }}
+                  >
+                    Editar
+                  </button>
+                </div>
+              )}
             </label>
+
+            {clienteConsultado && !clienteConsultado.existe && (
+              <label style={{ display: 'block', marginBottom: 16 }}>
+                <span style={{ color: C.textSecondary, fontSize: 12, fontWeight: 600, display: 'block', marginBottom: 6 }}>Nome</span>
+                <input
+                  type="text"
+                  value={nomeCliente}
+                  onChange={(e) => setNomeCliente(e.target.value)}
+                  placeholder="Seu nome"
+                  autoComplete="name"
+                  style={{
+                    width: '100%', padding: '12px 14px', borderRadius: 12,
+                    background: C.bgCard, border: `1.5px solid ${C.border}`,
+                    color: C.textPrimary, fontSize: 14, fontFamily: 'inherit',
+                    outline: 'none', boxSizing: 'border-box', transition: 'border-color 0.15s',
+                  }}
+                />
+              </label>
+            )}
+
+            {clienteConsultado?.existe && (
+              <div style={{ background: C.greenDim, border: '1px solid rgba(37,211,102,0.25)', borderRadius: 12, padding: '12px 14px', marginBottom: 16 }}>
+                <p style={{ color: '#86efac', fontSize: 13, margin: 0 }}>
+                  Encontramos seu cadastro como <strong>{nomeCliente}</strong>. Vamos usar esse nome na confirmação.
+                </p>
+              </div>
+            )}
 
             {/* Resumo */}
             <div style={{
@@ -1473,7 +2445,9 @@ const AgendaPublica = () => {
             }}>
               <p style={{ color: C.textDim, fontSize: 11, fontWeight: 600, textTransform: 'uppercase', marginBottom: 8, letterSpacing: 0.5 }}>Resumo</p>
               <p style={{ color: C.textPrimary, fontSize: 13, margin: '4px 0', fontWeight: 600 }}>
-                {servicos.find((s) => s.id === servicoId)?.nome}
+                {servicoIds.length > 1
+                  ? servicoIds.map((id) => servicos.find((s) => s.id === id)?.nome).filter(Boolean).join(' + ')
+                  : servicos.find((s) => s.id === servicoId)?.nome}
               </p>
               <p style={{ color: C.textSecondary, fontSize: 12, margin: '4px 0' }}>
                 {profissionalId
@@ -1487,41 +2461,57 @@ const AgendaPublica = () => {
               )}
             </div>
 
-            {/* Erro */}
-            {erroAgendamento && (
+            {(erroCliente || erroAgendamento) && (
               <div style={{
                 marginBottom: 16, background: 'rgba(220,38,38,0.1)', border: '1px solid rgba(220,38,38,0.3)',
                 borderRadius: 10, padding: '10px 14px',
               }}>
-                <p style={{ color: '#f87171', fontSize: 13, margin: 0 }}>⚠️ {erroAgendamento}</p>
+                <p style={{ color: '#f87171', fontSize: 13, margin: 0 }}>⚠️ {erroCliente || erroAgendamento}</p>
               </div>
             )}
 
-            <button
-              onClick={confirmarDadosPessoais}
-              disabled={!nomeCliente.trim() || telefoneCliente.replace(/\D/g, '').length < 10 || agendando}
-              style={{
-                width: '100%',
-                background: (!nomeCliente.trim() || telefoneCliente.replace(/\D/g, '').length < 10 || agendando) ? '#1a1a1a' : C.gold,
-                color: '#fff', border: 'none', borderRadius: 12, padding: '13px', fontWeight: 700,
-                fontSize: 15,
-                cursor: (!nomeCliente.trim() || telefoneCliente.replace(/\D/g, '').length < 10 || agendando) ? 'not-allowed' : 'pointer',
-                fontFamily: 'inherit', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-                opacity: (!nomeCliente.trim() || telefoneCliente.replace(/\D/g, '').length < 10) ? 0.5 : 1,
-                transition: 'opacity 0.2s, background 0.2s',
-              }}
-            >
-              {agendando ? (
-                <><Loader2 size={18} className="spin" /> Confirmando...</>
-              ) : (
-                'Confirmar agendamento'
-              )}
-            </button>
+            {!clienteConsultado ? (
+              <button
+                onClick={consultarClientePorTelefone}
+                disabled={telefoneCliente.replace(/\D/g, '').length < 10 || consultandoCliente}
+                style={{
+                  width: '100%',
+                  background: telefoneCliente.replace(/\D/g, '').length < 10 || consultandoCliente ? '#1a1a1a' : C.gold,
+                  color: '#fff', border: 'none', borderRadius: 12, padding: '13px', fontWeight: 700,
+                  fontSize: 15, cursor: telefoneCliente.replace(/\D/g, '').length < 10 || consultandoCliente ? 'not-allowed' : 'pointer',
+                  fontFamily: 'inherit', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+                  opacity: telefoneCliente.replace(/\D/g, '').length < 10 ? 0.5 : 1,
+                }}
+              >
+                {consultandoCliente ? <><Loader2 size={18} className="spin" /> Validando...</> : 'Continuar'}
+              </button>
+            ) : (
+              <button
+                onClick={confirmarDadosPessoais}
+                disabled={(!clienteConsultado.existe && !nomeCliente.trim()) || agendando}
+                style={{
+                  width: '100%',
+                  background: ((!clienteConsultado.existe && !nomeCliente.trim()) || agendando) ? '#1a1a1a' : C.gold,
+                  color: '#fff', border: 'none', borderRadius: 12, padding: '13px', fontWeight: 700,
+                  fontSize: 15,
+                  cursor: ((!clienteConsultado.existe && !nomeCliente.trim()) || agendando) ? 'not-allowed' : 'pointer',
+                  fontFamily: 'inherit', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+                  opacity: (!clienteConsultado.existe && !nomeCliente.trim()) ? 0.5 : 1,
+                  transition: 'opacity 0.2s, background 0.2s',
+                }}
+              >
+                {agendando ? (
+                  <><Loader2 size={18} className="spin" /> Confirmando...</>
+                ) : (
+                  'Confirmar agendamento'
+                )}
+              </button>
+            )}
           </div>
         )}
 
         {/* ════ Etapa 5: Sucesso ════ */}
-        {etapa === 5 && agendamentoConfirmado && (
+        {abaAtiva === 'agendar' && etapa === 5 && agendamentoConfirmado && (
           <div className="fade-in" style={{ textAlign: 'center', paddingTop: 16 }}>
             {/* Ícone de sucesso animado */}
             <div className="pop-in" style={{
@@ -1554,7 +2544,7 @@ const AgendaPublica = () => {
                 </div>
                 <div>
                   <p style={{ color: C.textDim, fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5, margin: 0 }}>Serviço</p>
-                  <p style={{ color: C.textPrimary, fontWeight: 700, fontSize: 14, margin: 0 }}>{agendamentoConfirmado.servico}</p>
+                  <p style={{ color: C.textPrimary, fontWeight: 700, fontSize: 14, margin: 0 }}>{agendamentoConfirmado.servicos || agendamentoConfirmado.servico}</p>
                 </div>
               </div>
 
@@ -1614,6 +2604,70 @@ const AgendaPublica = () => {
         )}
 
       </div>
+
+      {abaAtiva === 'agendar' && etapa < 5 && (
+        <div style={{
+          position: 'sticky',
+          bottom: 0,
+          zIndex: 40,
+          padding: '12px 16px calc(12px + env(safe-area-inset-bottom, 0px))',
+          background: 'linear-gradient(180deg, rgba(17,17,17,0) 0%, rgba(17,17,17,0.92) 24%, rgba(17,17,17,0.98) 100%)',
+          backdropFilter: 'blur(10px)',
+          borderTop: `1px solid ${C.borderHeader}`,
+        }}>
+          <div className="public-content-shell">
+            <button
+              onClick={() => {
+                if (etapa === 1 && servicoIds.length > 0) avancarEtapaServico()
+                else if (etapa === 2) avancarEtapaProfissional()
+                else if (etapa === 3 && slot) avancarAposSlot()
+                else if (etapa === 4 && !clienteConsultado) consultarClientePorTelefone()
+                else if (etapa === 4 && clienteConsultado) confirmarDadosPessoais()
+              }}
+              disabled={
+                (etapa === 1 && servicoIds.length === 0)
+                || (etapa === 3 && !slot)
+                || (etapa === 4 && !clienteConsultado && telefoneCliente.replace(/\D/g, '').length < 10)
+                || (etapa === 4 && clienteConsultado && !clienteConsultado.existe && !nomeCliente.trim())
+                || agendando
+                || consultandoCliente
+                || perfilSalvando
+              }
+              style={{
+                width: '100%',
+                padding: '15px 16px',
+                borderRadius: 16,
+                border: 'none',
+                background: (
+                  (etapa === 1 && servicoIds.length === 0)
+                  || (etapa === 3 && !slot)
+                  || (etapa === 4 && !clienteConsultado && telefoneCliente.replace(/\D/g, '').length < 10)
+                  || (etapa === 4 && clienteConsultado && !clienteConsultado.existe && !nomeCliente.trim())
+                  || agendando
+                  || consultandoCliente
+                ) ? C.border : 'linear-gradient(135deg, #c39257, #a9783f)',
+                color: '#fff',
+                fontWeight: 700,
+                fontSize: 15,
+                cursor: 'pointer',
+                boxShadow: '0 18px 30px rgba(0,0,0,0.22)',
+                opacity: agendando || consultandoCliente ? 0.7 : 1,
+              }}
+            >
+              {etapa === 1 && (servicoIds.length > 0 ? 'Continuar para profissionais' : 'Escolha ao menos um serviço')}
+              {etapa === 2 && (profissionalId ? 'Continuar para horários' : 'Ver horários disponíveis')}
+              {etapa === 3 && (slot ? (clienteConhecido ? 'Confirmar agendamento' : 'Continuar para seus dados') : 'Escolha um horário')}
+              {etapa === 4 && (
+                !clienteConsultado
+                  ? 'Valide seu WhatsApp para continuar'
+                  : clienteConsultado.existe
+                    ? (agendando ? 'Confirmando...' : 'Confirmar agendamento')
+                    : (!nomeCliente.trim() ? 'Informe seu nome para continuar' : (agendando ? 'Confirmando...' : 'Confirmar agendamento'))
+              )}
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

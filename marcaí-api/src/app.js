@@ -1,4 +1,5 @@
 ﻿require('dotenv').config()
+const fs = require('fs')
 const path = require('path')
 const express = require('express')
 const cors = require('cors')
@@ -31,6 +32,11 @@ const { inicializarSessoesWWebJS, iniciarCronLembretes } = require('./modulos/ia
 const { iniciarCronAutomacoes } = require('./modulos/ia/automacoes.servico')
 
 const app = express()
+const uploadsDir = path.join(__dirname, '../uploads')
+
+for (const pasta of ['avatares', 'galeria', 'logos']) {
+  fs.mkdirSync(path.join(uploadsDir, pasta), { recursive: true })
+}
 
 // ─── Rate limiter simples em memória ──────────────────────────────────────────
 const rateLimits = new Map()
@@ -79,7 +85,7 @@ app.use(express.urlencoded({ extended: true }))
 app.use(passport.initialize())
 
 // Serve static uploaded files
-app.use('/uploads', express.static(path.join(__dirname, '../../uploads')))
+app.use('/uploads', express.static(uploadsDir))
 
 // Health check com validação do banco de dados
 app.get('/health', async (req, res) => {
@@ -124,7 +130,7 @@ app.use('/api/estoque', estoqueRotas)
 app.use('/api/comanda', comandaRotas)
 app.use('/api/pacotes', pacotesRotas)
 app.use('/api/comissoes', comissoesRotas)
-app.use('/api/public', rateLimit(10, 60 * 1000), publicRotas)
+app.use('/api/public', rateLimit(60, 60 * 1000), publicRotas)
 app.use('/api/caixa', caixaRotas)
 app.use('/api/galeria', galeriaRotas)
 app.use('/api/fila-espera', filaEsperaRotas)
@@ -172,6 +178,4 @@ if (require.main === module) {
   })
 }
 module.exports = app
-
-
 

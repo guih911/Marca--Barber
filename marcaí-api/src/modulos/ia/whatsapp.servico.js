@@ -44,6 +44,12 @@ const enviarWWebJS = async (config, para, texto) => {
   return wwebjsManager.enviarMensagem(tenantId, para, texto, lidJid || null)
 }
 
+const enviarAudioWWebJS = async (config, para, audioBuffer, opcoes = {}) => {
+  const { tenantId, lidJid } = config
+  if (!tenantId) throw new Error('whatsapp-web.js: tenantId é obrigatório para envio')
+  return wwebjsManager.enviarAudio(tenantId, para, audioBuffer, { ...opcoes, lidJid: lidJid || null })
+}
+
 const obterFotoPerfilWWebJS = async (config, para) => {
   const { tenantId } = config
   if (!tenantId) return null
@@ -83,6 +89,25 @@ const enviarMensagem = async (configWhatsApp, para, texto, tenantId, lidJid = nu
   }
 }
 
+const enviarAudio = async (configWhatsApp, para, audioBuffer, tenantId, lidJid = null, opcoes = {}) => {
+  if (!configWhatsApp || !configWhatsApp.provedor) {
+    console.warn('[WhatsApp] configWhatsApp não configurada — áudio não enviado')
+    return null
+  }
+
+  try {
+    switch (configWhatsApp.provedor) {
+      case 'wwebjs':
+        return await enviarAudioWWebJS({ ...configWhatsApp, tenantId, lidJid }, para, audioBuffer, opcoes)
+      default:
+        return null
+    }
+  } catch (err) {
+    console.error(`[WhatsApp] Erro ao enviar áudio (${configWhatsApp.provedor}) para ${para}:`, err.message)
+    throw err
+  }
+}
+
 const obterFotoPerfil = async (configWhatsApp, para, tenantId) => {
   if (!configWhatsApp?.provedor || !para) return null
 
@@ -99,4 +124,4 @@ const obterFotoPerfil = async (configWhatsApp, para, tenantId) => {
   }
 }
 
-module.exports = { enviarMensagem, enviarMeta, enviarWWebJS, obterFotoPerfil }
+module.exports = { enviarMensagem, enviarAudio, enviarMeta, enviarWWebJS, obterFotoPerfil }

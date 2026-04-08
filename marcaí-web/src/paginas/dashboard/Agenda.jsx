@@ -32,6 +32,16 @@ const coresPorStatus = {
 const fmt = (centavos) =>
   centavos != null ? (centavos / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }) : '—'
 
+const normalizarTelefone = (valor = '') => valor.replace(/\D/g, '').slice(0, 11)
+
+const formatarTelefoneMascara = (valor = '') => {
+  const nums = normalizarTelefone(valor)
+  if (nums.length <= 2) return nums.length ? `(${nums}` : ''
+  if (nums.length <= 6) return `(${nums.slice(0, 2)}) ${nums.slice(2)}`
+  if (nums.length <= 10) return `(${nums.slice(0, 2)}) ${nums.slice(2, 6)}-${nums.slice(6)}`
+  return `(${nums.slice(0, 2)}) ${nums.slice(2, 7)}-${nums.slice(7)}`
+}
+
 // Mini-calendÃ¡rio
 const obterInicioMs = (agendamento) => new Date(agendamento.inicioEm).getTime()
 const obterFimMs = (agendamento) => (
@@ -1017,7 +1027,7 @@ const ModalNovoAgendamento = ({ dataInicial, preset, onClose, onSalvar }) => {
   const [clienteEncontrado, setClienteEncontrado] = useState(false)
 
   useEffect(() => {
-    const digitos = form.clienteTelefone.replace(/\D/g, '')
+    const digitos = normalizarTelefone(form.clienteTelefone)
     if (digitos.length < 8) { setClienteEncontrado(false); return }
     const t = setTimeout(async () => {
       try {
@@ -1058,12 +1068,13 @@ const ModalNovoAgendamento = ({ dataInicial, preset, onClose, onSalvar }) => {
     if (!form.profissionalId || !form.servicoId || !form.horario || !form.clienteTelefone) return
     setCarregando(true)
     try {
-      let clienteRes = await api.get(`/api/clientes?busca=${form.clienteTelefone}&limite=1`)
+      const telefoneNormalizado = normalizarTelefone(form.clienteTelefone)
+      let clienteRes = await api.get(`/api/clientes?busca=${telefoneNormalizado}&limite=1`)
       let clienteId = clienteRes?.clientes?.[0]?.id
       if (!clienteId) {
         const novo = await api.post('/api/clientes', {
-          nome: form.clienteNome || form.clienteTelefone,
-          telefone: form.clienteTelefone,
+          nome: form.clienteNome || telefoneNormalizado,
+          telefone: telefoneNormalizado,
           tipoCortePreferido: form.clienteTipoCorte.trim() || undefined,
           preferencias: form.clientePreferencias.trim() || undefined,
         })
@@ -1077,7 +1088,11 @@ const ModalNovoAgendamento = ({ dataInicial, preset, onClose, onSalvar }) => {
           await api.patch(`/api/clientes/${clienteId}`, atualizacaoCliente)
         }
       }
-      await api.post('/api/agendamentos', { clienteId, profissionalId: form.profissionalId, servicoId: form.servicoId, inicio: form.horario })
+      const novoAgendamento = await api.post('/api/agendamentos', { clienteId, profissionalId: form.profissionalId, servicoId: form.servicoId, inicio: form.horario })
+      const statusCriado = novoAgendamento?.dados?.status
+      if (statusCriado && statusCriado !== 'AGENDADO') {
+        toast(`Agendamento criado como ${statusAgendamento[statusCriado]?.label || statusCriado}.`, 'sucesso')
+      }
       onSalvar()
       onClose()
     } catch (e) {
@@ -1088,6 +1103,7 @@ const ModalNovoAgendamento = ({ dataInicial, preset, onClose, onSalvar }) => {
   }
 
   const set = (campo) => (e) => setForm((p) => ({ ...p, [campo]: e.target.value }))
+  const setTelefone = (e) => setForm((p) => ({ ...p, clienteTelefone: formatarTelefoneMascara(e.target.value) }))
 
   return (
     <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={onClose}>
@@ -1151,7 +1167,14 @@ const ModalNovoAgendamento = ({ dataInicial, preset, onClose, onSalvar }) => {
           <div className="border-t border-borda pt-4 space-y-3">
             <div className="space-y-1.5">
               <Label className="flex items-center gap-2">Telefone do cliente <span className="text-perigo">*</span>{clienteEncontrado && <span className="text-[11px] font-medium text-sucesso bg-sucesso/10 px-2 py-0.5 rounded-full">Cliente encontrado</span>}</Label>
-              <Input value={form.clienteTelefone} onChange={set('clienteTelefone')} placeholder="(11) 99999-0000" />
+              <Input
+                type="tel"
+                inputMode="tel"
+                autoComplete="tel"
+                value={form.clienteTelefone}
+                onChange={setTelefone}
+                placeholder="(11) 99999-0000"
+              />
             </div>
             <div className="space-y-1.5">
               <Label>Nome do cliente</Label>
@@ -1605,12 +1628,13 @@ const ModalWalkIn = ({ onClose, onSalvar }) => {
     }
     setCarregando(true)
     try {
-      let clienteRes = await api.get(`/api/clientes?busca=${form.clienteTelefone}&limite=1`)
+      const telefoneNormalizado = normalizarTelefone(form.clienteTelefone)
+      let clienteRes = await api.get(`/api/clientes?busca=${telefoneNormalizado}&limite=1`)
       let clienteId = clienteRes?.clientes?.[0]?.id
       if (!clienteId) {
         const novo = await api.post('/api/clientes', {
-          nome: form.clienteNome || form.clienteTelefone,
-          telefone: form.clienteTelefone,
+          nome: form.clienteNome || telefoneNormalizado,
+          telefone: telefoneNormalizado,
           tipoCortePreferido: form.clienteTipoCorte.trim() || undefined,
           preferencias: form.clientePreferencias.trim() || undefined,
         })
@@ -1624,14 +1648,18 @@ const ModalWalkIn = ({ onClose, onSalvar }) => {
           await api.patch(`/api/clientes/${clienteId}`, atualizacaoCliente)
         }
       }
-      await api.post('/api/agendamentos', {
+      const novoAgendamento = await api.post('/api/agendamentos', {
         clienteId,
         profissionalId: form.profissionalId,
         servicoId: form.servicoId,
         inicio: new Date().toISOString(),
         walkin: true,
       })
-      toast('Walk-in registrado!', 'sucesso')
+      const statusCriado = novoAgendamento?.dados?.status
+      if (statusCriado && statusCriado !== 'CONFIRMADO') {
+        console.warn('[Agenda] Encaixe retornou status inesperado:', statusCriado, novoAgendamento?.dados)
+      }
+      toast(`Encaixe registrado${statusCriado ? ` como ${statusAgendamento[statusCriado]?.label || statusCriado}` : ''}!`, 'sucesso')
       onSalvar()
       onClose()
     } catch (e) {
@@ -1642,9 +1670,10 @@ const ModalWalkIn = ({ onClose, onSalvar }) => {
   }
 
   const set = (campo) => (e) => setForm((p) => ({ ...p, [campo]: e.target.value }))
+  const setTelefone = (e) => setForm((p) => ({ ...p, clienteTelefone: formatarTelefoneMascara(e.target.value) }))
 
   useEffect(() => {
-    const digitos = form.clienteTelefone.replace(/\D/g, '')
+    const digitos = normalizarTelefone(form.clienteTelefone)
     if (digitos.length < 8) { setClienteEncontrado(false); return }
     const t = setTimeout(async () => {
       try {
@@ -1702,7 +1731,14 @@ const ModalWalkIn = ({ onClose, onSalvar }) => {
           <div className="border-t border-borda pt-4 space-y-3">
             <div className="space-y-1.5">
               <Label className="flex items-center gap-2">Telefone do cliente <span className="text-perigo">*</span>{clienteEncontrado && <span className="text-[11px] font-medium text-sucesso bg-sucesso/10 px-2 py-0.5 rounded-full">Cliente encontrado</span>}</Label>
-              <Input value={form.clienteTelefone} onChange={set('clienteTelefone')} placeholder="(11) 99999-0000" />
+              <Input
+                type="tel"
+                inputMode="tel"
+                autoComplete="tel"
+                value={form.clienteTelefone}
+                onChange={setTelefone}
+                placeholder="(11) 99999-0000"
+              />
             </div>
             <div className="space-y-1.5">
               <Label>Nome do cliente</Label>

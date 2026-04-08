@@ -1,6 +1,15 @@
 const banco = require('../../config/banco')
 const whatsappServico = require('../ia/whatsapp.servico')
 
+const UNIDADES_ESTOQUE = new Set(['unid', 'ml', 'g', 'kg', 'L', 'pacote', 'caixa', 'duzia', 'fardo'])
+
+const normalizarUnidade = (unidade, fallback = 'unid') => {
+  if (typeof unidade !== 'string') return fallback
+  const valor = unidade.trim()
+  if (!valor) return fallback
+  return UNIDADES_ESTOQUE.has(valor) ? valor : fallback
+}
+
 const verificarRecurso = async (tenantId) => {
   const tenant = await banco.tenant.findUnique({ where: { id: tenantId }, select: { estoqueAtivo: true } })
   if (!tenant?.estoqueAtivo) throw { status: 403, mensagem: 'Módulo Estoque não está ativo', codigo: 'RECURSO_INATIVO' }
@@ -35,7 +44,7 @@ const criar = async (tenantId, dados) => {
       tenantId,
       nome: dados.nome,
       descricao: dados.descricao || null,
-      unidade: dados.unidade || 'unid',
+      unidade: normalizarUnidade(dados.unidade),
       precoCustoCentavos: dados.precoCustoCentavos || null,
       precoVendaCentavos: dados.precoVendaCentavos || null,
       quantidadeAtual: Number(dados.quantidadeAtual) || 0,
@@ -46,13 +55,13 @@ const criar = async (tenantId, dados) => {
 
 const atualizar = async (tenantId, id, dados) => {
   await verificarRecurso(tenantId)
-  await verificarPropriedade(tenantId, id)
+  const produtoAtual = await verificarPropriedade(tenantId, id)
   return banco.produto.update({
     where: { id },
     data: {
       nome: dados.nome,
       descricao: dados.descricao ?? null,
-      unidade: dados.unidade,
+      unidade: normalizarUnidade(dados.unidade, produtoAtual.unidade),
       precoCustoCentavos: dados.precoCustoCentavos ?? null,
       precoVendaCentavos: dados.precoVendaCentavos ?? null,
       quantidadeMinima: Number(dados.quantidadeMinima) ?? 2,

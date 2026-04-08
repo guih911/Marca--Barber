@@ -6,9 +6,28 @@ const conversasServico = require('../conversas/conversas.servico')
 const baileysManager = require('../ia/baileys.manager')
 const whatsappServico = require('../ia/whatsapp.servico')
 const { logClienteTrace, resumirCliente } = require('../../utils/clienteTrace')
+const { resumirHorarioFuncionamento, montarHorarioDetalhado } = require('../../utils/horarioFuncionamento')
 
 const STATUS_AGENDAMENTO_OCULTOS = ['REMARCADO']
 const STATUS_SEM_OPERACAO = ['CANCELADO', 'REMARCADO', 'NAO_COMPARECEU']
+const MAPA_PAGAMENTO = {
+  PIX: 'PIX',
+  DINHEIRO: 'Dinheiro',
+  CARTAO_CREDITO: 'Cartão de crédito',
+  CARTAO_DEBITO: 'Cartão de débito',
+  VALE_PRESENTE: 'Vale-presente',
+}
+const MAPA_DIFERENCIAIS = {
+  sinuca: 'Sinuca',
+  wifi: 'Wi-Fi grátis',
+  tv: 'TV',
+  estacionamento: 'Estacionamento',
+  cafezinho: 'Cafezinho',
+  cerveja: 'Cerveja e drinks',
+  ar_condicionado: 'Ar-condicionado',
+  musica_ao_vivo: 'Música ao vivo',
+  venda_produtos: 'Venda de produtos',
+}
 
 const buscarTenantPorIdentificador = async (identificador, select = {}) => (
   banco.tenant.findFirst({
@@ -106,6 +125,14 @@ const formatarDataPainel = (data, timeZone) =>
   })
 
 const formatarNomeCurto = (nome = '') => nome.trim().split(/\s+/).slice(0, 2).join(' ')
+const normalizarLista = (valor) => Array.isArray(valor) ? valor.filter(Boolean) : []
+const normalizarTelefoneQuery = (valor = '') => String(valor || '').replace(/\D/g, '')
+const formatarTelefonePublico = (tel = '') => {
+  const digitos = normalizarTelefoneQuery(tel)
+  if (digitos.startsWith('55') && digitos.length >= 12) return `+${digitos}`
+  if (digitos.length >= 10) return `+55${digitos}`
+  return ''
+}
 
 const obterMomentoMovimentacao = (agendamento) => (
   agendamento.concluidoEm
@@ -185,12 +212,17 @@ const info = async (req, res, next) => {
   try {
     // Aceita slug ou hashPublico como identificador
     const identificador = req.params.slug
-    const tenant = await buscarTenantPorIdentificador(identificador)
+    const tenant = await buscarTenantPorIdentificador(identificador, {
+      instagramUrl: true,
+      facebookUrl: true,
+      tiktokUrl: true,
+      galeriaAtivo: true,
+    })
     if (!tenant || !tenant.ativo) {
       return res.status(404).json({ sucesso: false, erro: { mensagem: 'Barbearia não encontrada' } })
     }
 
-    const [servicos, profissionais] = await Promise.all([
+    const [servicos, profissionais, galeria] = await Promise.all([
       banco.servico.findMany({
         where: { tenantId: tenant.id, ativo: true },
         select: { id: true, nome: true, duracaoMinutos: true, precoCentavos: true },
@@ -202,11 +234,36 @@ const info = async (req, res, next) => {
           id: true,
           nome: true,
           avatarUrl: true,
+          horarioTrabalho: true,
           servicos: { select: { servicoId: true } },
         },
         orderBy: { nome: 'asc' },
       }),
+      tenant.galeriaAtivo
+        ? banco.fotoGaleria.findMany({
+          where: { tenantId: tenant.id },
+          select: {
+            id: true,
+            fotoUrl: true,
+            titulo: true,
+            servicoNome: true,
+            profissional: { select: { id: true, nome: true } },
+          },
+          orderBy: [{ destaque: 'desc' }, { criadoEm: 'desc' }],
+          take: 8,
+        })
+        : Promise.resolve([]),
     ])
+
+    const pagamentos = normalizarLista(tenant.tiposPagamento).map((tipo) => MAPA_PAGAMENTO[tipo] || tipo)
+    const comodidades = normalizarLista(tenant.diferenciais).map((item) => MAPA_DIFERENCIAIS[item] || item)
+    const redesSociais = [
+      tenant.instagramUrl ? { tipo: 'instagram', label: 'Instagram', url: tenant.instagramUrl } : null,
+      tenant.facebookUrl ? { tipo: 'facebook', label: 'Facebook', url: tenant.facebookUrl } : null,
+      tenant.tiktokUrl ? { tipo: 'tiktok', label: 'TikTok', url: tenant.tiktokUrl } : null,
+    ].filter(Boolean)
+    const horarioFuncionamento = resumirHorarioFuncionamento(profissionais)
+    const horarioDetalhado = montarHorarioDetalhado(profissionais)
 
     res.json({
       sucesso: true,
@@ -214,6 +271,11 @@ const info = async (req, res, next) => {
         tenant: {
           id: tenant.id, nome: tenant.nome, slug: tenant.slug, logoUrl: tenant.logoUrl,
           endereco: tenant.endereco, telefone: tenant.telefone, linkMaps: tenant.linkMaps,
+          horarioFuncionamento,
+          horarioDetalhado,
+          pagamentos,
+          comodidades,
+          redesSociais,
           whatsappNumero: baileysManager.obterNumeroConectado(tenant.id) || null,
         },
         servicos,
@@ -223,7 +285,189 @@ const info = async (req, res, next) => {
           avatarUrl: p.avatarUrl,
           servicoIds: p.servicos.map((ps) => ps.servicoId),
         })),
+        galeria: galeria.map((foto) => ({
+          id: foto.id,
+          fotoUrl: foto.fotoUrl,
+          titulo: foto.titulo,
+          servicoNome: foto.servicoNome,
+          profissional: foto.profissional?.nome || null,
+        })),
       },
+    })
+  } catch (erro) {
+    next(erro)
+  }
+}
+
+// GET /api/public/:slug/cliente?tel=5562999999999
+const cliente = async (req, res, next) => {
+  try {
+    const identificador = req.params.slug
+    const tel = String(req.query.tel || '').replace(/\D/g, '')
+    if (!tel || tel.length < 10) {
+      return res.status(400).json({ sucesso: false, erro: { mensagem: 'Telefone inválido' } })
+    }
+
+    const tenant = await banco.tenant.findFirst({
+      where: { OR: [{ slug: identificador }, { hashPublico: identificador }] },
+      select: { id: true, ativo: true },
+    })
+    if (!tenant || !tenant.ativo) {
+      return res.status(404).json({ sucesso: false, erro: { mensagem: 'Barbearia não encontrada' } })
+    }
+
+    const telFinal = tel.startsWith('55') && tel.length >= 12 ? `+${tel}` : `+55${tel}`
+    const clienteExistente = await clientesServico.buscarPorTelefone(tenant.id, telFinal)
+
+    return res.json({
+      sucesso: true,
+      dados: {
+        existe: Boolean(clienteExistente),
+        cliente: clienteExistente
+          ? { id: clienteExistente.id, nome: clienteExistente.nome, telefone: clienteExistente.telefone }
+          : null,
+      },
+    })
+  } catch (erro) {
+    next(erro)
+  }
+}
+
+// GET /api/public/:slug/perfil?tel=5562999999999
+const perfil = async (req, res, next) => {
+  try {
+    const identificador = req.params.slug
+    const telFinal = formatarTelefonePublico(req.query.tel)
+    if (!telFinal) {
+      return res.status(400).json({ sucesso: false, erro: { mensagem: 'Telefone inválido' } })
+    }
+
+    const tenant = await banco.tenant.findFirst({
+      where: { OR: [{ slug: identificador }, { hashPublico: identificador }] },
+      select: { id: true, ativo: true, membershipsAtivo: true, pacotesAtivo: true },
+    })
+    if (!tenant || !tenant.ativo) {
+      return res.status(404).json({ sucesso: false, erro: { mensagem: 'Barbearia não encontrada' } })
+    }
+
+    const clienteExistente = await clientesServico.buscarPorTelefone(tenant.id, telFinal)
+    if (!clienteExistente) {
+      return res.status(404).json({ sucesso: false, erro: { mensagem: 'Cliente não encontrado' } })
+    }
+
+    res.json({
+      sucesso: true,
+      dados: {
+        id: clienteExistente.id,
+        nome: clienteExistente.nome,
+        telefone: clienteExistente.telefone,
+        email: clienteExistente.email || '',
+        dataNascimento: clienteExistente.dataNascimento || null,
+        instagram: clienteExistente.instagram || '',
+        tipoCortePreferido: clienteExistente.tipoCortePreferido || '',
+        preferencias: clienteExistente.preferencias || '',
+        membershipsAtivo: tenant.membershipsAtivo,
+        pacotesAtivo: tenant.pacotesAtivo,
+      },
+    })
+  } catch (erro) {
+    next(erro)
+  }
+}
+
+// PATCH /api/public/:slug/perfil
+const atualizarPerfil = async (req, res, next) => {
+  try {
+    const identificador = req.params.slug
+    const telFinal = formatarTelefonePublico(req.body?.telefone || req.body?.tel)
+    if (!telFinal) {
+      return res.status(400).json({ sucesso: false, erro: { mensagem: 'Telefone inválido' } })
+    }
+
+    const tenant = await banco.tenant.findFirst({
+      where: { OR: [{ slug: identificador }, { hashPublico: identificador }] },
+      select: { id: true, ativo: true },
+    })
+    if (!tenant || !tenant.ativo) {
+      return res.status(404).json({ sucesso: false, erro: { mensagem: 'Barbearia não encontrada' } })
+    }
+
+    const clienteExistente = await clientesServico.buscarPorTelefone(tenant.id, telFinal)
+    if (!clienteExistente) {
+      return res.status(404).json({ sucesso: false, erro: { mensagem: 'Cliente não encontrado' } })
+    }
+
+    const atualizado = await clientesServico.atualizar(tenant.id, clienteExistente.id, {
+      nome: req.body?.nome !== undefined ? String(req.body.nome || '').trim() : undefined,
+      email: req.body?.email !== undefined ? String(req.body.email || '').trim() || null : undefined,
+      dataNascimento: req.body?.dataNascimento !== undefined ? req.body.dataNascimento || null : undefined,
+      instagram: req.body?.instagram !== undefined ? String(req.body.instagram || '').trim() || null : undefined,
+      tipoCortePreferido: req.body?.tipoCortePreferido !== undefined ? String(req.body.tipoCortePreferido || '').trim() || null : undefined,
+      preferencias: req.body?.preferencias !== undefined ? String(req.body.preferencias || '').trim() || null : undefined,
+    })
+
+    res.json({
+      sucesso: true,
+      dados: {
+        id: atualizado.id,
+        nome: atualizado.nome,
+        telefone: atualizado.telefone,
+        email: atualizado.email || '',
+        dataNascimento: atualizado.dataNascimento || null,
+        instagram: atualizado.instagram || '',
+        tipoCortePreferido: atualizado.tipoCortePreferido || '',
+        preferencias: atualizado.preferencias || '',
+      },
+    })
+  } catch (erro) {
+    next(erro)
+  }
+}
+
+// GET /api/public/:slug/pacotes
+const pacotes = async (req, res, next) => {
+  try {
+    const identificador = req.params.slug
+    const tenant = await banco.tenant.findFirst({
+      where: { OR: [{ slug: identificador }, { hashPublico: identificador }] },
+      select: { id: true, ativo: true, pacotesAtivo: true },
+    })
+    if (!tenant || !tenant.ativo) {
+      return res.status(404).json({ sucesso: false, erro: { mensagem: 'Barbearia não encontrada' } })
+    }
+
+    if (!tenant.pacotesAtivo) {
+      return res.json({ sucesso: true, dados: [] })
+    }
+
+    const lista = await banco.pacote.findMany({
+      where: { tenantId: tenant.id, ativo: true },
+      include: {
+        servicos: {
+          include: {
+            servico: { select: { id: true, nome: true, precoCentavos: true, duracaoMinutos: true } },
+          },
+        },
+      },
+      orderBy: { nome: 'asc' },
+    })
+
+    res.json({
+      sucesso: true,
+      dados: lista.map((pacote) => ({
+        id: pacote.id,
+        nome: pacote.nome,
+        descricao: pacote.descricao || '',
+        tipo: pacote.tipo,
+        precoCentavos: pacote.precoCentavos,
+        descontoPorcent: pacote.descontoPorcent || null,
+        servicos: pacote.servicos.map((item) => ({
+          id: item.servico.id,
+          nome: item.servico.nome,
+          precoCentavos: item.servico.precoCentavos,
+          duracaoMinutos: item.servico.duracaoMinutos,
+        })),
+      })),
     })
   } catch (erro) {
     next(erro)
@@ -1019,4 +1263,4 @@ setInterval(() => {
   }
 }, 10 * 60 * 1000)
 
-module.exports = { info, painelTv, slots, slotsCombo, agendar, checkIn, planos, assinar, meusAgendamentos, historico, verificarAssinatura, reagendar, enviarCodigo, verificarCodigo }
+module.exports = { info, cliente, perfil, atualizarPerfil, pacotes, painelTv, slots, slotsCombo, agendar, checkIn, planos, assinar, meusAgendamentos, historico, verificarAssinatura, reagendar, enviarCodigo, verificarCodigo }

@@ -1,4 +1,5 @@
 const tenantServico = require('./tenant.servico')
+const banco = require('../../config/banco')
 
 const buscarMeu = async (req, res, next) => {
   try {
@@ -27,6 +28,22 @@ const atualizarConfiguracaoIA = async (req, res, next) => {
   }
 }
 
+const uploadLogo = async (req, res, next) => {
+  try {
+    if (!req.file) throw { status: 400, mensagem: 'Nenhum arquivo enviado', codigo: 'SEM_ARQUIVO' }
+
+    const logoUrl = `/uploads/logos/${req.file.filename}`
+    const atualizado = await banco.tenant.update({
+      where: { id: req.usuario.tenantId },
+      data: { logoUrl },
+    })
+
+    res.json({ sucesso: true, dados: { logoUrl: atualizado.logoUrl } })
+  } catch (erro) {
+    next(erro)
+  }
+}
+
 const listarUsuarios = async (req, res, next) => {
   try {
     const usuarios = await tenantServico.listarUsuarios(req.usuario.tenantId)
@@ -36,4 +53,4 @@ const listarUsuarios = async (req, res, next) => {
   }
 }
 
-module.exports = { buscarMeu, atualizar, atualizarConfiguracaoIA, listarUsuarios }
+module.exports = { buscarMeu, atualizar, atualizarConfiguracaoIA, uploadLogo, listarUsuarios }

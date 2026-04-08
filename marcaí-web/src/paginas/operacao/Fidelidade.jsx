@@ -12,6 +12,17 @@ const calcularNivel = (totalGanho = 0) => {
   return { label: 'Bronze', emoji: '🥉', cor: 'text-orange-700 bg-orange-50 border-orange-200' }
 }
 
+const CONFIG_PADRAO = {
+  pontosPerServico: 1,
+  pontosParaResgate: 10,
+  descricaoResgate: '1 serviço grátis',
+  aniversarioAtivo: false,
+  aniversarioBeneficioTipo: 'CORTE_GRATIS',
+  aniversarioDescricao: '',
+  aniversarioValorCentavos: null,
+  ativo: true,
+}
+
 const BadgeNivel = ({ totalGanho }) => {
   const nivel = calcularNivel(totalGanho)
   return (
@@ -24,7 +35,7 @@ const BadgeNivel = ({ totalGanho }) => {
 const Fidelidade = () => {
   const toast = useToast()
   const [ranking, setRanking] = useState([])
-  const [config, setConfig] = useState({ pontosPerServico: 1, pontosParaResgate: 10, descricaoResgate: '1 serviço grátis' })
+  const [config, setConfig] = useState(CONFIG_PADRAO)
   const [carregando, setCarregando] = useState(true)
   const [salvando, setSalvando] = useState(false)
   const [resgatando, setResgatando] = useState(null)
@@ -37,7 +48,7 @@ const Fidelidade = () => {
         api.get('/api/fidelidade/config'),
       ])
       setRanking(resRanking.dados || [])
-      if (resConfig.dados) setConfig(resConfig.dados)
+      setConfig({ ...CONFIG_PADRAO, ...(resConfig.dados || {}) })
     } catch {
       toast('Erro ao carregar dados de fidelidade', 'erro')
     } finally {
@@ -83,6 +94,10 @@ const Fidelidade = () => {
   }
 
   const podeResgatar = (pontos) => pontos >= config.pontosParaResgate
+  const beneficioAniversarioDescricao = config.aniversarioDescricao?.trim()
+    || (config.aniversarioBeneficioTipo === 'VALE_PRESENTE'
+      ? (config.aniversarioValorCentavos ? `vale-presente de R$ ${(config.aniversarioValorCentavos / 100).toFixed(2)}` : (config.descricaoResgate || 'vale-presente de aniversário'))
+      : (config.descricaoResgate || 'corte grátis de aniversário'))
 
   if (carregando) {
     return (
@@ -141,6 +156,73 @@ const Fidelidade = () => {
 
             <div className="rounded-xl bg-fundo px-3 py-2.5 text-xs text-texto-sec">
               A cada <strong>{config.pontosPerServico}</strong> {config.pontosPerServico === 1 ? 'ponto' : 'pontos'} por atendimento → ao atingir <strong>{config.pontosParaResgate}</strong> pontos → cliente ganha: <strong>{config.descricaoResgate}</strong>
+            </div>
+
+            <div className="rounded-xl border border-borda px-3 py-3 space-y-3">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-xs font-semibold text-texto-sec uppercase tracking-wide">Aniversário</p>
+                  <p className="text-[11px] text-texto-ter mt-0.5">Quando ativo, o sistema envia parabéns e cria o benefício automático.</p>
+                </div>
+                <label className="inline-flex items-center gap-2 text-xs font-medium text-texto-sec">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(config.aniversarioAtivo)}
+                    onChange={(e) => setConfig((p) => ({ ...p, aniversarioAtivo: e.target.checked }))}
+                    className="rounded border-borda text-primaria focus:ring-primaria/30"
+                  />
+                  Ativar
+                </label>
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-texto-sec mb-1.5">Benefício do aniversário</label>
+                <select
+                  value={config.aniversarioBeneficioTipo}
+                  onChange={(e) => setConfig((p) => ({ ...p, aniversarioBeneficioTipo: e.target.value }))}
+                  className="w-full px-3 py-2 rounded-lg border border-borda focus:outline-none focus:ring-2 focus:ring-primaria/30 text-sm bg-white"
+                >
+                  <option value="CORTE_GRATIS">Corte grátis</option>
+                  <option value="VALE_PRESENTE">Vale-presente</option>
+                </select>
+              </div>
+
+              {config.aniversarioBeneficioTipo === 'VALE_PRESENTE' && (
+                <div>
+                  <label className="block text-xs font-medium text-texto-sec mb-1.5">Valor do vale-presente (R$)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={config.aniversarioValorCentavos != null ? (config.aniversarioValorCentavos / 100).toFixed(2) : ''}
+                    onChange={(e) => setConfig((p) => ({
+                      ...p,
+                      aniversarioValorCentavos: e.target.value === ''
+                        ? null
+                        : (() => {
+                            const normalizado = Number(e.target.value.replace(',', '.'))
+                            return Number.isFinite(normalizado) ? Math.round(normalizado * 100) : null
+                          })(),
+                    }))}
+                    className="w-full px-3 py-2 rounded-lg border border-borda focus:outline-none focus:ring-2 focus:ring-primaria/30 text-sm"
+                    placeholder="Ex: 50,00"
+                  />
+                </div>
+              )}
+
+              <div>
+                <label className="block text-xs font-medium text-texto-sec mb-1.5">Descrição do benefício</label>
+                <input
+                  type="text"
+                  value={config.aniversarioDescricao}
+                  onChange={(e) => setConfig((p) => ({ ...p, aniversarioDescricao: e.target.value }))}
+                  placeholder="Ex: corte grátis de aniversário"
+                  className="w-full px-3 py-2 rounded-lg border border-borda focus:outline-none focus:ring-2 focus:ring-primaria/30 text-sm"
+                />
+                <p className="text-[11px] text-texto-ter mt-1">
+                  Se vazio, usamos a descrição do resgate padrão: <strong>{beneficioAniversarioDescricao}</strong>
+                </p>
+              </div>
             </div>
 
             <div className="rounded-xl border border-borda px-3 py-2.5 space-y-1.5">

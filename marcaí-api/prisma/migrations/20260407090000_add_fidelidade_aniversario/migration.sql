@@ -1,0 +1,5 @@
+ALTER TABLE "config_fidelidade"
+ADD COLUMN IF NOT EXISTS "aniversarioAtivo" BOOLEAN NOT NULL DEFAULT false,
+ADD COLUMN IF NOT EXISTS "aniversarioBeneficioTipo" TEXT NOT NULL DEFAULT 'CORTE_GRATIS',
+ADD COLUMN IF NOT EXISTS "aniversarioDescricao" TEXT,
+ADD COLUMN IF NOT EXISTS "aniversarioValorCentavos" INTEGER;

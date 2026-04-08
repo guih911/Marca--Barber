@@ -10,6 +10,7 @@ const filaEsperaServico = require('../filaEspera/filaEspera.servico')
 const fidelidadeServico = require('../fidelidade/fidelidade.servico')
 const planosServico = require('../planos/planos.servico')
 const { logClienteTrace, resumirCliente } = require('../../utils/clienteTrace')
+const { resumirHorarioFuncionamento } = require('../../utils/horarioFuncionamento')
 
 const anthropic = configIA.anthropicApiKey ? new Anthropic({ apiKey: configIA.anthropicApiKey }) : null
 const ferramentasClaude = ferramentas.map((t) => ({
@@ -489,6 +490,10 @@ const respostaJaFalaPagamento = (texto = '') => (
   /\b(cartao|credito|debito|pix|dinheiro)\b/i.test(normalizarTextoIntencao(texto))
 )
 
+const respostaPuxaTriagemServico = (texto = '') => (
+  ultimaPerguntaFoiTriagemServico(normalizarTextoIntencao(texto))
+)
+
 const clientePerguntouProduto = (textoNormalizado = '') => (
   /\b(produto|pomada|oleo|balm|cera|kit)\b/.test(textoNormalizado)
 )
@@ -512,8 +517,8 @@ const formatarListaNatural = (itens = []) => {
 const montarRespostaPagamentoCurta = (tenant) => {
   const mapa = {
     PIX: 'PIX',
-    CARTAO_CREDITO: 'cartao de credito',
-    CARTAO_DEBITO: 'cartao de debito',
+    CARTAO_CREDITO: 'cartão de crédito',
+    CARTAO_DEBITO: 'cartão de débito',
     DINHEIRO: 'dinheiro',
   }
 
@@ -523,7 +528,7 @@ const montarRespostaPagamentoCurta = (tenant) => {
 
 const montarRespostaProdutoCurta = async (tenantId, tenant) => {
   if (!tenant?.estoqueAtivo) {
-    return 'No momento, nao temos produto confirmado aqui no Don. Se quiser, a equipe te confirma no balcao.'
+    return 'No momento, não tenho produto confirmado aqui no Don. Se quiser, a equipe confirma no balcão.'
   }
 
   const produtos = await banco.produto.findMany({
@@ -537,7 +542,7 @@ const montarRespostaProdutoCurta = async (tenantId, tenant) => {
   }).catch(() => [])
 
   if (!produtos.length) {
-    return 'No momento, nao temos produto confirmado aqui no Don. Se quiser, a equipe te confirma no balcao.'
+    return 'No momento, não tenho produto confirmado aqui no Don. Se quiser, a equipe confirma no balcão.'
   }
 
   return `Temos ${formatarListaNatural(produtos.map((produto) => produto.nome))}. Se quiser, eu te indico o que combina melhor com o seu atendimento.`
@@ -717,11 +722,12 @@ const montarRespostaModoBarbeiro = ({ mensagemNormalizada = '', tenant }) => {
 
 // Envia notificação WhatsApp ao profissional (melhor esforço — não falha se não tiver telefone)
 const notificarProfissional = async (tenantId, profissional, mensagem) => {
-  if (!profissional?.telefone) return
   try {
     const tenant = await banco.tenant.findUnique({ where: { id: tenantId } })
-    if (tenant?.configWhatsApp) {
-      await whatsappServico.enviarMensagem(tenant.configWhatsApp, profissional.telefone, mensagem, tenantId)
+    const telefoneDestino = tenant?.numeroDono?.trim() || profissional?.telefone
+
+    if (tenant?.configWhatsApp && telefoneDestino) {
+      await whatsappServico.enviarMensagem(tenant.configWhatsApp, telefoneDestino, mensagem, tenantId)
     }
   } catch (err) {
     console.warn(`[IA] Notificação ao profissional falhou (sem impacto):`, err.message)
@@ -1153,42 +1159,7 @@ const variacoesSaudacao = [
 const indiceVariacao = new Date().getSeconds() % variacoesSaudacao.length
 const saudacaoInicial = variacoesSaudacao[indiceVariacao]
 
-// Monta horário de funcionamento dinamicamente a partir dos profissionais
-const montarHorarioFuncionamento = () => {
-  const DIAS_NOMES = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab']
-  // Coleta todos os dias/horários ativos de todos os profissionais
-  let menorInicio = '23:59'
-  let maiorFim = '00:00'
-  const diasAtivos = new Set()
-
-  for (const prof of profissionais) {
-    if (!prof.horarioTrabalho) continue
-    for (let dia = 0; dia < 7; dia++) {
-      const h = prof.horarioTrabalho[dia] || prof.horarioTrabalho[String(dia)]
-      if (h && h.ativo) {
-        diasAtivos.add(dia)
-        if (h.inicio < menorInicio) menorInicio = h.inicio
-        if (h.fim > maiorFim) maiorFim = h.fim
-      }
-    }
-  }
-
-  if (diasAtivos.size === 0) return 'Horarios sob consulta'
-
-  // Formata range de dias (ex: Seg-Sab, Seg-Sex)
-  const diasOrdenados = [...diasAtivos].sort((a, b) => a - b)
-  const primeiro = diasOrdenados[0]
-  const ultimo = diasOrdenados[diasOrdenados.length - 1]
-  const rangeDias = diasOrdenados.length >= 5
-    ? `${DIAS_NOMES[primeiro]}–${DIAS_NOMES[ultimo]}`
-    : diasOrdenados.map(d => DIAS_NOMES[d]).join(', ')
-
-  // Formata horário (remove :00)
-  const fmtHora = (h) => h.replace(':00', 'h').replace(':', 'h')
-  return `${rangeDias} ${fmtHora(menorInicio)} as ${fmtHora(maiorFim)}`
-}
-
-const horarioFuncionamento = montarHorarioFuncionamento()
+const horarioFuncionamento = resumirHorarioFuncionamento(profissionais)
 
 const mensagemSaudacaoFixa = nomeCliente
   ? `Oi, ${nomeCliente}! Aqui é o ${NOME_IA}, Assistente Virtual da ${tenant.nome} 💈\n📅 Nosso horário de Funcionamento é de ${horarioFuncionamento}\n${listaDiferenciais.length > 0 ? '\n✨ Temos ' + listaDiferenciais.join(', ') + '.\n' : ''}\nVocê pode agendar pelo link ou me fala aqui que eu marco pra você:\n🗓️ ${linkAgendamento}`
@@ -1235,6 +1206,7 @@ ${secaoPlano}${secaoSotaque}
 1. NUNCA invente: preco, horario, disponibilidade, profissional, beneficio, saldo, regras.
 2. NUNCA confirme horario sem chamar ferramenta. Slots sao verdade absoluta.
 3. FORMATACAO: Texto puro APENAS. PROIBIDO usar: * ** *** _ __ # - (como lista). ZERO markdown. WhatsApp nao renderiza — aparece literal e fica feio. Para listar servicos, use quebra de linha normal. Maximo 1 emoji por mensagem.
+3.1. PORTUGUES: escreva em pt-BR natural, com acentuacao correta nas mensagens ao cliente. Ex.: "você", "cartão", "até lá", "amanhã".
 4. NUNCA se contradiga. Se a ferramenta retornou 14h, diga "Tenho as 14h" — nunca "nao consegui esse horario".
 5. PREGUICA ZERO: se sem vagas hoje, pesquise amanha. NUNCA pule dias sem verificar.
 6. HORA ATUAL: ${horaAtual}. NUNCA ofereça horarios que ja passaram.
@@ -1336,6 +1308,7 @@ SINONIMOS DE SERVICO (interprete automaticamente, NAO pergunte de novo):
 "os dois", "corte e barba", "tudo" = COMBO (corte+barba)
 "sobrancelha", "design" = SOBRANCELHA
 Se o cliente ja disse o servico usando sinonimo, NAO pergunte qual servico. Use o servicoId correspondente.
+Se o cliente estiver montando um combo no meio do agendamento (ex.: perguntou sobrancelha depois de pedir horario), responda de forma contextual e curta. Nao abra catalogo completo nem volte para triagem ampla.
 
 NOME DO CLIENTE: Se o nome ja esta salvo no contexto (secao CLIENTE acima), NUNCA peca o nome de novo. Use o nome que ja tem.
 
@@ -1345,6 +1318,7 @@ Apresente como 1 bloco: horario + profissional + total somado.
 REGRAS DE APRESENTACAO DE HORARIO:
 - SEMPRE 1 SLOT por vez. NUNCA liste 2 ou mais opcoes. "Tenho [dia] as [hora] com o [prof]. Da certo?"
 - NUNCA mande link quando ja ofereceu um slot. Link SO na saudacao inicial ou quando o cliente PEDIR.
+- Depois que criar, remarcar ou cancelar com sucesso, ENCERRE o assunto. NUNCA anexe link de agendamento na mesma mensagem final.
 - Se o cliente ESCOLHEU um horario da lista ou disse "pode ser", "sim", "quero esse" → agende IMEDIATAMENTE. NAO peca confirmacao extra.
 - Rejeicao: "muito cedo" → hora maior | "muito tarde" → hora menor | "anoite" → busque horarios >= 18h
 - Se nao tem vaga no horario exato: ofereca O MAIS PROXIMO. NAO pule pra outro dia sem verificar todos os horarios do mesmo dia.
@@ -1451,6 +1425,7 @@ const executarFerramenta = async (tenantId, nomeFerramenta, parametros) => {
         const tenant = await banco.tenant.findUnique({ where: { id: tenantId } })
         const tz = tenant?.timezone || 'America/Sao_Paulo'
         const horaDesejada = parseHoraDesejada(parametros.horaDesejada)
+        const prefereUltimoHorario = parametros.preferenciaHorario === 'ULTIMO'
 
         // Quando o cliente pediu hora exata, prioriza esse horário ou o próximo depois dele.
         const disponiveis = slots
@@ -1467,6 +1442,10 @@ const executarFerramenta = async (tenantId, nomeFerramenta, parametros) => {
               if (aDepoisDoPedido !== bDepoisDoPedido) return aDepoisDoPedido ? -1 : 1
               if (aDepoisDoPedido && bDepoisDoPedido) return minutosA - minutosB
               return minutosB - minutosA
+            }
+
+            if (prefereUltimoHorario) {
+              return new Date(b.inicio) - new Date(a.inicio)
             }
 
             // Sem hora desejada, mantém o mais cedo primeiro.
@@ -1504,6 +1483,7 @@ const executarFerramenta = async (tenantId, nomeFerramenta, parametros) => {
         const tenant = await banco.tenant.findUnique({ where: { id: tenantId } })
         const tz = tenant?.timezone || 'America/Sao_Paulo'
         const horaDesejada = parseHoraDesejada(parametros.horaDesejada)
+        const prefereUltimoHorario = parametros.preferenciaHorario === 'ULTIMO'
 
         const disponiveis = combos.sort((a, b) => {
           if (horaDesejada) {
@@ -1517,6 +1497,10 @@ const executarFerramenta = async (tenantId, nomeFerramenta, parametros) => {
             if (aDepoisDoPedido !== bDepoisDoPedido) return aDepoisDoPedido ? -1 : 1
             if (aDepoisDoPedido && bDepoisDoPedido) return minutosA - minutosB
             return minutosB - minutosA
+          }
+
+          if (prefereUltimoHorario) {
+            return new Date(b.inicio) - new Date(a.inicio)
           }
 
           return new Date(a.inicio) - new Date(b.inicio)
@@ -1554,7 +1538,7 @@ const executarFerramenta = async (tenantId, nomeFerramenta, parametros) => {
         notificarProfissional(tenantId, ag.profissional, `📅 Novo agendamento!\n${clienteNome} agendou ${ag.servico.nome} com você — ${inicioFmt}.\nAté lá! ✨`)
         const primeiroNome = clienteNome.split(' ')[0]
         const endereco = tenant2?.endereco ? `\n📍 ${tenant2.endereco}` : ''
-        const cardPronto = `✅ Marcado, ${primeiroNome}!\n✂️ ${ag.servico.nome}\n📅 ${inicioFmt}\n💈 Com ${ag.profissional.nome.split(' ')[0]}${endereco}\nAte la! 👊`
+        const cardPronto = `✅ Marcado, ${primeiroNome}!\n✂️ ${ag.servico.nome}\n📅 ${inicioFmt}\n💈 Com ${ag.profissional.nome.split(' ')[0]}${endereco}\nAté lá! 👊`
 
         return {
           sucesso: true,
@@ -1641,7 +1625,7 @@ const executarFerramenta = async (tenantId, nomeFerramenta, parametros) => {
         const novoFmt = formatarHorarioParaCliente(primeiro.inicioEm, tz4)
         const primeiroNomeR = primeiro.cliente?.nome?.split(' ')[0] || 'cliente'
         const enderecoR = tenant4?.endereco ? '\n📍 ' + tenant4.endereco : ''
-        const cardRemarcado = '✅ Remarcado, ' + primeiroNomeR + '!\n✂️ ' + nomesServicos + '\n📅 ' + novoFmt + '\n💈 Com ' + (primeiro.profissional?.nome?.split(' ')[0] || 'profissional') + enderecoR + '\nAte la! 👊'
+        const cardRemarcado = '✅ Remarcado, ' + primeiroNomeR + '!\n✂️ ' + nomesServicos + '\n📅 ' + novoFmt + '\n💈 Com ' + (primeiro.profissional?.nome?.split(' ')[0] || 'profissional') + enderecoR + '\nAté lá! 👊'
 
         return {
           sucesso: true,
@@ -2142,8 +2126,43 @@ const ehPedidoOutroHorario = (textoNormalizado) => (
   || /\bn nesse horario\b/.test(textoNormalizado)
 )
 
+const ehPedidoUltimoHorario = (textoNormalizado = '') => (
+  /\b(ultimo|ultmo|último)\s+horari/.test(textoNormalizado)
+  || /\b(mais tarde|mais pro fim|mais para o fim|fim do dia|ultimo horario do dia)\b/.test(textoNormalizado)
+)
+
 const ehConfirmacaoExplicita = (textoNormalizado) => (
   /\b(sim|s|pode|pode ser|confirmo|confirmamos|fechou|fechado|ok|beleza|blz|bora|perfeito|quero esse|esse mesmo)\b/.test(textoNormalizado)
+)
+
+const corrigirTextoPadraoPtBr = (texto = '') => {
+  if (!texto) return texto
+
+  return String(texto)
+    .replace(/\bja remarcou pra voce\b/gi, 'já remarquei pra você')
+    .replace(/\bja agendou pra voce\b/gi, 'já agendei pra você')
+    .replace(/\btem sim\b/gi, 'tenho sim')
+    .replace(/\bvoce\b/gi, 'você')
+    .replace(/\bvoces\b/gi, 'vocês')
+    .replace(/\bnao\b/gi, 'não')
+    .replace(/\bja\b/gi, 'já')
+    .replace(/\bservico\b/gi, 'serviço')
+    .replace(/\bservicos\b/gi, 'serviços')
+    .replace(/\bhorario\b/gi, 'horário')
+    .replace(/\bhorarios\b/gi, 'horários')
+    .replace(/\bendereco\b/gi, 'endereço')
+    .replace(/\blocalizacao\b/gi, 'localização')
+    .replace(/\bfuncionamento\b/gi, 'funcionamento')
+    .replace(/\bcartao\b/gi, 'cartão')
+    .replace(/\bcredito\b/gi, 'crédito')
+    .replace(/\bdebito\b/gi, 'débito')
+    .replace(/\bamanha\b/gi, 'amanhã')
+    .replace(/\bate la\b/gi, 'até lá')
+    .replace(/\bate mais\b/gi, 'até mais')
+}
+
+const respostaFechaFluxoDeAgenda = (texto = '') => (
+  /✅\s*(Marcado|Agendado|Remarcado)|cancelad|cancelei|remarquei|agendei|até lá|te esperamos/i.test(String(texto || ''))
 )
 
 const ehRefinoDeHorarioSemConfirmacao = (textoNormalizado) => {
@@ -2431,8 +2450,14 @@ const obterContextoFerramentaDeHorario = async (tenantId, nomeFerramenta, parame
   }
 
   if (nomeFerramenta === 'remarcarAgendamento') {
+    const agendamentoId = Array.isArray(parametros.agendamentoIds) && parametros.agendamentoIds.length > 0
+      ? parametros.agendamentoIds[0]
+      : parametros.agendamentoId
+
+    if (!agendamentoId) return null
+
     const agendamento = await banco.agendamento.findUnique({
-      where: { id: parametros.agendamentoId },
+      where: { id: agendamentoId },
       select: { servicoId: true, profissionalId: true },
     })
 
@@ -2528,14 +2553,14 @@ const bloquearConfirmacaoDeHorarioAntigo = async ({
   }
 }
 
-const obterUltimoResultadoDisponibilidade = (mensagens = []) => {
+const obterUltimoResultadoFerramenta = (mensagens = [], nomeFerramenta) => {
   for (let i = mensagens.length - 1; i >= 0; i -= 1) {
     const mensagem = mensagens[i]
     if (mensagem.remetente !== 'tool_result') continue
 
     try {
       const payload = JSON.parse(mensagem.conteudo)
-      if (payload?.name !== 'verificarDisponibilidade' || !payload?.content) continue
+      if (payload?.name !== nomeFerramenta || !payload?.content) continue
       return JSON.parse(payload.content)
     } catch (_) {
       continue
@@ -2543,6 +2568,80 @@ const obterUltimoResultadoDisponibilidade = (mensagens = []) => {
   }
 
   return null
+}
+
+const obterUltimoResultadoDisponibilidade = (mensagens = []) => {
+  const resultado = obterUltimoResultadoFerramenta(mensagens, 'verificarDisponibilidade')
+  return resultado?.proximoHorario ? resultado : null
+}
+
+const obterUltimoSlotOferecido = (mensagens = []) => {
+  const ultimoCombo = obterUltimoResultadoFerramenta(mensagens, 'verificarDisponibilidadeCombo')
+  if (ultimoCombo?.proximoCombo?.inicio) {
+    return { inicio: ultimoCombo.proximoCombo.inicio, tipo: 'combo' }
+  }
+
+  const ultimoSimples = obterUltimoResultadoFerramenta(mensagens, 'verificarDisponibilidade')
+  if (ultimoSimples?.proximoHorario?.inicio) {
+    return { inicio: ultimoSimples.proximoHorario.inicio, tipo: 'simples' }
+  }
+
+  return null
+}
+
+const contextoTemIntencaoDeRemarcacao = (mensagens = [], mensagemNormalizada = '') => {
+  const contexto = [mensagemNormalizada, ...obterUltimosTextosClienteNormalizados(mensagens, 6)].join(' ')
+  return /\b(remarca|remarcar|remarque|mudar horario|mudar o horario|trocar horario|trocar o horario)\b/.test(contexto)
+}
+
+const extrairAgendamentoIdsDaRemarcacao = (agendamentos = []) => {
+  if (!Array.isArray(agendamentos) || agendamentos.length === 0) return null
+  if (agendamentos.length === 1) return [agendamentos[0].id]
+
+  const ordenados = [...agendamentos].sort((a, b) => new Date(a.inicio) - new Date(b.inicio))
+  const primeiro = ordenados[0]
+  const mesmoProfissional = ordenados.every((agendamento) => agendamento.profissional === primeiro.profissional)
+  const mesmaData = ordenados.every((agendamento) => String(agendamento.inicio).slice(0, 10) === String(primeiro.inicio).slice(0, 10))
+  const encadeados = ordenados.every((agendamento, indice) => {
+    if (indice === 0) return true
+    const anterior = ordenados[indice - 1]
+    const diferencaMinutos = (new Date(agendamento.inicio) - new Date(anterior.inicio)) / (1000 * 60)
+    return diferencaMinutos >= 0 && diferencaMinutos <= 180
+  })
+
+  return mesmoProfissional && mesmaData && encadeados
+    ? ordenados.map((agendamento) => agendamento.id)
+    : null
+}
+
+const executarRemarcacaoDeterministicaSeAplicavel = async ({
+  tenantId,
+  mensagens = [],
+  mensagemNormalizada = '',
+  ultimaMensagemIAVisivel = null,
+}) => {
+  if (!ehConfirmacaoExplicita(mensagemNormalizada)) return null
+  if (!contextoTemIntencaoDeRemarcacao(mensagens, mensagemNormalizada)) return null
+
+  const ultimaRespostaIA = normalizarTextoIntencao(ultimaMensagemIAVisivel?.conteudo || '')
+  if (!/serve|da certo|fica bom|fecha|quer esse|pode ser/.test(ultimaRespostaIA)) return null
+
+  const slotOferecido = obterUltimoSlotOferecido(mensagens)
+  if (!slotOferecido?.inicio) return null
+
+  const buscaAgendamentos = obterUltimoResultadoFerramenta(mensagens, 'buscarAgendamentosCliente')
+  const agendamentoIds = extrairAgendamentoIdsDaRemarcacao(buscaAgendamentos?.agendamentos || [])
+  if (!agendamentoIds?.length) return null
+
+  const parametros = agendamentoIds.length === 1
+    ? { agendamentoId: agendamentoIds[0], novoInicio: slotOferecido.inicio }
+    : { agendamentoIds, novoInicio: slotOferecido.inicio }
+
+  const resultado = await executarFerramenta(tenantId, 'remarcarAgendamento', parametros).catch(() => null)
+  if (!resultado?.sucesso) return null
+
+  const cardMatch = resultado.INSTRUCAO?.match(/\n\n([\s\S]+)$/)
+  return cardMatch ? cardMatch[1].trim() : null
 }
 
 const obterHoraDesejadaParaMaisTarde = (resultadoDisponibilidadeAnterior, timeZone) => {
@@ -2667,7 +2766,7 @@ const processarMensagem = async (tenantId, clienteId, conversaId, mensagemClient
 
   // ── Card de boas-vindas — enviado SOMENTE na primeira mensagem de cada nova sessão ──
   // Inclui horários derivados dos profissionais, diferenciais configurados e link personalizado.
-  // Don NÃO responde neste turno — só o card é enviado. Don entra a partir da próxima mensagem.
+  // Se o cliente trouxer intenção objetiva no mesmo turno, o card sai primeiro e Don responde logo em seguida.
   let mensagemProativa = null
   if (mensagens.length === 0 && !conversa?.modoBarbeiro) {
     try {
@@ -2818,12 +2917,17 @@ const processarMensagem = async (tenantId, clienteId, conversaId, mensagemClient
         msgLink_ = linhas_.join('\n')
       }
 
-      // Salva no histórico para contexto do LLM no próximo turno
+      // Salva no histórico para manter o contexto do card de boas-vindas.
       await banco.mensagem.create({ data: { conversaId, remetente: 'ia', conteudo: msgLink_ } })
       await banco.conversa.update({ where: { id: conversaId }, data: { atualizadoEm: new Date() } }).catch(() => {})
 
-      // Retorna imediatamente — Don responde na próxima mensagem do cliente
-      return { resposta: '', mensagemProativa: msgLink_, escalonado: false, encerrado: false }
+      mensagemProativa = msgLink_
+
+      // Em saudação pura, o card resolve o turno sozinho.
+      // Se o cliente já veio com intenção objetiva, o fluxo segue para a IA responder no mesmo turno.
+      if (soCumprimentouAgora && !trouxeIntencaoObjetivaAgora) {
+        return { resposta: '', mensagemProativa: msgLink_, escalonado: false, encerrado: false }
+      }
     } catch (errLink_) {
       console.warn('[Don] Falha ao gerar card de boas-vindas:', errLink_.message)
     }
@@ -2872,6 +2976,7 @@ const processarMensagem = async (tenantId, clienteId, conversaId, mensagemClient
   const dataDesejadaDaMensagem = obterDataDesejadaDaMensagem(mensagemNormalizada, timeZone)
   const horaDesejadaDaMensagem = obterHoraDesejadaDaMensagem(mensagemNormalizada)
   const horaDesejadaPorTurno = obterHoraDesejadaPorTurno(mensagemNormalizada)
+  const prefereUltimoHorario = ehPedidoUltimoHorario(mensagemNormalizada)
   const horaDesejadaParaAlternativa = (ehPedidoMaisTarde(mensagemNormalizada) || ehPedidoOutroHorario(mensagemNormalizada))
     ? obterHoraDesejadaParaMaisTarde(ultimoResultadoDisponibilidade, timeZone)
     : null
@@ -2945,6 +3050,19 @@ const processarMensagem = async (tenantId, clienteId, conversaId, mensagemClient
       await banco.conversa.update({ where: { id: conversaId }, data: { atualizadoEm: new Date() } })
       return { resposta: resgatePreLLM, escalonado: false, encerrado: false }
     }
+  }
+
+  const respostaRemarcacaoDeterministica = await executarRemarcacaoDeterministicaSeAplicavel({
+    tenantId,
+    mensagens,
+    mensagemNormalizada,
+    ultimaMensagemIAVisivel,
+  })
+  if (respostaRemarcacaoDeterministica) {
+    const respostaAjustada = corrigirTextoPadraoPtBr(respostaRemarcacaoDeterministica)
+    await banco.mensagem.create({ data: { conversaId, remetente: 'ia', conteudo: respostaAjustada } })
+    await banco.conversa.update({ where: { id: conversaId }, data: { atualizadoEm: new Date() } })
+    return { resposta: respostaAjustada, escalonado: false, encerrado: false }
   }
 
   if (pedidoDiretoDeHumano) {
@@ -3198,6 +3316,7 @@ NUNCA corte a resposta no meio. Complete sempre a frase.`
         if (['verificarDisponibilidade', 'verificarDisponibilidadeCombo'].includes(tu.name)) {
           if (dataDesejadaDaMensagem && parametros.data !== dataDesejadaDaMensagem) parametros.data = dataDesejadaDaMensagem
           if (!parametros.horaDesejada) parametros.horaDesejada = horaDesejadaDaMensagem || horaDesejadaPorTurno || horaDesejadaParaAlternativa || undefined
+          if (prefereUltimoHorario && !parametros.horaDesejada) parametros.preferenciaHorario = 'ULTIMO'
         }
 
         const resultadoCadastroInvalido = bloquearConfirmacaoSemCadastroValido({ nomeFerramenta: tu.name, cliente })
@@ -3356,6 +3475,10 @@ NUNCA corte a resposta no meio. Complete sempre a frase.`
     }
   }
 
+  if (respostaFinal && clientePerguntouPagamento(mensagemNormalizada) && respostaPuxaTriagemServico(respostaFinal)) {
+    respostaFinal = montarRespostaPagamentoCurta(tenant) || respostaFinal
+  }
+
   if (
     respostaFinal
     && clientePerguntouProduto(mensagemNormalizada)
@@ -3369,6 +3492,7 @@ NUNCA corte a resposta no meio. Complete sempre a frase.`
 
   if (respostaFinal && !respostaFinal.includes(linkSite) && !respostaFinal.includes('🗓️')) {
     const ehConfirmacao = respostaFinal.includes('✅ Agendado') || respostaFinal.includes('✅ Marcado')
+    const ehConclusaoAgenda = respostaFechaFluxoDeAgenda(respostaFinal)
     const ehEscalacao = respostaFinal.includes('equipe agora') || escalonado
     // Detecta se a IA está ativamente oferecendo um slot específico ao cliente
     const sugerindoHorario = /pode ser\??|dá certo\??|fecha\??|te serve\??|fica bom\??|quer esse\??|que tal\??|topa\??|serve pra voc/i.test(respostaFinal)
@@ -3376,10 +3500,10 @@ NUNCA corte a resposta no meio. Complete sempre a frase.`
     const assuntoEhAgendamento = /horario|horário|agendar|agendamento|marcar|disponib|corte|barba|servico|serviço|atend|vaga|dia|hoje|amanha|amanhã|semana|encaixe/i.test(mensagemNormalizada)
     const linkJaEnviado = mensagens.some(m => m.conteudo?.includes('🗓️'))
 
-    if (!ehConfirmacao && !ehEscalacao && sugerindoHorario) {
+    if (!ehConfirmacao && !ehConclusaoAgenda && !ehEscalacao && sugerindoHorario) {
       // Sugeriu horário — link como alternativa para escolher sozinho
       respostaFinal += `\n\nSe preferir escolher sozinho, é só acessar:\n🗓️ ${linkSite}`
-    } else if (!ehConfirmacao && !ehEscalacao && assuntoEhAgendamento && !linkJaEnviado) {
+    } else if (!ehConfirmacao && !ehConclusaoAgenda && !ehEscalacao && assuntoEhAgendamento && !linkJaEnviado) {
       // Pergunta de agendamento sem link ainda enviado nesta conversa
       respostaFinal += `\n\nVocê pode agendar pelo link ou me fala aqui que eu marco pra você:\n🗓️ ${linkSite}`
     }
@@ -3394,6 +3518,8 @@ NUNCA corte a resposta no meio. Complete sempre a frase.`
       respostaFinal += `\n\nVeja os detalhes e assine pelo link:\n📋 ${linkPlano}`
     }
   }
+
+  respostaFinal = corrigirTextoPadraoPtBr(respostaFinal)
 
   // Salva resposta final da IA (guarda nulo — evita crash quando LLM retorna vazio)
   if (respostaFinal != null) {

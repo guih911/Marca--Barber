@@ -1,4 +1,5 @@
 const banco = require('../../config/banco')
+const { obterLembretesConfigurados } = require('../../utils/lembretes')
 
 const normalizarPlanoContratado = (plano) => {
   const valor = String(plano || '').trim().toUpperCase()
@@ -49,6 +50,12 @@ const atualizar = async (tenantId, dados) => {
   if (dados.autoCancelarNaoConfirmados !== undefined) campos.autoCancelarNaoConfirmados = Boolean(dados.autoCancelarNaoConfirmados)
   if (dados.horasAutoCancelar !== undefined) campos.horasAutoCancelar = Number(dados.horasAutoCancelar)
   if (dados.lembreteMinutosAntes !== undefined) campos.lembreteMinutosAntes = Number(dados.lembreteMinutosAntes)
+  if (dados.lembretesMinutosAntes !== undefined) {
+    campos.lembretesMinutosAntes = Array.isArray(dados.lembretesMinutosAntes)
+      ? obterLembretesConfigurados({ lembretesMinutosAntes: dados.lembretesMinutosAntes, lembreteMinutosAntes: 0 })
+      : []
+    campos.lembreteMinutosAntes = campos.lembretesMinutosAntes.at(-1) ?? 0
+  }
   if (dados.exigirConfirmacaoPresenca !== undefined) campos.exigirConfirmacaoPresenca = Boolean(dados.exigirConfirmacaoPresenca)
   if (dados.npsAtivo !== undefined) campos.npsAtivo = Boolean(dados.npsAtivo)
   if (dados.fidelidadeAtivo !== undefined) campos.fidelidadeAtivo = Boolean(dados.fidelidadeAtivo)
@@ -71,8 +78,12 @@ const atualizar = async (tenantId, dados) => {
   if (dados.numeroDono !== undefined) campos.numeroDono = dados.numeroDono?.trim() || null
   if (dados.diferenciais !== undefined) campos.diferenciais = Array.isArray(dados.diferenciais) ? dados.diferenciais : null
   if (dados.linkMaps !== undefined) campos.linkMaps = dados.linkMaps?.trim() || null
+  if (dados.instagramUrl !== undefined) campos.instagramUrl = dados.instagramUrl?.trim() || null
+  if (dados.facebookUrl !== undefined) campos.facebookUrl = dados.facebookUrl?.trim() || null
+  if (dados.tiktokUrl !== undefined) campos.tiktokUrl = dados.tiktokUrl?.trim() || null
   if (dados.nomeIA !== undefined) campos.nomeIA = dados.nomeIA?.trim() || null
   if (dados.apresentacaoSalaoAtivo !== undefined) campos.apresentacaoSalaoAtivo = Boolean(dados.apresentacaoSalaoAtivo)
+  if (dados.enviarMensagemAoCadastrarCliente !== undefined) campos.enviarMensagemAoCadastrarCliente = Boolean(dados.enviarMensagemAoCadastrarCliente)
 
   return banco.tenant.update({ where: { id: tenantId }, data: campos })
 }

@@ -38,9 +38,9 @@ const criar = async (req, res, next) => {
 const enviarBoasVindas = async (tenantId, cliente) => {
   const tenant = await banco.tenant.findUnique({
     where: { id: tenantId },
-    select: { nome: true, slug: true, configWhatsApp: true, nomeIA: true },
+    select: { nome: true, slug: true, configWhatsApp: true, nomeIA: true, enviarMensagemAoCadastrarCliente: true },
   })
-  if (!tenant?.configWhatsApp?.provedor || !tenant.slug) return
+  if (!tenant?.enviarMensagemAoCadastrarCliente || !tenant?.configWhatsApp?.provedor || !tenant.slug) return
 
   const appUrl = process.env.APP_URL || 'https://barber.xn--marca-3sa.com'
   const nomeIA = tenant.nomeIA || 'Don Barber'

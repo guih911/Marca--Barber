@@ -5,7 +5,7 @@ const ferramentas = [
     type: 'function',
     function: {
       name: 'verificarDisponibilidade',
-      description: 'Verifica os horários disponíveis de um profissional para um serviço de barbearia em uma data específica, já respeitando expediente, intervalos, buffer e antecedência mínima prática.',
+      description: 'Verifica os horários disponíveis de um profissional para um serviço de barbearia em uma data específica, já respeitando expediente, intervalos, buffer e antecedência mínima prática. O campo inicio retornado no proximoHorario é o horário exato que deve ser reutilizado sem reinterpretar nem recalcular.',
       parameters: {
         type: 'object',
         properties: {
@@ -34,7 +34,7 @@ const ferramentas = [
     type: 'function',
     function: {
       name: 'verificarDisponibilidadeCombo',
-      description: 'Verifica o melhor encaixe sequencial para dois ou mais servicos no mesmo atendimento (ex: corte + barba), com o mesmo profissional e na mesma data. Se a resposta disser "SEM VAGAS", voce DEVE chamar esta ferramenta de novo com a data do dia seguinte antes de responder ao cliente.',
+      description: 'Verifica o melhor encaixe sequencial para dois ou mais servicos no mesmo atendimento (ex: corte + barba), com o mesmo profissional e na mesma data. O campo inicio retornado no proximoCombo é o horário exato que deve ser reutilizado sem reinterpretar nem recalcular. Se a resposta disser "SEM VAGAS", voce DEVE chamar esta ferramenta de novo com a data do dia seguinte antes de responder ao cliente.',
       parameters: {
         type: 'object',
         properties: {
@@ -102,7 +102,7 @@ const ferramentas = [
     type: 'function',
     function: {
       name: 'remarcarAgendamento',
-      description: 'Remarca um ou mais agendamentos existentes para uma nova data/hora. Para combo (corte+barba), passe todos os agendamentoIds juntos — os servicos serao reagendados sequencialmente.',
+      description: 'Remarca um ou mais agendamentos existentes para uma nova data/hora. Para combo (corte+barba), passe todos os agendamentoIds juntos — os servicos serao reagendados sequencialmente. Em novoInicio, use exatamente o inicio retornado por verificarDisponibilidade ou verificarDisponibilidadeCombo. Nao invente, nao arredonde e nao troque o horario confirmado pelo cliente.',
       parameters: {
         type: 'object',
         properties: {

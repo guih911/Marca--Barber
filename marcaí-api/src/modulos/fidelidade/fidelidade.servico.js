@@ -1,6 +1,51 @@
 const banco = require('../../config/banco')
 const whatsappServico = require('../ia/whatsapp.servico')
 
+const CONFIG_FIDELIDADE_PADRAO = {
+  pontosPerServico: 1,
+  pontosParaResgate: 10,
+  descricaoResgate: '1 serviço grátis',
+  aniversarioAtivo: false,
+  aniversarioBeneficioTipo: 'CORTE_GRATIS',
+  aniversarioDescricao: null,
+  aniversarioValorCentavos: null,
+  ativo: true,
+}
+
+const formatarMoeda = (centavos) =>
+  (Number(centavos || 0) / 100).toLocaleString('pt-BR', {
+    style: 'currency',
+    currency: 'BRL',
+  })
+
+const normalizarConfigFidelidade = (config) => {
+  if (!config) return { ...CONFIG_FIDELIDADE_PADRAO }
+
+  return {
+    ...CONFIG_FIDELIDADE_PADRAO,
+    ...config,
+    aniversarioBeneficioTipo: ['CORTE_GRATIS', 'VALE_PRESENTE'].includes(String(config.aniversarioBeneficioTipo || ''))
+      ? String(config.aniversarioBeneficioTipo)
+      : CONFIG_FIDELIDADE_PADRAO.aniversarioBeneficioTipo,
+    aniversarioDescricao: config.aniversarioDescricao || null,
+    aniversarioValorCentavos: config.aniversarioValorCentavos != null ? Number(config.aniversarioValorCentavos) : null,
+  }
+}
+
+const obterDescricaoBeneficioAniversario = (config) => {
+  const cfg = normalizarConfigFidelidade(config)
+  const descricaoAniversario = String(cfg.aniversarioDescricao || '').trim()
+  if (descricaoAniversario) return descricaoAniversario
+
+  if (cfg.aniversarioBeneficioTipo === 'VALE_PRESENTE') {
+    return cfg.aniversarioValorCentavos
+      ? `vale-presente de ${formatarMoeda(cfg.aniversarioValorCentavos)}`
+      : String(cfg.descricaoResgate || '').trim() || 'vale-presente de aniversário'
+  }
+
+  return String(cfg.descricaoResgate || '').trim() || 'corte grátis de aniversário'
+}
+
 // Salva mensagem enviada na conversa do cliente (aparece no painel de Mensagens)
 const salvarMensagemNaConversa = async (tenantId, clienteId, mensagem) => {
   try {
@@ -41,7 +86,8 @@ const obterOuCriarSaldo = async (tenantId, clienteId) => {
 }
 
 const obterConfig = async (tenantId) => {
-  return banco.configFidelidade.findUnique({ where: { tenantId } })
+  const config = await banco.configFidelidade.findUnique({ where: { tenantId } })
+  return normalizarConfigFidelidade(config)
 }
 
 const verificarRecurso = async (tenantId) => {
@@ -55,6 +101,22 @@ const salvarConfig = async (tenantId, dados) => {
   if (dados.pontosPerServico !== undefined) campos.pontosPerServico = Number(dados.pontosPerServico)
   if (dados.pontosParaResgate !== undefined) campos.pontosParaResgate = Number(dados.pontosParaResgate)
   if (dados.descricaoResgate !== undefined) campos.descricaoResgate = String(dados.descricaoResgate)
+  if (dados.aniversarioAtivo !== undefined) campos.aniversarioAtivo = Boolean(dados.aniversarioAtivo)
+  if (dados.aniversarioBeneficioTipo !== undefined) {
+    campos.aniversarioBeneficioTipo = ['CORTE_GRATIS', 'VALE_PRESENTE'].includes(String(dados.aniversarioBeneficioTipo))
+      ? String(dados.aniversarioBeneficioTipo)
+      : CONFIG_FIDELIDADE_PADRAO.aniversarioBeneficioTipo
+  }
+  if (dados.aniversarioDescricao !== undefined) {
+    const texto = String(dados.aniversarioDescricao || '').trim()
+    campos.aniversarioDescricao = texto || null
+  }
+  if (dados.aniversarioValorCentavos !== undefined) {
+    const valor = dados.aniversarioValorCentavos === '' || dados.aniversarioValorCentavos === null
+      ? null
+      : Number(dados.aniversarioValorCentavos)
+    campos.aniversarioValorCentavos = Number.isFinite(valor) ? valor : null
+  }
   if (dados.ativo !== undefined) campos.ativo = Boolean(dados.ativo)
 
   return banco.configFidelidade.upsert({
@@ -71,7 +133,7 @@ const registrarPontosAtendimento = async (tenantId, clienteId, agendamentoId) =>
     obterConfig(tenantId),
   ])
 
-  if (!tenant?.fidelidadeAtivo || !config) return null
+  if (!tenant?.fidelidadeAtivo || !config?.ativo) return null
 
   const saldo = await banco.pontosFidelidade.upsert({
     where: { tenantId_clienteId: { tenantId, clienteId } },
@@ -128,7 +190,7 @@ const registrarPontosAtendimento = async (tenantId, clienteId, agendamentoId) =>
 const resgatarPontos = async (tenantId, clienteId) => {
   await verificarRecurso(tenantId)
   const config = await obterConfig(tenantId)
-  if (!config) throw { status: 400, mensagem: 'Programa de fidelidade não configurado', codigo: 'SEM_CONFIG' }
+  if (!config?.ativo) throw { status: 403, mensagem: 'Programa de fidelidade desativado', codigo: 'RECURSO_DESATIVADO' }
 
   const saldo = await banco.pontosFidelidade.findUnique({
     where: { tenantId_clienteId: { tenantId, clienteId } },
@@ -194,6 +256,42 @@ const obterSaldoCliente = async (tenantId, clienteId) => {
   return { saldo, config }
 }
 
+const registrarBeneficioAniversario = async (tenantId, clienteId, descricao, agendamentoId = null) => {
+  const saldo = await obterOuCriarSaldo(tenantId, clienteId)
+  const descricaoLimpa = String(descricao || '').trim() || 'benefício de aniversário'
+
+  const inicioAno = new Date()
+  inicioAno.setMonth(0, 1)
+  inicioAno.setHours(0, 0, 0, 0)
+
+  const jaExiste = await banco.historicoFidelidade.findFirst({
+    where: {
+      pontosFidelidadeId: saldo.id,
+      tipo: 'RESGATE',
+      agendamentoId: null,
+      descricao: descricaoLimpa,
+      criadoEm: { gte: inicioAno },
+    },
+    orderBy: { criadoEm: 'desc' },
+  })
+
+  if (jaExiste) {
+    return { registrado: false, historico: jaExiste, saldo }
+  }
+
+  const historico = await banco.historicoFidelidade.create({
+    data: {
+      pontosFidelidadeId: saldo.id,
+      tipo: 'RESGATE',
+      pontos: 0,
+      descricao: descricaoLimpa,
+      agendamentoId,
+    },
+  })
+
+  return { registrado: true, historico, saldo }
+}
+
 // Verifica se o cliente tem resgate pendente (não utilizado) e aplica no agendamento
 // Retorna true se aplicou o resgate (agendamento deve ser gratuito)
 const verificarEAplicarResgatePendente = async (tenantId, clienteId, agendamentoId) => {
@@ -236,5 +334,7 @@ module.exports = {
   listarRanking,
   obterSaldoCliente,
   obterOuCriarSaldo,
+  registrarBeneficioAniversario,
+  obterDescricaoBeneficioAniversario,
   verificarEAplicarResgatePendente,
 }

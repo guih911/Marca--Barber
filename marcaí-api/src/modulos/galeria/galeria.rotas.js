@@ -6,7 +6,7 @@ const { autenticar } = require('../../middlewares/autenticacao')
 const galeriaControlador = require('./galeria.controlador')
 
 // Garante que o diretório de upload existe ao inicializar o módulo
-const uploadsDir = path.join(__dirname, '../../../../uploads/galeria')
+const uploadsDir = path.join(__dirname, '../../../uploads/galeria')
 fs.mkdirSync(uploadsDir, { recursive: true })
 
 const storage = multer.diskStorage({

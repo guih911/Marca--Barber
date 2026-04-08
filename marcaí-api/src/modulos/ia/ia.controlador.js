@@ -12,6 +12,7 @@ const {
 } = require('./ia.teste.servico')
 const banco = require('../../config/banco')
 const { logClienteTrace, resumirCliente } = require('../../utils/clienteTrace')
+const { sintetizarAudio } = require('./voz.servico')
 
 // Serializa processamento por numero para evitar respostas duplicadas em rajadas.
 const filaProcessamento = new Map()
@@ -140,6 +141,44 @@ const conversaTemContextoRecenteDeAgendamento = async (conversaId) => {
   return mencionouDiaOuRemarcacao || iaOfereceuSlot || clientePerguntouFaixa
 }
 
+const conversaTemContextoRecenteDeRemarcacao = async (conversaId) => {
+  const recentes = await banco.mensagem.findMany({
+    where: { conversaId, remetente: { in: ['cliente', 'ia', 'tool_result'] } },
+    orderBy: { criadoEm: 'desc' },
+    take: 10,
+    select: { remetente: true, conteudo: true },
+  })
+
+  const texto = recentes
+    .reverse()
+    .map((m) => String(m.conteudo || '').toLowerCase())
+    .join('\n')
+
+  return /remarc/.test(texto) || /buscaragendamentoscliente/i.test(texto)
+}
+
+const mensagemPareceRefinoDeHorario = (mensagem = '') => {
+  const n = String(mensagem || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+  return /\b(hoje|hj|amanha|segunda|terca|quarta|quinta|sexta|sabado|domingo|ultimo horario|primeiro horario|mais tarde|mais cedo|fim do dia|manha|tarde|noite)\b/.test(n)
+    || /\b\d{1,2}(:\d{2})?\b/.test(n)
+    || /\b\d{1,2}\s*h(rs?)?\b/.test(n)
+}
+
+const mensagemClienteDuplicadaRecente = async (conversaId, conteudo) => {
+  const ultimaIgual = await banco.mensagem.findFirst({
+    where: {
+      conversaId,
+      remetente: 'cliente',
+      conteudo,
+    },
+    orderBy: { criadoEm: 'desc' },
+    select: { criadoEm: true },
+  })
+
+  if (!ultimaIgual) return false
+  return Date.now() - new Date(ultimaIgual.criadoEm).getTime() < 15000
+}
+
 const processarWebhookSerializado = (chave, fn) => {
   const anterior = filaProcessamento.get(chave) || Promise.resolve()
   const proxima = anterior.then(() => fn())
@@ -165,15 +204,35 @@ const processarWebhook = async ({
   configWhatsApp,
   avatarUrl,
   lidWhatsapp,
+  ehAudio = false,
 }) => {
   if (!mensagem?.trim() || !telefone?.trim()) return null
+
+  const enviarRespostaWhatsapp = async (texto, { preferirAudio = false } = {}) => {
+    if (!configWhatsApp || !texto) return
+
+    if (ehAudio && preferirAudio) {
+      try {
+        const audio = await sintetizarAudio(texto)
+        if (audio?.buffer?.length) {
+          await whatsappServico.enviarAudio(configWhatsApp, telefone, audio.buffer, tenantId, lidWhatsapp ? `${lidWhatsapp}@lid` : null, {
+            mimetype: audio.mimetype,
+            ptt: true,
+          })
+          return
+        }
+      } catch (erroAudio) {
+        console.warn(`[Voz] Falha ao sintetizar/enviar áudio para ${telefone}: ${erroAudio.message}`)
+      }
+    }
+
+    await whatsappServico.enviarMensagem(configWhatsApp, telefone, texto, tenantId, lidWhatsapp ? `${lidWhatsapp}@lid` : null)
+  }
 
   if (canal === 'WHATSAPP' && eNumeroAdministrador(configWhatsApp, telefone)) {
     const respostaAdmin = await processarComandoAdmin({ tenantId, mensagem })
     if (respostaAdmin) {
-      if (configWhatsApp) {
-        await whatsappServico.enviarMensagem(configWhatsApp, telefone, respostaAdmin, tenantId)
-      }
+      await enviarRespostaWhatsapp(respostaAdmin)
       return { tipo: 'admin', resposta: respostaAdmin }
     }
   }
@@ -189,6 +248,11 @@ const processarWebhook = async ({
 
   let cliente = await clientesServico.buscarOuCriarPorTelefone(tenantId, telefone, nome, lidWhatsapp)
   const conversa = await conversasServico.buscarOuCriarConversa(tenantId, cliente.id, canal)
+
+  if (await mensagemClienteDuplicadaRecente(conversa.id, mensagem)) {
+    console.log('[Webhook] Mensagem duplicada recente ignorada para evitar resposta repetida')
+    return { tipo: 'duplicada' }
+  }
 
   logClienteTrace('webhook_cliente_e_conversa_resolvidos', {
     tenantId,
@@ -244,13 +308,18 @@ const processarWebhook = async ({
   }
 
   // ═══ ENGINE v4 — backend faz tudo que é crítico ═══
-  const intencao = engine.detectar(mensagem)
+  let intencao = engine.detectar(mensagem)
   const tenant = await banco.tenant.findUnique({ where: { id: tenantId } })
   const mensagemNormalizada = String(mensagem || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
   const pediuHoje = /\b(hoje|hj|ainda hoje|hoje ainda|mais tarde hoje)\b/.test(mensagemNormalizada)
   const pediuAgendamentoGenerico = /\b(agend\w*|marc\w*|horari\w*|hora\w*)\b/.test(mensagemNormalizada)
   const resumoFuncionamento = await obterResumoFuncionamentoAgora(tenantId, tenant?.timezone || 'America/Sao_Paulo')
   const temContextoRecenteDeAgendamento = await conversaTemContextoRecenteDeAgendamento(conversa.id)
+  const temContextoRecenteDeRemarcacao = await conversaTemContextoRecenteDeRemarcacao(conversa.id)
+
+  if (!intencao && temContextoRecenteDeRemarcacao && mensagemPareceRefinoDeHorario(mensagem)) {
+    intencao = 'REMARCAR'
+  }
 
   if (resumoFuncionamento.statusHoje === 'ENCERRADO' && pediuHoje) {
     const prox = resumoFuncionamento.proximoDia
@@ -342,7 +411,7 @@ const processarWebhook = async ({
         { conversaId: conversa.id, remetente: 'ia', conteudo: saudacao },
       ],
     })
-    if (configWhatsApp) await whatsappServico.enviarMensagem(configWhatsApp, telefone, saudacao, tenantId)
+    await enviarRespostaWhatsapp(saudacao)
     console.log('[Engine] Saudação fixa enviada (sem LLM)')
     return { tipo: 'engine', resposta: saudacao, conversaId: conversa.id }
   }
@@ -363,7 +432,7 @@ const processarWebhook = async ({
         await iaServico.executarFerramentaDireta(tenantId, direta.tool, { clienteId: cliente.id, conversaId: conversa.id })
       } catch {}
     }
-    if (configWhatsApp) await whatsappServico.enviarMensagem(configWhatsApp, telefone, direta.resposta, tenantId)
+    await enviarRespostaWhatsapp(direta.resposta, { preferirAudio: true })
     console.log(`[Engine] Resposta direta: ${intencao} (sem LLM)`)
     return { tipo: 'engine', resposta: direta.resposta, conversaId: conversa.id }
   }
@@ -383,10 +452,10 @@ const processarWebhook = async ({
 
   if (configWhatsApp) {
     if (resultado.mensagemProativa) {
-      await whatsappServico.enviarMensagem(configWhatsApp, telefone, resultado.mensagemProativa, tenantId)
+      await enviarRespostaWhatsapp(resultado.mensagemProativa)
     }
     if (resultado.resposta) {
-      await whatsappServico.enviarMensagem(configWhatsApp, telefone, resultado.resposta, tenantId)
+      await enviarRespostaWhatsapp(resultado.resposta, { preferirAudio: true })
     }
   }
 
@@ -579,7 +648,7 @@ const inicializarSessoesWWebJS = async () => {
     for (const tenant of tenants) {
       const tenantId = tenant.id
 
-      const onMensagem = async (telefone, texto, nome, avatarUrl, lidWhatsapp) => {
+      const onMensagem = async (telefone, texto, nome, avatarUrl, lidWhatsapp, meta = {}) => {
         console.log(`[Don] Processando mensagem de ${telefone}${lidWhatsapp ? ` (LID: ${lidWhatsapp})` : ''}: "${texto.substring(0, 50)}"`)
         try {
           const t = await buscarTenant(tenantId)
@@ -592,6 +661,7 @@ const inicializarSessoesWWebJS = async () => {
               nome,
               avatarUrl,
               lidWhatsapp,
+              ehAudio: Boolean(meta?.ehAudio),
               canal: 'WHATSAPP',
               configWhatsApp: t.configWhatsApp,
             })
@@ -679,13 +749,14 @@ const suiteTesteCliente = async (req, res, next) => {
     const resultado = await rodarSuiteWhatsAppBrasil({
       tenantId,
       filtros,
-      processarTurno: ({ telefone, nome, lidWhatsapp, mensagem }) =>
+      processarTurno: ({ telefone, nome, lidWhatsapp, mensagem, ehAudio }) =>
         processarWebhook({
           tenantId,
           telefone,
           mensagem,
           nome,
           lidWhatsapp,
+          ehAudio: Boolean(ehAudio),
           canal: 'WHATSAPP',
           configWhatsApp: null,
         }),

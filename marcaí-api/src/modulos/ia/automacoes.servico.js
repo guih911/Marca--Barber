@@ -14,6 +14,8 @@ const configIA = require('../../config/ia')
 const banco = require('../../config/banco')
 const whatsappServico = require('./whatsapp.servico')
 const filaEsperaServico = require('../filaEspera/filaEspera.servico')
+const fidelidadeServico = require('../fidelidade/fidelidade.servico')
+const { obterLembretesConfigurados } = require('../../utils/lembretes')
 
 const openai = new OpenAI({ apiKey: configIA.apiKey, baseURL: configIA.baseURL })
 
@@ -115,6 +117,13 @@ const gerarMensagemIA = async (systemPrompt) => {
   }
 }
 
+const montarMensagemAniversarioFallback = ({ primeiroNome, tenantNome, beneficio }) => (
+  `Feliz aniversário, ${primeiroNome}! 🎉\n` +
+  `Que seu dia seja leve e especial.\n` +
+  `Hoje você ganhou: ${beneficio}.\n` +
+  `Se quiser usar, é só responder por aqui. — ${tenantNome}`
+)
+
 // ─── A. Lembrete 2h antes ─────────────────────────────────────────────────────
 
 const enviarLembretes2h = async () => {
@@ -125,13 +134,12 @@ const enviarLembretes2h = async () => {
 
     const tenants = await banco.tenant.findMany({
       where: { ativo: true, configWhatsApp: { not: null } },
-      select: { id: true, nome: true, configWhatsApp: true, timezone: true, tomDeVoz: true, lembreteMinutosAntes: true },
+      select: { id: true, nome: true, configWhatsApp: true, timezone: true, tomDeVoz: true, lembreteMinutosAntes: true, lembretesMinutosAntes: true },
     })
 
     for (const tenant of tenants) {
       // Se o tenant tem lembrete configurável ativo, o lembretes.servico.js já cuida disso — evita duplicidade
-      const minutosAntes = tenant.lembreteMinutosAntes ?? 60
-      if (minutosAntes > 0) continue
+      if (obterLembretesConfigurados(tenant).length > 0) continue
 
       const agendamentos = await banco.agendamento.findMany({
         where: {
@@ -424,10 +432,15 @@ const enviarParabens = async () => {
 
     const tenants = await banco.tenant.findMany({
       where: { ativo: true, configWhatsApp: { not: null } },
-      select: { id: true, nome: true, configWhatsApp: true, timezone: true },
+      select: { id: true, nome: true, configWhatsApp: true, timezone: true, fidelidadeAtivo: true },
     })
 
     for (const tenant of tenants) {
+      if (!tenant.fidelidadeAtivo) continue
+
+      const configFidelidade = await fidelidadeServico.obterConfig(tenant.id)
+      if (!configFidelidade?.aniversarioAtivo) continue
+
       // Busca clientes com aniversário hoje (ignora o ano de nascimento)
       const clientes = await banco.cliente.findMany({
         where: {
@@ -453,25 +466,49 @@ const enviarParabens = async () => {
 
       for (const cliente of aniversariantes) {
         if (!cliente.telefone) continue
+        let mensagemEnviada = false
+        let beneficioRegistrado = false
         try {
           const primeiroNome = cliente.nome?.split(' ')[0] || 'cliente'
+          const beneficio = fidelidadeServico.obterDescricaoBeneficioAniversario(configFidelidade)
+
+          try {
+            const registro = await fidelidadeServico.registrarBeneficioAniversario(tenant.id, cliente.id, beneficio)
+            beneficioRegistrado = Boolean(registro?.historico?.id)
+          } catch (err) {
+            console.error(`[Automações] Erro ao registrar benefício de aniversário ${cliente.id}:`, err.message)
+            continue
+          }
 
           const mensagem = await gerarMensagemIA(
             `Você é Don, recepcionista da barbearia ${tenant.nome}. Tom: caloroso e festivo.\n` +
             `Escreva uma mensagem de aniversário para ${primeiroNome}.\n` +
-            `Inclua parabéns sinceros e ofereça um agendamento especial de aniversário.\n` +
+            `Inclua parabéns sinceros e mencione que o cliente ganhou ${beneficio}.\n` +
+            `Se fizer sentido, convide para usar o benefício no próximo atendimento.\n` +
             `Máximo 4 linhas. NUNCA use * ou **. Use no máximo 1 emoji. Assine: — ${tenant.nome}`
           )
-          if (!mensagem) continue
-
-          await enviarWhatsApp(tenant, cliente.telefone, mensagem)
-          await banco.cliente.update({
-            where: { id: cliente.id },
-            data: { parabensEnviadoEm: new Date() },
+          const mensagemFinal = mensagem || montarMensagemAniversarioFallback({
+            primeiroNome,
+            tenantNome: tenant.nome,
+            beneficio,
           })
+
+          await enviarWhatsApp(tenant, cliente.telefone, mensagemFinal)
+          await salvarMensagemNaConversa(tenant.id, cliente.id, mensagemFinal)
+          mensagemEnviada = true
           console.log(`[Automações] Parabéns → ${cliente.telefone}`)
         } catch (err) {
           console.error(`[Automações] Erro parabéns cliente ${cliente.id}:`, err.message)
+        } finally {
+          if (beneficioRegistrado) {
+            await banco.cliente.update({
+              where: { id: cliente.id },
+              data: { parabensEnviadoEm: new Date() },
+            }).catch(() => {})
+          }
+          if (!mensagemEnviada && beneficioRegistrado) {
+            console.log(`[Automações] Parabéns processado sem envio final → ${cliente.telefone}`)
+          }
         }
       }
     }
@@ -680,4 +717,3 @@ module.exports = {
   enviarNpsPosAtendimento,
   enviarRelatorioDiario,
 }
-

@@ -4,10 +4,11 @@
  *
  * Exporta a mesma interface: { iniciarSessao, obterStatus, enviarMensagem, obterFotoPerfil, destruirSessao, STATUS }
  */
-const { makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, makeCacheableSignalKeyStore, isLidUser, USyncQuery, USyncUser, USyncContactProtocol } = require('@whiskeysockets/baileys')
+const { makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, makeCacheableSignalKeyStore, isLidUser, USyncQuery, USyncUser, USyncContactProtocol, downloadContentFromMessage } = require('@whiskeysockets/baileys')
 const QRCode = require('qrcode')
 const path = require('path')
 const fs = require('fs')
+const { transcreverAudioBuffer } = require('./transcricao.servico')
 
 const STATUS = {
   INICIANDO: 'iniciando',
@@ -38,6 +39,25 @@ const AUTH_DIR = path.join(process.cwd(), '.baileys_auth')
 if (!fs.existsSync(AUTH_DIR)) fs.mkdirSync(AUTH_DIR, { recursive: true })
 
 const normalizarNumero = (telefone = '') => String(telefone || '').replace(/\D/g, '')
+
+const lerStreamEmBuffer = async (stream) => {
+  const chunks = []
+  for await (const chunk of stream) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))
+  }
+  return Buffer.concat(chunks)
+}
+
+const transcreverAudioMensagem = async (msg) => {
+  const audioMessage = msg.message?.audioMessage || msg.message?.pttMessage
+  if (!audioMessage) return null
+
+  const stream = await downloadContentFromMessage(audioMessage, 'audio')
+  const buffer = await lerStreamEmBuffer(stream)
+  const mimeType = audioMessage.mimetype || 'audio/ogg; codecs=opus'
+  const texto = await transcreverAudioBuffer(buffer, { mimeType, fileName: `whatsapp-audio${mimeType.includes('mp4') ? '.m4a' : '.ogg'}` })
+  return texto || null
+}
 
 /**
  * Resolve um LID para o número real de telefone via protocolo USync do WhatsApp.
@@ -231,7 +251,19 @@ const iniciarSessao = async (tenantId, onMensagem) => {
 
         if (!texto && !ehAudio && !ehFigurinha && !ehDocumento) continue
 
-        const textoFinal = texto || (ehAudio ? '[ÁUDIO]' : ehFigurinha ? '[FIGURINHA]' : '[DOCUMENTO]')
+        let textoFinal = texto || (ehAudio ? '[ÁUDIO]' : ehFigurinha ? '[FIGURINHA]' : '[DOCUMENTO]')
+
+        if (!texto && ehAudio) {
+          try {
+            const transcricao = await transcreverAudioMensagem(msg)
+            if (transcricao) {
+              textoFinal = transcricao
+              console.log(`[Baileys] Áudio transcrito com sucesso — tenant ${tenantId}`)
+            }
+          } catch (err) {
+            console.warn(`[Baileys] Falha ao transcrever áudio — tenant ${tenantId}: ${err.message}`)
+          }
+        }
 
         const jid = msg.key.remoteJid
         const nome = msg.pushName || ''
@@ -320,7 +352,7 @@ const iniciarSessao = async (tenantId, onMensagem) => {
 
         clearTimeout(existing.timeout)
         existing.texts.push(textoFinal)
-        existing.meta = { telefone, nome, lidOriginal }
+        existing.meta = { telefone, nome, lidOriginal, ehAudio }
 
         existing.timeout = setTimeout(async () => {
           pendingMessages.delete(pendingKey)
@@ -335,7 +367,7 @@ const iniciarSessao = async (tenantId, onMensagem) => {
 
           if (cb) {
             try {
-              await cb(existing.meta.telefone, textoParaEnviar, existing.meta.nome, fotoPerfil, existing.meta.lidOriginal)
+              await cb(existing.meta.telefone, textoParaEnviar, existing.meta.nome, fotoPerfil, existing.meta.lidOriginal, { ehAudio: Boolean(existing.meta.ehAudio) })
             } catch (err) {
               console.error(`[Baileys] Erro ao processar mensagem:`, err.message)
             }
@@ -429,6 +461,42 @@ const enviarMensagem = async (tenantId, para, texto, lidJid = null) => {
   return resultado
 }
 
+const enviarAudio = async (tenantId, para, audioBuffer, { mimetype = 'audio/mpeg', ptt = true, lidJid = null } = {}) => {
+  const sessao = sessoes.get(tenantId)
+  if (!sessao || sessao.status !== STATUS.CONECTADO || !sessao.sock) {
+    throw new Error('WhatsApp não está conectado. Escaneie o QR Code primeiro.')
+  }
+
+  const numero = normalizarNumero(para)
+  let jidReal = jidMap.get(`${tenantId}:${numero}`)
+
+  if (!jidReal && lidJid) {
+    jidReal = lidJid
+    jidMap.set(`${tenantId}:${numero}`, jidReal)
+  }
+
+  if (!jidReal) {
+    try {
+      const check = await sessao.sock.onWhatsApp(`${numero}@s.whatsapp.net`)
+      if (check && check.length > 0 && check[0].exists) {
+        jidReal = check[0].jid
+        jidMap.set(`${tenantId}:${numero}`, jidReal)
+      } else {
+        jidReal = `${numero}@s.whatsapp.net`
+      }
+    } catch {
+      jidReal = `${numero}@s.whatsapp.net`
+    }
+  }
+
+  console.log(`[Baileys] Enviando áudio para ${jidReal} — tenant ${tenantId}`)
+  return sessao.sock.sendMessage(jidReal, {
+    audio: audioBuffer,
+    mimetype,
+    ptt,
+  })
+}
+
 /**
  * Obtém foto de perfil de um contato.
  */
@@ -468,4 +536,4 @@ const destruirSessao = async (tenantId) => {
   console.log(`[Baileys] Sessão destruída e auth limpo — tenant ${tenantId}`)
 }
 
-module.exports = { iniciarSessao, obterStatus, enviarMensagem, obterFotoPerfil, destruirSessao, obterNumeroConectado, STATUS }
+module.exports = { iniciarSessao, obterStatus, enviarMensagem, enviarAudio, obterFotoPerfil, destruirSessao, obterNumeroConectado, STATUS }

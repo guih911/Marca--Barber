@@ -21,6 +21,7 @@ const detectar = (msg) => {
   if (/^\[FIGURINHA\]$/.test(t)) return 'FIGURINHA'
   if (/^\[DOCUMENTO\]$/.test(t)) return 'DOCUMENTO'
   if (/^[1-5]$/.test(t)) return 'NPS'
+  if (/\b(gay|viado|bicha|boiola|traveco|gordo da o cu|da o cu|macaco|retardad|mongol|preto imund|puta|vagabund)\b/.test(n)) return 'OFENSA'
   if (/\b(horrivel|pessimo|nao gostei|ficou errado|mal atendid|decepcionad|uma merda)\b/.test(n)) return 'RECLAMACAO'
   if (/\b(falar com (alguem|pessoa|humano|atendente|gerente|dono))\b/.test(n)) return 'HUMANO'
 
@@ -48,11 +49,13 @@ const detectar = (msg) => {
 const respostaDireta = (intencao, { tenant } = {}) => {
   switch (intencao) {
     case 'AUDIO':
-      return { resposta: 'Nao consigo ouvir audios aqui, mas pode digitar que te ajudo na hora! ✍️', pular: true }
+      return { resposta: 'Recebi seu áudio, mas não consegui transcrever por aqui. Se puder, me manda em texto que eu continuo na hora.', pular: true }
     case 'FIGURINHA':
       return { resposta: 'Boa! Posso te ajudar com alguma coisa? 😄', pular: true }
     case 'DOCUMENTO':
       return { resposta: 'Recebi o arquivo, mas nao consigo abrir aqui. Se precisar, e so digitar!', pular: true }
+    case 'OFENSA':
+      return { resposta: 'Posso ajudar com seu agendamento, remarcação ou dúvidas da barbearia.', pular: true }
     case 'RECLAMACAO':
       return { resposta: 'Que pena ouvir isso. Vou te conectar com a equipe agora.', tool: 'escalonarParaHumano', pular: true }
     case 'HUMANO':

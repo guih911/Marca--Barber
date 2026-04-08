@@ -200,6 +200,10 @@ const App = () => {
     <Routes>
       {/* Agenda pública — sem autenticação */}
       <Route path="/b/:slug" element={<AgendaPublica />} />
+      <Route path="/b/:slug/details" element={<AgendaPublica />} />
+      <Route path="/b/:slug/profissionais" element={<AgendaPublica />} />
+      <Route path="/b/:slug/agendar" element={<AgendaPublica />} />
+      <Route path="/b/:slug/conta" element={<AgendaPublica />} />
       {/* Totem de check-in — sem autenticação, fullscreen */}
       <Route path="/totem/:slug" element={<Totem />} />
       <Route path="/totem" element={<Totem />} />

@@ -72,7 +72,7 @@ const remover = async (req, res, next) => {
 
     // Remove arquivo físico (melhor esforço)
     try {
-      const filePath = path.join(__dirname, '../../../../uploads/galeria', path.basename(foto.fotoUrl))
+      const filePath = path.join(__dirname, '../../../uploads/galeria', path.basename(foto.fotoUrl))
       if (fs.existsSync(filePath)) fs.unlinkSync(filePath)
     } catch { /* ignora */ }
 

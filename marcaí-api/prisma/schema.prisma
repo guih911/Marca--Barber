@@ -129,6 +129,7 @@ model Tenant {
   autoCancelarNaoConfirmados   Boolean   @default(false)
   horasAutoCancelar            Int       @default(4)
   lembreteMinutosAntes         Int       @default(60)  // 0 = desativado; opções: 15, 30, 60, 120, 240, 1440
+  lembretesMinutosAntes        Json?
   exigirConfirmacaoPresenca    Boolean   @default(false)
   configWhatsApp               Json?
   onboardingCompleto   Boolean   @default(false)
@@ -140,7 +141,11 @@ model Tenant {
   numeroDono           String?   // Telefone do dono para a IA enviar quando solicitado
   diferenciais         Json?     // ["sinuca","wifi","tv","estacionamento","cafezinho","cerveja"]
   linkMaps             String?   // Link Google Maps do salão
+  instagramUrl         String?
+  facebookUrl          String?
+  tiktokUrl            String?
   apresentacaoSalaoAtivo Boolean @default(true) // IA apresenta o salão na primeira visita
+  enviarMensagemAoCadastrarCliente Boolean @default(true) // envia WhatsApp automatico ao cadastrar cliente manualmente
 
   // ── Plano contratado pelo cliente (SOLO = 1 profissional, SALAO = equipe) ──
   planoContratado      String    @default("SALAO")  // "SOLO" | "SALAO"
@@ -318,6 +323,7 @@ model Agendamento {
   concluidoEm          DateTime? // Quando o atendimento foi finalizado (status→CONCLUIDO)
   presencaConfirmadaEm DateTime?
   lembreteEnviadoEm    DateTime?
+  lembretesConfiguradosEnviados Json?
   lembrete2hEnviadoEm  DateTime?
   retornoEnviadoEm     DateTime?
   feedbackNota         Int?     // Avaliação do cliente após o serviço (1-5)
@@ -541,6 +547,10 @@ model ConfigFidelidade {
   pontosPerServico Int     @default(1)   // pontos ganhos por atendimento
   pontosParaResgate Int    @default(10)  // pontos necessários para 1 resgate
   descricaoResgate String  @default("1 serviço grátis") // o que ganha ao resgatar
+  aniversarioAtivo Boolean @default(false) // Envia parabéns e cria benefício no aniversário
+  aniversarioBeneficioTipo String @default("CORTE_GRATIS") // CORTE_GRATIS | VALE_PRESENTE
+  aniversarioDescricao String? // Texto customizado do benefício de aniversário
+  aniversarioValorCentavos Int? // Valor do vale-presente, quando aplicável
   ativo           Boolean  @default(true)
   criadoEm        DateTime @default(now())
   atualizadoEm    DateTime @updatedAt

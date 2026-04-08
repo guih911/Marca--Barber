@@ -15,6 +15,12 @@ const OpenAI = require('openai')
 const configIA = require('../../config/ia')
 const banco = require('../../config/banco')
 const whatsappServico = require('./whatsapp.servico')
+const {
+  INTERVALO_CRON_MINUTOS,
+  obterLembretesConfigurados,
+  obterLembretesEnviados,
+  estaNaJanelaDeLembrete,
+} = require('../../utils/lembretes')
 
 // Normaliza telefone para formato E.164 Brasil (ex: 11999999999 → 5511999999999)
 // Retorna null para telefones inválidos ou LIDs do WhatsApp (que não podem receber mensagens diretamente).
@@ -222,23 +228,23 @@ const enviarLembretes = async () => {
     // Busca todos os tenants ativos com WhatsApp configurado
     const tenants = await banco.tenant.findMany({
       where: { ativo: true, configWhatsApp: { not: null } },
-      select: { id: true, nome: true, configWhatsApp: true, timezone: true, tomDeVoz: true, lembreteMinutosAntes: true, membershipsAtivo: true },
+      select: { id: true, nome: true, configWhatsApp: true, timezone: true, tomDeVoz: true, lembreteMinutosAntes: true, lembretesMinutosAntes: true, membershipsAtivo: true },
     })
 
     for (const tenant of tenants) {
       try {
         // ── Ciclo 1: lembrete configurável por tenant ──────────────────────────
-        const minutosAntes = tenant.lembreteMinutosAntes ?? 60
+        const lembretesConfigurados = obterLembretesConfigurados(tenant)
+        const maiorJanela = lembretesConfigurados[0] ?? 0
 
-        if (minutosAntes !== 0) {
-          const fimJanela = new Date(agora.getTime() + minutosAntes * 60 * 1000)
+        if (maiorJanela > 0) {
+          const fimJanela = new Date(agora.getTime() + maiorJanela * 60 * 1000)
 
           const agendamentos = await banco.agendamento.findMany({
             where: {
               tenantId: tenant.id,
               status: { in: ['AGENDADO', 'CONFIRMADO'] },
               inicioEm: { gte: agora, lte: fimJanela },
-              lembreteEnviadoEm: null,
             },
             include: { cliente: true, servico: true, profissional: true },
           })
@@ -247,71 +253,82 @@ const enviarLembretes = async () => {
             const telefoneNorm = normalizarTelefone(ag.cliente?.telefone)
             if (!telefoneNorm) continue
 
-            // Smart skip: agendamento criado depois que a janela já teria começado
-            const inicioJanelaMs = ag.inicioEm.getTime() - minutosAntes * 60 * 1000
-            if (ag.criadoEm.getTime() > inicioJanelaMs) {
-              console.log(`[Lembretes] Smart skip: agendamento ${ag.id} criado dentro da janela — pulando.`)
-              continue
-            }
+            const restanteMinutos = (ag.inicioEm.getTime() - agora.getTime()) / (60 * 1000)
+            const lembretesEnviados = obterLembretesEnviados(ag)
 
-            const tz = tenant.timezone || 'America/Sao_Paulo'
-            const dataFmt = formatarDataInteligente(ag.inicioEm, tz)
-            const maisde24h = (ag.inicioEm.getTime() - agora.getTime()) > 24 * 60 * 60 * 1000
+            for (const minutosAntes of lembretesConfigurados) {
+              if (!estaNaJanelaDeLembrete(restanteMinutos, minutosAntes, INTERVALO_CRON_MINUTOS)) continue
+              if (lembretesEnviados.has(minutosAntes)) continue
 
-            try {
-              let conversa = await banco.conversa.findFirst({
-                where: { tenantId: tenant.id, clienteId: ag.clienteId },
-                orderBy: { atualizadoEm: 'desc' },
-              })
-              if (!conversa) {
-                conversa = await banco.conversa.create({
-                  data: { tenantId: tenant.id, clienteId: ag.clienteId, canal: 'WHATSAPP', status: 'ATIVA' },
+              const inicioJanelaMs = ag.inicioEm.getTime() - minutosAntes * 60 * 1000
+              if (ag.criadoEm.getTime() > inicioJanelaMs) {
+                console.log(`[Lembretes] Smart skip: agendamento ${ag.id} criado depois do marco de ${minutosAntes}min — pulando.`)
+                continue
+              }
+
+              const tz = tenant.timezone || 'America/Sao_Paulo'
+              const dataFmt = formatarDataInteligente(ag.inicioEm, tz)
+              const maisde24h = minutosAntes >= 1440
+
+              try {
+                let conversa = await banco.conversa.findFirst({
+                  where: { tenantId: tenant.id, clienteId: ag.clienteId },
+                  orderBy: { atualizadoEm: 'desc' },
                 })
-              }
+                if (!conversa) {
+                  conversa = await banco.conversa.create({
+                    data: { tenantId: tenant.id, clienteId: ag.clienteId, canal: 'WHATSAPP', status: 'ATIVA' },
+                  })
+                }
 
-              const historicoMensagens = await banco.mensagem.findMany({
-                where: { conversaId: conversa.id },
-                orderBy: { criadoEm: 'asc' },
-              })
+                const historicoMensagens = await banco.mensagem.findMany({
+                  where: { conversaId: conversa.id },
+                  orderBy: { criadoEm: 'asc' },
+                })
 
-              // Toda mensagem gerada pela IA — sem fallback de texto fixo.
-              // Se a IA falhar, o agendamento NÃO é marcado como enviado e será reprocessado.
-              const mensagem = await gerarMensagemLembrete(tenant, ag, historicoMensagens, maisde24h)
-              if (!mensagem) {
-                console.warn(`[Lembretes] IA não gerou mensagem para agendamento ${ag.id} — será reprocessado.`)
-                continue
-              }
+                const mensagem = await gerarMensagemLembrete(tenant, ag, historicoMensagens, maisde24h)
+                if (!mensagem) {
+                  console.warn(`[Lembretes] IA não gerou mensagem para agendamento ${ag.id} — será reprocessado.`)
+                  continue
+                }
 
-              const resultadoEnvio = await whatsappServico.enviarMensagem(
-                tenant.configWhatsApp,
-                telefoneNorm,
-                mensagem,
-                tenant.id
-              )
+                const resultadoEnvio = await whatsappServico.enviarMensagem(
+                  tenant.configWhatsApp,
+                  telefoneNorm,
+                  mensagem,
+                  tenant.id
+                )
 
-              // Check robusto: null OU undefined/false de Baileys sem retorno explícito
-              if (!resultadoEnvio) {
-                console.warn(`[Lembretes] Envio falhou para ${telefoneNorm} — WhatsApp possivelmente desconectado. NÃO marcado como enviado.`)
-                continue
-              }
+                if (!resultadoEnvio) {
+                  console.warn(`[Lembretes] Envio falhou para ${telefoneNorm} — WhatsApp possivelmente desconectado. NÃO marcado como enviado.`)
+                  continue
+                }
 
-              await banco.agendamento.update({ where: { id: ag.id }, data: { lembreteEnviadoEm: new Date() } })
-
-              await banco.mensagem.createMany({
-                data: [
-                  { conversaId: conversa.id, remetente: 'ia', conteudo: mensagem },
-                  {
-                    conversaId: conversa.id,
-                    remetente: 'sistema',
-                    conteudo: `📅 Lembrete enviado para ${ag.cliente.nome?.split(' ')[0] || ag.cliente.nome}: ${ag.servico.nome} com ${ag.profissional.nome?.split(' ')[0] || ag.profissional.nome} em ${dataFmt}`,
+                const enviadosAtualizados = [...lembretesEnviados, minutosAntes].sort((a, b) => b - a)
+                await banco.agendamento.update({
+                  where: { id: ag.id },
+                  data: {
+                    lembreteEnviadoEm: ag.lembreteEnviadoEm || new Date(),
+                    lembretesConfiguradosEnviados: enviadosAtualizados,
                   },
-                ],
-              })
-              await banco.conversa.update({ where: { id: conversa.id }, data: { atualizadoEm: new Date() } })
+                })
 
-              console.log(`[Lembretes] Enviado para ${telefoneNorm} — ${ag.servico.nome} em ${dataFmt} (${minutosAntes}min antes)`)
-            } catch (errEnvio) {
-              console.error(`[Lembretes] Erro ao enviar para ${telefoneNorm}:`, errEnvio.message)
+                await banco.mensagem.createMany({
+                  data: [
+                    { conversaId: conversa.id, remetente: 'ia', conteudo: mensagem },
+                    {
+                      conversaId: conversa.id,
+                      remetente: 'sistema',
+                      conteudo: `📅 Lembrete enviado para ${ag.cliente.nome?.split(' ')[0] || ag.cliente.nome}: ${ag.servico.nome} com ${ag.profissional.nome?.split(' ')[0] || ag.profissional.nome} em ${dataFmt} (${minutosAntes}min antes)`,
+                    },
+                  ],
+                })
+                await banco.conversa.update({ where: { id: conversa.id }, data: { atualizadoEm: new Date() } })
+
+                console.log(`[Lembretes] Enviado para ${telefoneNorm} — ${ag.servico.nome} em ${dataFmt} (${minutosAntes}min antes)`)
+              } catch (errEnvio) {
+                console.error(`[Lembretes] Erro ao enviar para ${telefoneNorm}:`, errEnvio.message)
+              }
             }
           }
         }
@@ -347,7 +364,7 @@ const enviarLembretes = async () => {
           }
 
           // Não envia se o lembrete configurável já vai cobrir o mesmo período (evita mensagem dupla)
-          if ((tenant.lembreteMinutosAntes ?? 60) >= 60) {
+          if (obterLembretesConfigurados(tenant).some((minutos) => minutos >= 60)) {
             console.log(`[Confirmacao1h] Lembrete configurado já cobre 1h antes para ${ag.id} — pulando para evitar duplicata.`)
             continue
           }
