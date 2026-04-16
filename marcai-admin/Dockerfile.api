@@ -12,8 +12,6 @@ RUN npx prisma generate
 
 COPY api/src ./src
 
-RUN mkdir -p .baileys_vendas
-
 EXPOSE 4000
 
 CMD ["sh", "-c", "npx prisma db push --accept-data-loss 2>/dev/null; node src/server.js"]

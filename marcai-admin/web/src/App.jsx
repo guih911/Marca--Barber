@@ -8,7 +8,6 @@ import TenantDetalhe from './pages/TenantDetalhe'
 import SuperAdmins from './pages/SuperAdmins'
 import Sistema from './pages/Sistema'
 import Logs from './pages/Logs'
-import Vendas from './pages/Vendas'
 
 const Protegida = ({ children }) => isLoggedIn() ? children : <Navigate to="/login" />
 
@@ -23,7 +22,6 @@ export default function App() {
         <Route path="admins" element={<SuperAdmins />} />
         <Route path="sistema" element={<Sistema />} />
         <Route path="logs" element={<Logs />} />
-        <Route path="vendas" element={<Vendas />} />
       </Route>
     </Routes>
   )

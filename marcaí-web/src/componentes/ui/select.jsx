@@ -56,8 +56,8 @@ const SelectContent = ({ className, children, position = 'popper', ...props }) =
         className
       )}
       position={position}
-      sideOffset={4}
-      avoidCollisions={false}
+      sideOffset={6}
+      collisionPadding={12}
       {...props}
     >
       <SelectScrollUpButton />

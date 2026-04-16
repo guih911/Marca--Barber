@@ -42,19 +42,25 @@ const enviarBoasVindas = async (tenantId, cliente) => {
   })
   if (!tenant?.enviarMensagemAoCadastrarCliente || !tenant?.configWhatsApp?.provedor || !tenant.slug) return
 
-  const appUrl = process.env.APP_URL || 'https://barber.xn--marca-3sa.com'
-  const nomeIA = tenant.nomeIA || 'Don Barber'
-  const linkAgendamento = `${appUrl}/b/${tenant.slug}`
   const mensagem =
-    `Olá! 👋\n` +
-    `Para melhorar sua experiência, agora a ${tenant.nome} conta com o assistente de IA ${nomeIA} 🤖💈, nosso sistema inteligente de agendamentos.\n\n` +
-    `Você pode garantir seu horário em segundos:\n` +
-    `🔗 Pelo link: ${linkAgendamento}\n` +
-    `💬 Ou falando diretamente comigo aqui\n\n` +
-    `Rápido, prático e sem espera 😉`
+    `💈 ${tenant.nome}\n\n` +
+    `Bem-vindo. Aqui você encontra precisão, estilo e um atendimento diferenciado.\n\n` +
+    `Eu cuido do seu agendamento de forma rápida e personalizada.\n\n` +
+    `O que você deseja agora?`
 
-  const lidJid = cliente.lidWhatsapp ? `${cliente.lidWhatsapp}@lid` : null
-  await whatsappServico.enviarMensagem(tenant.configWhatsApp, cliente.telefone, mensagem, tenantId, lidJid)
+  const payload = {
+    type: 'button',
+    body: { text: mensagem.slice(0, 1024) },
+    action: {
+      buttons: [
+        { type: 'reply', reply: { id: 'AGENDAR', title: 'Agendar corte' } },
+        { type: 'reply', reply: { id: 'VER_HORARIOS', title: 'Horários hoje' } },
+        { type: 'reply', reply: { id: 'VER_SERVICOS', title: 'Serviços' } },
+      ],
+    },
+  }
+
+  await whatsappServico.enviarMensagemInterativa(tenant.configWhatsApp, cliente.telefone, payload, tenantId)
   console.log(`[Clientes] Boas-vindas enviada para ${cliente.telefone} — tenant ${tenantId}`)
 }
 
@@ -147,4 +153,17 @@ const aniversariantes = async (req, res, next) => {
   }
 }
 
-module.exports = { listar, buscarPorId, criar, atualizar, remover, desativar, reativar, aniversariantes }
+const importar = async (req, res, next) => {
+  try {
+    if (!req.file?.buffer?.length) {
+      throw { status: 400, mensagem: 'Selecione um arquivo CSV para importar.', codigo: 'ARQUIVO_OBRIGATORIO' }
+    }
+
+    const resultado = await clientesServico.importarCsv(req.usuario.tenantId, req.file.buffer, { enviarMensagem: false })
+    res.json({ sucesso: true, dados: resultado })
+  } catch (erro) {
+    next(erro)
+  }
+}
+
+module.exports = { listar, buscarPorId, criar, atualizar, remover, desativar, reativar, aniversariantes, importar }

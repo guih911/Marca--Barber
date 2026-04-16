@@ -6,7 +6,6 @@ import {
   Wifi,
   WifiOff,
   Menu,
-  QrCode,
   Loader2,
   Download,
   House,
@@ -40,6 +39,7 @@ const titulos = {
   '/config/ia': 'Configuracao da IA',
   '/config/teste-ia': 'Teste da IA',
   '/operacao/caixa': 'Caixa',
+  '/operacao/entregas': 'Entregas',
   '/operacao/lista-espera': 'Lista de Espera',
   '/operacao/galeria': 'Galeria',
 }
@@ -67,6 +67,7 @@ const subtitulos = {
   '/config/ia': 'Configuracoes de comportamento e personalidade da IA',
   '/config/teste-ia': 'Simule conversas para testar a IA',
   '/operacao/caixa': 'Controle de entradas e saidas financeiras',
+  '/operacao/entregas': 'Pedidos de produtos e acompanhamento das entregas',
   '/operacao/lista-espera': 'Gerencie a fila de espera dos clientes',
   '/operacao/galeria': 'Fotos dos trabalhos realizados',
 }
@@ -85,8 +86,19 @@ const StatusWhatsApp = () => {
   useEffect(() => {
     const verificar = async () => {
       try {
-        const res = await api.post('/api/ia/wwebjs/status')
-        setStatus(res.dados?.status || 'desconectado')
+        const [metaRes, sendzenRes] = await Promise.allSettled([
+          api.get('/api/ia/meta/config'),
+          api.get('/api/ia/sendzen/config'),
+        ])
+
+        const metaConectada = metaRes.status === 'fulfilled' && metaRes.value?.dados?.status?.conectado
+        const sendzenConectada = sendzenRes.status === 'fulfilled' && sendzenRes.value?.dados?.status?.conectado
+
+        if (metaConectada || sendzenConectada) {
+          setStatus('conectado')
+        } else {
+          setStatus('desconectado')
+        }
       } catch {
         setStatus('desconectado')
       }
@@ -106,27 +118,22 @@ const StatusWhatsApp = () => {
     conectado: {
       classe: 'bg-sucesso/10 text-sucesso',
       icone: <Wifi size={13} />,
-      label: 'WhatsApp',
-    },
-    aguardando_qr: {
-      classe: 'bg-alerta/10 text-alerta',
-      icone: <QrCode size={13} />,
-      label: 'Ler QR',
+      label: 'WhatsApp conectado',
     },
     iniciando: {
       classe: 'bg-gray-100 text-texto-sec',
       icone: <Loader2 size={13} className="animate-spin" />,
-      label: 'Conectando',
+      label: 'Aguardando Meta ou Sendzen',
     },
     desconectado: {
       classe: 'bg-perigo/10 text-perigo',
       icone: <WifiOff size={13} />,
-      label: 'Desconectado',
+      label: 'Conectar WhatsApp',
     },
   }
 
   const visual = visualPorStatus[status] || visualPorStatus.desconectado
-  const clicavel = status === 'aguardando_qr' || status === 'desconectado'
+  const clicavel = status === 'desconectado'
 
   return (
     <button

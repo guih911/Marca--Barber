@@ -24,7 +24,7 @@ services:
     networks:
       - soloflow-net
 
-  # ── API (Node.js + Prisma + Baileys) ───────────────────────────────────────
+  # ── API (Node.js + Prisma) ─────────────────────────────────────────────────
   marcai-api:
     build:
       context: ./marcaí-api
@@ -39,7 +39,6 @@ services:
       marcai-postgres:
         condition: service_healthy
     volumes:
-      - marcai_baileys_auth:/app/.baileys_auth
       - marcai_uploads:/app/uploads
     expose:
       - "3001"
@@ -63,10 +62,20 @@ services:
     networks:
       - soloflow-net
 
+  # ── Landing institucional (marcaí.com) ─────────────────────────────────────
+  marcai-landing:
+    build:
+      context: ./marcai-landing
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    expose:
+      - "80"
+    networks:
+      - soloflow-net
+
 # ── Volumes persistentes ─────────────────────────────────────────────────────
 volumes:
   marcai_postgres_data:
-  marcai_baileys_auth:
   marcai_uploads:
 
 # ── Rede externa (compartilhada com SoloFlow) ───────────────────────────────

@@ -7,13 +7,18 @@ const iaControlador = require('./ia.controlador')
 const router = Router()
 
 // Meta Cloud API
+router.get('/meta/config', autenticar, iaControlador.obterConfiguracaoMeta)
+router.post('/meta/embedded-signup/complete', autenticar, iaControlador.concluirEmbeddedSignupMeta)
+router.post('/meta/desconectar', autenticar, iaControlador.desconectarMetaOficial)
+router.get('/sendzen/config', autenticar, iaControlador.obterConfiguracaoSendzen)
+router.post('/sendzen/conectar', autenticar, iaControlador.conectarSendzen)
+router.post('/sendzen/desconectar', autenticar, iaControlador.desconectarSendzen)
+router.get('/webhook/meta', iaControlador.verificarWebhookMeta)
+router.post('/webhook/meta', iaControlador.webhookMeta)
 router.get('/webhook/meta/:tenantId', iaControlador.verificarWebhookMeta)
 router.post('/webhook/meta/:tenantId', iaControlador.webhookMeta)
-
-// WhatsApp web / Baileys
-router.post('/wwebjs/iniciar', autenticar, iaControlador.iniciarWWebJS)
-router.post('/wwebjs/status', autenticar, iaControlador.statusWWebJS)
-router.post('/wwebjs/desconectar', autenticar, iaControlador.desconectarWWebJS)
+router.post('/webhook/sendzen', iaControlador.webhookSendzen)
+router.post('/webhook/sendzen/:tenantId', iaControlador.webhookSendzen)
 
 // Webhook interno
 router.post(
@@ -43,7 +48,6 @@ router.post(
     body('mensagem').notEmpty().withMessage('Mensagem e obrigatoria'),
     body('telefone').optional().isString(),
     body('nome').optional().isString(),
-    body('lidWhatsapp').optional().isString(),
   ],
   validar,
   iaControlador.testeCliente

@@ -182,12 +182,11 @@ const enviarMensagemComLog = async (tenant, ag, mensagem, campoMarca, labelLog) 
 
   const resultadoEnvio = await whatsappServico.enviarMensagem(
     tenant.configWhatsApp,
-    telefoneNorm,
+    telefoneNorm || ag.cliente?.telefone,
     mensagem,
     tenant.id
   )
 
-  // Verifica falha: null (WhatsApp desconectado) OU falsy (undefined/false de Baileys sem retorno explícito)
   if (!resultadoEnvio) {
     console.warn(`[${labelLog}] Envio falhou para ${telefoneNorm} — WhatsApp possivelmente desconectado. NÃO marcado como enviado.`)
     return false
@@ -294,7 +293,7 @@ const enviarLembretes = async () => {
 
                 const resultadoEnvio = await whatsappServico.enviarMensagem(
                   tenant.configWhatsApp,
-                  telefoneNorm,
+                  telefoneNorm || ag.cliente?.telefone,
                   mensagem,
                   tenant.id
                 )
@@ -333,12 +332,18 @@ const enviarLembretes = async () => {
           }
         }
 
-        // ── Ciclo 2: confirmação 1h antes para agendamentos criados com 2h+ de antecedência ──
-        // Regra: se o agendamento foi criado com mais de 2h de antecedência
-        // (independente de origem), envia uma confirmação 1h antes do horário.
-        // Usa lembrete2hEnviadoEm para controle de envio único.
+        // ── Ciclo 2: confirmação 1h antes para tenants SEM lembretes configurados ──
+        // Regra de negócio: se o barbeiro configurou lembretes no painel,
+        // o sistema deve respeitar EXATAMENTE essa quantidade e essa janela.
+        // Portanto, este ciclo extra só roda quando não há nenhum lembrete configurado.
         const JANELA_CONFIRMACAO_MS = 60 * 60 * 1000        // 1h antes do horário
         const ANTECEDENCIA_MINIMA_MS = 2 * 60 * 60 * 1000   // criado com 2h+ de antecedência
+
+        const lembretesConfiguradosTenant = obterLembretesConfigurados(tenant)
+        if (lembretesConfiguradosTenant.length > 0) {
+          console.log(`[Confirmacao1h] Tenant ${tenant.id} possui lembretes configurados (${lembretesConfiguradosTenant.join(', ')} min) — ciclo extra desativado.`)
+          continue
+        }
 
         const fimJanela1h = new Date(agora.getTime() + JANELA_CONFIRMACAO_MS)
 
@@ -360,12 +365,6 @@ const enviarLembretes = async () => {
           const antecedenciaMs = ag.inicioEm.getTime() - ag.criadoEm.getTime()
           if (antecedenciaMs <= ANTECEDENCIA_MINIMA_MS) {
             console.log(`[Confirmacao1h] Agendamento ${ag.id} criado com menos de 2h de antecedência — pulando.`)
-            continue
-          }
-
-          // Não envia se o lembrete configurável já vai cobrir o mesmo período (evita mensagem dupla)
-          if (obterLembretesConfigurados(tenant).some((minutos) => minutos >= 60)) {
-            console.log(`[Confirmacao1h] Lembrete configurado já cobre 1h antes para ${ag.id} — pulando para evitar duplicata.`)
             continue
           }
 
@@ -466,18 +465,18 @@ const enviarLembretes = async () => {
 }
 
 /**
- * Inicia o cron de lembretes (roda a cada 15 minutos).
+ * Inicia o cron de lembretes (roda a cada 1 minuto).
  */
 const iniciarCronLembretes = () => {
-  const INTERVALO_MS = 15 * 60 * 1000 // 15 minutos
+  const INTERVALO_MS = INTERVALO_CRON_MINUTOS * 60 * 1000
 
-  // Primeira execução após 1 minuto do startup (evita pico na inicialização)
+  // Primeira execução poucos segundos após o startup para não segurar o primeiro ciclo.
   setTimeout(() => {
     enviarLembretes()
     setInterval(enviarLembretes, INTERVALO_MS)
-  }, 60 * 1000)
+  }, 5 * 1000)
 
-  console.log('[Lembretes] Cron de lembretes iniciado (intervalo: 15min)')
+  console.log(`[Lembretes] Cron de lembretes iniciado (intervalo: ${INTERVALO_CRON_MINUTOS}min)`)
 }
 
 module.exports = { iniciarCronLembretes, enviarLembretes }

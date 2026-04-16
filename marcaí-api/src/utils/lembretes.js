@@ -1,4 +1,4 @@
-const INTERVALO_CRON_MINUTOS = 15
+const INTERVALO_CRON_MINUTOS = 1
 
 const normalizarListaMinutos = (valor) => {
   const lista = Array.isArray(valor) ? valor : []

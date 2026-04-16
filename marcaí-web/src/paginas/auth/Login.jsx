@@ -145,6 +145,16 @@ const Login = () => {
           </svg>
           Entrar com Google
         </a>
+
+        <a
+          href={`${apiUrl}/api/auth/facebook`}
+          className="w-full border border-borda hover:bg-gray-50 text-texto font-medium py-2.5 px-4 rounded-lg transition-colors flex items-center justify-center gap-3"
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
+            <path fill="#1877F2" d="M24 12.073C24 5.405 18.627 0 12 0S0 5.405 0 12.073c0 6.027 4.388 11.023 10.125 11.927v-8.437H7.078v-3.49h3.047V9.413c0-3.03 1.792-4.704 4.533-4.704 1.313 0 2.686.236 2.686.236v2.972h-1.514c-1.49 0-1.955.931-1.955 1.887v2.27h3.328l-.532 3.49h-2.796V24C19.612 23.096 24 18.1 24 12.073z" />
+          </svg>
+          Entrar com Facebook
+        </a>
       </form>
 
       <p className="text-center text-sm text-texto-sec mt-8">

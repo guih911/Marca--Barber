@@ -10,95 +10,17 @@ const configIA = require('../../config/ia')
 
 const openaiAgendamentos = new OpenAI({ apiKey: configIA.apiKey, baseURL: configIA.baseURL })
 
-// Envia mensagem pós-visita para cliente de walk-in (melhor esforço)
+const { processarEvento } = require('../ia/messageOrchestrator')
+
 const notificarClienteWalkIn = async (tenantId, ag) => {
-  try {
-    const tenant = await banco.tenant.findUnique({ where: { id: tenantId } })
-    if (!tenant?.configWhatsApp || !ag.cliente?.telefone) return
-
-    const appUrl = process.env.APP_URL || 'https://app.marcai.com.br'
-    const linkSlug = tenant.hashPublico || tenant.slug
-    const linkAg = `${appUrl}/b/${linkSlug}`
-
-    const primeiroNome = ag.cliente.nome?.split(' ')[0] || null
-    const saudacao = primeiroNome ? `Fala, ${primeiroNome}! 👋` : `Fala! 👋`
-    const NOME_IA = 'Don'
-
-    const mensagem =
-      `${saudacao}\n` +
-      `Aqui é o ${NOME_IA}, assistente virtual da ${tenant.nome} 💈\n\n` +
-      `Valeu pela visita hoje — esperamos que tenha saído na régua ✂️🔥\n\n` +
-      `Na próxima, você pode garantir seu horário com antecedência e sem espera:\n` +
-      `🗓️ ${linkAg}\n\n` +
-      `Me chama aqui que eu cuido do seu agendamento rapidinho.\n\n` +
-      `Te aguardamos! 💈`
-
-    const telNorm = ag.cliente.telefone.replace(/\D/g, '')
-    const telEnvio = telNorm.startsWith('55') && telNorm.length >= 12 ? telNorm : `55${telNorm}`
-    await whatsappServico.enviarMensagem(tenant.configWhatsApp, telEnvio, mensagem, tenantId)
-    console.log(`[Walk-in] Mensagem pós-visita enviada para ${ag.cliente.telefone}`)
-  } catch (err) {
-    console.warn(`[Walk-in] Falha ao enviar mensagem pós-visita (sem impacto):`, err.message)
+  if (ag?.cliente) {
+    processarEvento({ evento: 'WALK_IN', agendamento: ag, tenantId, cliente: ag.cliente })
   }
 }
 
-// Envia confirmação WhatsApp ao cliente (melhor esforço — não falha o agendamento)
-// IMPORTANTE: Salva na conversa SEMPRE (mesmo se WhatsApp falhar) para manter histórico
 const notificarClienteConfirmacao = async (tenantId, ag) => {
-  try {
-    const tenant = await banco.tenant.findUnique({ where: { id: tenantId } })
-    if (!ag.cliente?.telefone) return
-
-    const tz = tenant?.timezone || 'America/Sao_Paulo'
-    const dt = new Date(ag.inicioEm)
-    const dataFmt = dt.toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long', timeZone: tz })
-    const horaFmt = dt.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: tz })
-    const primeiroNome = ag.cliente.nome?.split(' ')[0] || null
-    const saudacao = primeiroNome ? `Olá, ${primeiroNome}! 👋` : `Olá! 👋`
-
-    const appUrl = process.env.APP_URL || 'https://app.marcai.com.br'
-    const linkAg = `${appUrl}/b/${tenant?.hashPublico || tenant?.slug || 'agendar'}`
-
-    const mensagem =
-      `${saudacao}\n\n` +
-      `Aqui é o Don, assistente virtual da ${tenant?.nome || 'barbearia'} 💈\n\n` +
-      `Seu horário foi agendado com sucesso ✅\n\n` +
-      `📅 ${dataFmt} às ${horaFmt}\n\n` +
-      `Para os próximos agendamentos, você também pode escolher seu horário direto pelo sistema:\n` +
-      `🗓️ ${linkAg}`
-
-    // CRÍTICO: Salva na conversa SEMPRE (independente do WhatsApp funcionar)
-    try {
-      const conversasServico = require('../conversas/conversas.servico')
-      const conversa = await conversasServico.buscarOuCriarConversa(tenantId, ag.clienteId, 'WHATSAPP')
-      await banco.mensagem.createMany({
-        data: [
-          { conversaId: conversa.id, remetente: 'ia', conteudo: mensagem },
-          {
-            conversaId: conversa.id, remetente: 'sistema',
-            conteudo: `📅 Agendamento criado pelo painel — ${ag.servico?.nome || 'serviço'} em ${dataFmt} às ${horaFmt}`,
-          },
-        ],
-      })
-      await banco.conversa.update({ where: { id: conversa.id }, data: { atualizadoEm: new Date() } })
-    } catch (errConversa) {
-      console.warn('[Confirmação] Erro ao salvar na conversa:', errConversa.message)
-    }
-
-    // Tenta enviar via WhatsApp (não bloqueia se falhar)
-    if (tenant?.configWhatsApp) {
-      try {
-        const telNorm = ag.cliente.telefone.replace(/\D/g, '')
-        const telEnvio = telNorm.startsWith('55') && telNorm.length >= 12 ? telNorm : `55${telNorm}`
-        const lidJid = ag.cliente.lidWhatsapp ? `${ag.cliente.lidWhatsapp}@lid` : null
-        await whatsappServico.enviarMensagem(tenant.configWhatsApp, telEnvio, mensagem, tenantId, lidJid)
-        console.log(`[Confirmação] WhatsApp enviado para ${ag.cliente.telefone} — ${ag.servico?.nome}`)
-      } catch (errWpp) {
-        console.warn(`[Confirmação] Falha ao enviar WhatsApp (mensagem salva na conversa): ${errWpp.message}`)
-      }
-    }
-  } catch (err) {
-    console.error(`[Confirmação] Falha geral para ${ag.cliente?.telefone}:`, err.message)
+  if (ag?.cliente) {
+    processarEvento({ evento: 'CONFIRMAR', agendamento: ag, tenantId, cliente: ag.cliente })
   }
 }
 
@@ -315,9 +237,10 @@ const criar = async (tenantId, dados) => {
   const duracao = profServico?.duracaoCustom || servico.duracaoMinutos
   const inicioEm = new Date(dados.inicio)
   const fimEm = adicionarMinutos(inicioEm, duracao)
+  const toleranciaPassadoMs = dados.walkin ? 5 * 60 * 1000 : 0
 
   // CRÍTICO: Não permite agendamento no passado
-  if (inicioEm < new Date()) {
+  if (inicioEm.getTime() < (Date.now() - toleranciaPassadoMs)) {
     throw { status: 422, mensagem: 'Não é possível agendar no passado.', codigo: 'HORARIO_PASSADO' }
   }
 
@@ -407,6 +330,7 @@ const criar = async (tenantId, dados) => {
       profissionalId: dados.profissionalId,
       duracaoMinutos: duracao,
       inicioEm,
+      ignorarAntecedenciaMinima: Boolean(dados.walkin),
     })
 
     // Walk-in também verifica conflito — cliente presencialmente não justifica dupla agenda
@@ -659,6 +583,10 @@ const cancelar = async (tenantId, id, motivo, { origem = 'CLIENTE' } = {}) => {
     data: { status: 'CANCELADO', canceladoEm: new Date(), motivoCancelamento: motivo || null },
     include: incluirRelacoes,
   })
+  
+  if (agCancelado?.cliente) {
+    processarEvento({ evento: 'CANCELAR', agendamento: agCancelado, tenantId, cliente: agCancelado.cliente, origemViaPainel: origem === 'DASHBOARD' })
+  }
 
   // Notifica fila de espera (melhor esforço — não falha o cancelamento se der erro)
   filaEsperaServico.notificarFilaParaSlot(tenantId, {
@@ -779,6 +707,11 @@ const remarcar = async (tenantId, id, novoInicio) => {
       },
       include: incluirRelacoes,
     })
+  }).then((agRemarcado) => {
+    if (agRemarcado?.cliente) {
+      processarEvento({ evento: 'REMARCAR', agendamento: agRemarcado, tenantId, cliente: agRemarcado.cliente })
+    }
+    return agRemarcado
   })
 }
 
@@ -867,6 +800,10 @@ const concluir = async (tenantId, id, formaPagamento) => {
       processarCobrancaPlanoNaVisita(tenantId, agendamento, tenant)
         .catch((err) => console.warn('[PlanoMensal] Falha ao processar cobrança (sem impacto na conclusão):', err.message))
     }
+  }
+
+  if (!resultado.jaConcluido && agendamento?.cliente) {
+    processarEvento({ evento: 'CONCLUIR', agendamento, tenantId, cliente: agendamento.cliente })
   }
 
   return agendamento

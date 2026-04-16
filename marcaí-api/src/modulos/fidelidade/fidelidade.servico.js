@@ -90,13 +90,24 @@ const obterConfig = async (tenantId) => {
   return normalizarConfigFidelidade(config)
 }
 
-const verificarRecurso = async (tenantId) => {
-  const tenant = await banco.tenant.findUnique({ where: { id: tenantId }, select: { fidelidadeAtivo: true } })
+const verificarRecurso = async (tenantId, modo = 'fidelidade') => {
+  const tenant = await banco.tenant.findUnique({
+    where: { id: tenantId },
+    select: { fidelidadeAtivo: true, aniversarianteAtivo: true },
+  })
+
+  if (modo === 'fidelidade_ou_aniversario') {
+    if (!tenant?.fidelidadeAtivo && !tenant?.aniversarianteAtivo) {
+      throw { status: 403, mensagem: 'Fidelidade ou aniversariante não estão ativos', codigo: 'RECURSO_INATIVO' }
+    }
+    return
+  }
+
   if (!tenant?.fidelidadeAtivo) throw { status: 403, mensagem: 'Módulo Fidelidade não está ativo', codigo: 'RECURSO_INATIVO' }
 }
 
 const salvarConfig = async (tenantId, dados) => {
-  await verificarRecurso(tenantId)
+  await verificarRecurso(tenantId, 'fidelidade_ou_aniversario')
   const campos = {}
   if (dados.pontosPerServico !== undefined) campos.pontosPerServico = Number(dados.pontosPerServico)
   if (dados.pontosParaResgate !== undefined) campos.pontosParaResgate = Number(dados.pontosParaResgate)

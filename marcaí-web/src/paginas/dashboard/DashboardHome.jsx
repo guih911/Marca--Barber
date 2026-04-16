@@ -307,10 +307,10 @@ const DashboardHome = () => {
           cor: 'bg-emerald-500',
         }
       : null,
-    tenant?.fidelidadeAtivo
+    (tenant?.fidelidadeAtivo || tenant?.aniversarianteAtivo)
       ? {
-          titulo: 'Fidelidade',
-          subtitulo: 'Resgates e retenção de clientes',
+          titulo: tenant?.fidelidadeAtivo ? 'Fidelidade' : 'Aniversário',
+          subtitulo: tenant?.fidelidadeAtivo ? 'Resgates, retenção e benefício de aniversário' : 'Parabéns automático e benefício de aniversário',
           rota: '/operacao/fidelidade',
           icone: Gift,
           cor: 'bg-orange-500',

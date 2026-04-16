@@ -49,22 +49,22 @@ const detectar = (msg) => {
 const respostaDireta = (intencao, { tenant } = {}) => {
   switch (intencao) {
     case 'AUDIO':
-      return { resposta: 'Recebi seu áudio, mas não consegui transcrever por aqui. Se puder, me manda em texto que eu continuo na hora.', pular: true }
+      return { resposta: 'Recebi seu áudio, mas não consegui transcrever por aqui. Se puder, me manda em texto que eu sigo com você na hora.', pular: true }
     case 'FIGURINHA':
-      return { resposta: 'Boa! Posso te ajudar com alguma coisa? 😄', pular: true }
+      return { resposta: 'Boa. Se quiser, já me diz o que você precisa por aqui.', pular: true }
     case 'DOCUMENTO':
-      return { resposta: 'Recebi o arquivo, mas nao consigo abrir aqui. Se precisar, e so digitar!', pular: true }
+      return { resposta: 'Recebi o arquivo, mas não consigo abrir por aqui. Se quiser, me resume em texto que eu sigo com você.', pular: true }
     case 'OFENSA':
-      return { resposta: 'Posso ajudar com seu agendamento, remarcação ou dúvidas da barbearia.', pular: true }
+      return { resposta: 'Consigo te ajudar com horário, remarcação ou dúvidas da barbearia.', pular: true }
     case 'RECLAMACAO':
       return { resposta: 'Que pena ouvir isso. Vou te conectar com a equipe agora.', tool: 'escalonarParaHumano', pular: true }
     case 'HUMANO':
-      return { resposta: 'Claro, vou te passar pra equipe.', tool: 'escalonarParaHumano', pular: true }
+      return { resposta: 'Claro. Vou te passar pra equipe agora.', tool: 'escalonarParaHumano', pular: true }
 
     case 'LOCALIZACAO': {
       if (tenant?.endereco) {
         const maps = tenant.linkMaps ? `\nMapa: ${tenant.linkMaps}` : ''
-        return { resposta: `Fica em ${tenant.endereco}! 📍${maps}\n\nPosso te ajudar com agendamento? 💈`, pular: true }
+        return { resposta: `Estamos em ${tenant.endereco}.${maps}\nSe quiser, eu já vejo um horário pra você.`, pular: true }
       }
       return null
     }
@@ -74,7 +74,7 @@ const respostaDireta = (intencao, { tenant } = {}) => {
       if (tipos?.length) {
         const map = { PIX: 'PIX', DINHEIRO: 'dinheiro', CARTAO_CREDITO: 'cartao de credito', CARTAO_DEBITO: 'cartao de debito' }
         const lista = tipos.map(t => map[t] || t).join(', ')
-        return { resposta: `Aceitamos ${lista}! 👍\n\nVai ser corte, barba ou os dois?`, pular: true }
+        return { resposta: `Aceitamos ${lista}. Vai ser corte, barba ou os dois?`, pular: true }
       }
       return null
     }

@@ -1,13 +1,19 @@
 const { Router } = require('express')
 const { body } = require('express-validator')
 const passport = require('passport')
-const { google } = require('../../config/auth')
+const { google, facebook } = require('../../config/auth')
 const { autenticar } = require('../../middlewares/autenticacao')
 const authControlador = require('./auth.controlador')
 const authServico = require('./auth.servico')
 const { validar } = require('../../middlewares/validacao')
 
 const router = Router()
+const oauthIndisponivel = (_req, res) => {
+  res.status(503).json({
+    sucesso: false,
+    erro: { mensagem: 'Login social não configurado no servidor.', codigo: 'OAUTH_NAO_CONFIGURADO' },
+  })
+}
 
 // Configura estratégia Google OAuth somente se as credenciais estiverem presentes
 if (google.clientID && google.clientSecret) {
@@ -26,6 +32,33 @@ if (google.clientID && google.clientSecret) {
             email: profile.emails[0].value,
             nome: profile.displayName,
             avatarUrl: profile.photos[0]?.value,
+          })
+          done(null, resultado)
+        } catch (erro) {
+          done(erro, null)
+        }
+      }
+    )
+  )
+}
+
+if (facebook.appID && facebook.appSecret) {
+  const FacebookStrategy = require('passport-facebook').Strategy
+  passport.use(
+    new FacebookStrategy(
+      {
+        clientID: facebook.appID,
+        clientSecret: facebook.appSecret,
+        callbackURL: facebook.callbackURL,
+        profileFields: ['id', 'displayName', 'photos', 'email'],
+      },
+      async (accessToken, refreshToken, profile, done) => {
+        try {
+          const resultado = await authServico.loginOuCadastrarFacebook({
+            facebookId: profile.id,
+            email: profile.emails?.[0]?.value || null,
+            nome: profile.displayName || 'Usuário Facebook',
+            avatarUrl: profile.photos?.[0]?.value || null,
           })
           done(null, resultado)
         } catch (erro) {
@@ -69,15 +102,29 @@ router.post(
 
 router.get('/me', autenticar, authControlador.meuPerfil)
 
-// GET /api/auth/google
-router.get('/google', passport.authenticate('google', { scope: ['profile', 'email'], session: false }))
+if (google.clientID && google.clientSecret) {
+  router.get('/google', passport.authenticate('google', { scope: ['profile', 'email'], session: false }))
+  router.get(
+    '/google/callback',
+    passport.authenticate('google', { session: false, failureRedirect: '/login' }),
+    authControlador.googleCallback
+  )
+} else {
+  router.get('/google', oauthIndisponivel)
+  router.get('/google/callback', oauthIndisponivel)
+}
 
-// GET /api/auth/google/callback
-router.get(
-  '/google/callback',
-  passport.authenticate('google', { session: false, failureRedirect: '/login' }),
-  authControlador.googleCallback
-)
+if (facebook.appID && facebook.appSecret) {
+  router.get('/facebook', passport.authenticate('facebook', { scope: ['email'], session: false }))
+  router.get(
+    '/facebook/callback',
+    passport.authenticate('facebook', { session: false, failureRedirect: '/login' }),
+    authControlador.facebookCallback
+  )
+} else {
+  router.get('/facebook', oauthIndisponivel)
+  router.get('/facebook/callback', oauthIndisponivel)
+}
 
 // POST /api/auth/recuperar-senha
 router.post(

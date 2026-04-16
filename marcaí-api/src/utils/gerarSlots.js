@@ -185,7 +185,7 @@ const gerarSlots = async (profissionalId, duracaoMinutos, dataStr, db = banco, s
  * @param {object} db - Prisma client (banco ou tx)
  * @param {{ profissionalId: string, duracaoMinutos: number, inicioEm: Date|string, agendamentoExcluidoId?: string }} params
  */
-const validarJanelaTempo = async (db, { profissionalId, duracaoMinutos, inicioEm, agendamentoExcluidoId }) => {
+const validarJanelaTempo = async (db, { profissionalId, duracaoMinutos, inicioEm, agendamentoExcluidoId, ignorarAntecedenciaMinima = false }) => {
   const profissional = await db.profissional.findUnique({
     where: { id: profissionalId },
     include: { bloqueios: true, tenant: { select: { timezone: true } } },
@@ -233,7 +233,7 @@ const validarJanelaTempo = async (db, { profissionalId, duracaoMinutos, inicioEm
   // Antecedência mínima
   const agora = new Date()
   const inicioMinimoPermitido = obterInicioMinimoPermitido(agora, buffer)
-  if (slotInicio < inicioMinimoPermitido) {
+  if (!ignorarAntecedenciaMinima && slotInicio < inicioMinimoPermitido) {
     throw {
       status: 422,
       mensagem: 'Horário com antecedência insuficiente. Agende com pelo menos 1 hora de antecedência.',

@@ -4,6 +4,27 @@ const { logClienteTrace, resumirCliente } = require('../../utils/clienteTrace')
 const normalizarTelefone = (telefone = '') => String(telefone || '').replace(/\D/g, '')
 const erroTemCampoLidWhatsapp = (erro) => String(erro?.message || erro || '').includes('lidWhatsapp')
 const nomePareceTelefone = (nome = '') => /^\+?\d[\d\s()\-]{5,}$/.test(String(nome || '').trim())
+const CABECALHOS_IMPORTACAO = {
+  nome: 'nome',
+  telefone: 'telefone',
+  celular: 'telefone',
+  whatsapp: 'telefone',
+  numero: 'telefone',
+  email: 'email',
+  notas: 'notas',
+  observacoes: 'notas',
+  observacao: 'notas',
+  tipo_corte: 'tipoCortePreferido',
+  tipo_corte_preferido: 'tipoCortePreferido',
+  corte: 'tipoCortePreferido',
+  preferencias: 'preferencias',
+  preferência: 'preferencias',
+  preferencia: 'preferencias',
+  data_nascimento: 'dataNascimento',
+  nascimento: 'dataNascimento',
+  instagram: 'instagram',
+  tags: 'tags',
+}
 
 const adicionarVarianteTelefone = (variantes, telefone = '') => {
   const digitos = normalizarTelefone(telefone)
@@ -120,6 +141,84 @@ const normalizarTelefoneReal = (telefone) => {
   return telefone
 }
 
+const normalizarCabecalhoImportacao = (valor = '') =>
+  String(valor || '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, '_')
+
+const parseCsv = (conteudo) => {
+  const linhas = []
+  let atual = ''
+  let linha = []
+  let entreAspas = false
+
+  for (let i = 0; i < conteudo.length; i += 1) {
+    const char = conteudo[i]
+    const proximo = conteudo[i + 1]
+
+    if (char === '"') {
+      if (entreAspas && proximo === '"') {
+        atual += '"'
+        i += 1
+      } else {
+        entreAspas = !entreAspas
+      }
+      continue
+    }
+
+    if (!entreAspas && (char === ',' || char === ';' || char === '\t')) {
+      linha.push(atual.trim())
+      atual = ''
+      continue
+    }
+
+    if (!entreAspas && (char === '\n' || char === '\r')) {
+      if (char === '\r' && proximo === '\n') i += 1
+      linha.push(atual.trim())
+      atual = ''
+      if (linha.some((coluna) => coluna !== '')) linhas.push(linha)
+      linha = []
+      continue
+    }
+
+    atual += char
+  }
+
+  linha.push(atual.trim())
+  if (linha.some((coluna) => coluna !== '')) linhas.push(linha)
+  return linhas
+}
+
+const parseDataImportacao = (valor) => {
+  const texto = String(valor || '').trim()
+  if (!texto) return null
+  if (/^\d{4}-\d{2}-\d{2}$/.test(texto)) return texto
+
+  const matchBr = texto.match(/^(\d{2})\/(\d{2})\/(\d{4})$/)
+  if (matchBr) return `${matchBr[3]}-${matchBr[2]}-${matchBr[1]}`
+
+  const data = new Date(texto)
+  if (Number.isNaN(data.getTime())) return null
+  return data.toISOString().slice(0, 10)
+}
+
+const parseTagsImportacao = (valor) =>
+  String(valor || '')
+    .split(/[|,;]/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+
+const gerarChaveDuplicidadeImportacao = (telefone = '') => {
+  const numero = normalizarTelefone(telefone)
+  if (!numero) return ''
+  if (numero.startsWith('55')) return numero
+  if (numero.length >= 10 && numero.length <= 11) return `55${numero}`
+  return numero
+}
+
 const buscarResumoPorTelefone = async (tenantId, telefone) => {
   const telefoneNorm = normalizarTelefoneReal(telefone) || telefone
   const variantes = gerarVariantesTelefone(telefoneNorm)
@@ -184,7 +283,7 @@ const buscarPorTelefone = async (tenantId, telefone) => {
   if (cliente) return cliente
 
   // CRÍTICO: Se não encontrou, busca também por telefone salvo como LID
-  // Isso resolve o caso onde o Baileys salvou o LID como telefone
+  // Isso resolve o caso onde integrações legadas salvaram o LID como telefone
   // e agora estamos recebendo o telefone real
   if (variantes.length > 0) {
     // Extrai apenas os dígitos do telefone para buscar em telefones que podem ser LIDs mal formatados
@@ -251,21 +350,118 @@ const criar = async (tenantId, dados) => {
       notas: dados.notas || null,
       tipoCortePreferido: dados.tipoCortePreferido || null,
       preferencias: dados.preferencias || null,
+      dataNascimento: dados.dataNascimento ? new Date(dados.dataNascimento) : null,
+      instagram: dados.instagram || null,
+      tags: Array.isArray(dados.tags) ? dados.tags : [],
     },
   })
 }
 
-const buscarOuCriarPorTelefone = async (tenantId, telefone, nome, lidWhatsapp) => {
+const importarCsv = async (tenantId, buffer, opcoes = {}) => {
+  const { enviarMensagem = false } = opcoes
+  const conteudo = buffer.toString('utf-8').replace(/^\uFEFF/, '')
+  const linhas = parseCsv(conteudo)
+
+  if (linhas.length < 2) {
+    throw { status: 400, mensagem: 'A planilha precisa ter cabeçalho e pelo menos uma linha.', codigo: 'CSV_INVALIDO' }
+  }
+
+  const cabecalhos = linhas[0].map((coluna) => CABECALHOS_IMPORTACAO[normalizarCabecalhoImportacao(coluna)] || null)
+  if (!cabecalhos.includes('nome') || !cabecalhos.includes('telefone')) {
+    throw { status: 400, mensagem: 'O CSV precisa ter as colunas nome e telefone.', codigo: 'CSV_SEM_COLUNAS_OBRIGATORIAS' }
+  }
+
+  const resumo = {
+    totalLinhas: Math.max(linhas.length - 1, 0),
+    criados: 0,
+    atualizados: 0,
+    ignorados: 0,
+    duplicadosNaPlanilha: 0,
+    mensagensEnviadas: 0,
+    envioWhatsAppAtivo: Boolean(enviarMensagem),
+    erros: [],
+  }
+  const telefonesProcessados = new Set()
+
+  for (let index = 1; index < linhas.length; index += 1) {
+    const linha = linhas[index]
+    const bruto = {}
+    cabecalhos.forEach((campo, colunaIndex) => {
+      if (!campo) return
+      bruto[campo] = linha[colunaIndex] ?? ''
+    })
+
+    const nome = String(bruto.nome || '').trim()
+    const telefoneOriginal = String(bruto.telefone || '').trim()
+    const telefone = normalizarTelefoneReal(telefoneOriginal) || telefoneOriginal
+    const chaveDuplicidade = gerarChaveDuplicidadeImportacao(telefone)
+
+    if (!nome || !telefone) {
+      resumo.ignorados += 1
+      resumo.erros.push(`Linha ${index + 1}: nome e telefone são obrigatórios.`)
+      continue
+    }
+
+    if (!chaveDuplicidade || normalizarTelefone(chaveDuplicidade).length < 12) {
+      resumo.ignorados += 1
+      resumo.erros.push(`Linha ${index + 1}: telefone inválido para importação.`)
+      continue
+    }
+
+    if (telefonesProcessados.has(chaveDuplicidade)) {
+      resumo.ignorados += 1
+      resumo.duplicadosNaPlanilha += 1
+      resumo.erros.push(`Linha ${index + 1}: telefone duplicado na própria planilha.`)
+      continue
+    }
+    telefonesProcessados.add(chaveDuplicidade)
+
+    try {
+      const existente = await buscarPorTelefone(tenantId, telefone)
+      const payload = {
+        nome,
+        telefone,
+        email: String(bruto.email || '').trim() || null,
+        notas: String(bruto.notas || '').trim() || null,
+        tipoCortePreferido: String(bruto.tipoCortePreferido || '').trim() || null,
+        preferencias: String(bruto.preferencias || '').trim() || null,
+        instagram: String(bruto.instagram || '').trim() || null,
+        dataNascimento: parseDataImportacao(bruto.dataNascimento),
+        tags: parseTagsImportacao(bruto.tags),
+      }
+
+      if (existente) {
+        await atualizar(tenantId, existente.id, payload)
+        resumo.atualizados += 1
+      } else {
+        await criar(tenantId, payload)
+        resumo.criados += 1
+      }
+    } catch (erro) {
+      resumo.ignorados += 1
+      resumo.erros.push(`Linha ${index + 1}: ${erro?.mensagem || erro?.message || 'erro ao importar cliente'}`)
+    }
+  }
+
+  return resumo
+}
+
+const buscarOuCriarPorTelefone = async (tenantId, telefone, nome, lidWhatsapp, opcoes = {}) => {
   const telefoneNorm = normalizarTelefoneReal(telefone) || telefone
   const lidNorm = lidWhatsapp ? normalizarTelefone(lidWhatsapp) : null
-  const nomeLimpo = String(nome || '').trim()
+  const nomeRecebido = String(nome || '').trim()
+  const confiarNome = opcoes?.confiarNome !== false
+  const usarNomeParaMerge = opcoes?.usarNomeParaMerge !== false
+  const nomeLimpo = confiarNome ? nomeRecebido : ''
+  const nomeParaMerge = usarNomeParaMerge ? nomeRecebido : nomeLimpo
   let cliente = null
 
   logClienteTrace('buscar_ou_criar_inicio', {
     tenantId,
     telefoneRecebido: telefone,
     telefoneNormalizado: telefoneNorm,
-    nomeRecebido: nomeLimpo || null,
+    nomeRecebido: nomeRecebido || null,
+    nomeConfiavel: nomeLimpo || null,
     lidWhatsappRecebido: lidNorm,
     telefonePareceLid: ehLid(telefoneNorm),
   })
@@ -301,8 +497,8 @@ const buscarOuCriarPorTelefone = async (tenantId, telefone, nome, lidWhatsapp) =
 
   // CRÍTICO: Tenta encontrar cliente com LID ou telefone estranho pelo nome
   // Isso resolve o caso do cliente que veio pelo WhatsApp (salvou com LID) e depois agenda pelo link (telefone real)
-  if (!cliente && nomeLimpo && !ehLid(telefoneNorm)) {
-    const primeiroNome = nomeLimpo.split(/\s+/)[0].toLowerCase()
+  if (!cliente && nomeParaMerge && !ehLid(telefoneNorm)) {
+    const primeiroNome = nomeParaMerge.split(/\s+/)[0].toLowerCase()
 
     // Busca cliente por nome que tenha:
     // 1. Telefone em formato de LID (não começa com 55, mais de 13 dígitos)
@@ -334,7 +530,7 @@ const buscarOuCriarPorTelefone = async (tenantId, telefone, nome, lidWhatsapp) =
       if (clienteComTelefoneReal && clienteComTelefoneReal.id !== clienteComLid.id) {
         logClienteTrace('merge_bloqueado_telefone_ja_existe', {
           tenantId,
-          nomeRecebido: nomeLimpo,
+          nomeRecebido: nomeParaMerge,
           telefoneNormalizado: telefoneNorm,
           clienteComLid: resumirCliente(clienteComLid),
           clienteComTelefone: resumirCliente(clienteComTelefoneReal),
@@ -345,7 +541,7 @@ const buscarOuCriarPorTelefone = async (tenantId, telefone, nome, lidWhatsapp) =
       } else {
         logClienteTrace('merge_por_nome_em_cliente_lid', {
           tenantId,
-          nomeRecebido: nomeLimpo,
+          nomeRecebido: nomeParaMerge,
           telefoneNormalizado: telefoneNorm,
           clienteComLid: resumirCliente(clienteComLid),
           motivo: ehLid(clienteComLid.telefone) ? 'telefone_eh_lid' : 'tem_lidWhatsapp_sem_telefone_real',
@@ -388,7 +584,7 @@ const buscarOuCriarPorTelefone = async (tenantId, telefone, nome, lidWhatsapp) =
       if (clienteOrfao && ehLid(clienteOrfao.telefone)) {
         logClienteTrace('merge_cliente_orfao_com_lid', {
           tenantId,
-          nomeRecebido: nomeLimpo,
+          nomeRecebido: nomeParaMerge,
           telefoneNormalizado: telefoneNorm,
           clienteOrfao: resumirCliente(clienteOrfao),
         })
@@ -408,8 +604,8 @@ const buscarOuCriarPorTelefone = async (tenantId, telefone, nome, lidWhatsapp) =
   }
 
   // Quando o telefone é LID, tenta encontrar cliente real pelo nome antes de criar
-  if (!cliente && ehLid(telefoneNorm) && nomeLimpo) {
-    const primeiroNome = nomeLimpo.split(/\s+/)[0].toLowerCase()
+  if (!cliente && ehLid(telefoneNorm) && nomeParaMerge) {
+    const primeiroNome = nomeParaMerge.split(/\s+/)[0].toLowerCase()
     const clienteReal = await banco.cliente.findFirst({
       where: {
         tenantId,
@@ -441,7 +637,8 @@ const buscarOuCriarPorTelefone = async (tenantId, telefone, nome, lidWhatsapp) =
         cliente: resumirCliente(cliente),
         origem: {
           telefoneNormalizado: telefoneNorm,
-          nomeRecebido: nomeLimpo || null,
+          nomeRecebido: nomeRecebido || null,
+          nomeConfiavel: nomeLimpo || null,
           lidWhatsappRecebido: lidNorm,
         },
       })
@@ -458,8 +655,8 @@ const buscarOuCriarPorTelefone = async (tenantId, telefone, nome, lidWhatsapp) =
         throw erro
       } else {
         try {
-          cliente = await banco.cliente.create({
-            data: { tenantId, nome: nomeLimpo || telefoneNorm, telefone: telefoneNorm },
+        cliente = await banco.cliente.create({
+          data: { tenantId, nome: nomeLimpo || telefoneNorm, telefone: telefoneNorm },
           })
         } catch (erroRetry) {
           if (erroRetry?.code === 'P2002') {
@@ -476,7 +673,8 @@ const buscarOuCriarPorTelefone = async (tenantId, telefone, nome, lidWhatsapp) =
         motivo: 'campo_lidWhatsapp_indisponivel',
         origem: {
           telefoneNormalizado: telefoneNorm,
-          nomeRecebido: nomeLimpo || null,
+          nomeRecebido: nomeRecebido || null,
+          nomeConfiavel: nomeLimpo || null,
           lidWhatsappRecebido: lidNorm,
         },
       }, 'warn')
@@ -496,7 +694,8 @@ const buscarOuCriarPorTelefone = async (tenantId, telefone, nome, lidWhatsapp) =
         logClienteTrace('conflito_telefone_real_em_merge', {
           tenantId,
           telefoneRecebido: telefoneNorm,
-          nomeRecebido: nomeLimpo || null,
+          nomeRecebido: nomeRecebido || null,
+          nomeConfiavel: nomeLimpo || null,
           lidWhatsappRecebido: lidNorm,
           clienteAtual: resumirCliente(cliente),
           clienteQueJaPossuiTelefone: resumirCliente(clienteComTelefoneReal),
@@ -538,7 +737,8 @@ const buscarOuCriarPorTelefone = async (tenantId, telefone, nome, lidWhatsapp) =
     tenantId,
     telefoneRecebido: telefone,
     telefoneNormalizado: telefoneNorm,
-    nomeRecebido: nomeLimpo || null,
+    nomeRecebido: nomeRecebido || null,
+    nomeConfiavel: nomeLimpo || null,
     lidWhatsappRecebido: lidNorm,
     clienteResolvido: resumirCliente(cliente),
   })
@@ -617,6 +817,7 @@ module.exports = {
   buscarPorId,
   buscarPorTelefone,
   criar,
+  importarCsv,
   buscarOuCriarPorTelefone,
   atualizar,
   remover,

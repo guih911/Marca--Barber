@@ -1,8 +1,8 @@
+const crypto = require('crypto')
 const iaServico = require('./ia.servico')
 const clientesServico = require('../clientes/clientes.servico')
 const conversasServico = require('../conversas/conversas.servico')
 const whatsappServico = require('./whatsapp.servico')
-const wwebjsManager = require('./baileys.manager')
 const { iniciarCronLembretes } = require('./lembretes.servico')
 const { processarComandoAdmin, eNumeroAdministrador } = require('./admin-config.servico')
 const engine = require('./engine')
@@ -13,6 +13,22 @@ const {
 const banco = require('../../config/banco')
 const { logClienteTrace, resumirCliente } = require('../../utils/clienteTrace')
 const { sintetizarAudio } = require('./voz.servico')
+const {
+  humanizarResposta,
+  decidirFormatoResposta,
+  atualizarPreferenciaCanal,
+  inferirTom,
+} = require('./humanizacao.servico')
+
+const META_API_VERSION = process.env.META_GRAPH_API_VERSION || 'v22.0'
+const META_APP_ID = process.env.META_APP_ID || ''
+const META_APP_SECRET = process.env.META_APP_SECRET || ''
+const META_EMBEDDED_SIGNUP_CONFIG_ID = process.env.META_EMBEDDED_SIGNUP_CONFIG_ID || ''
+const META_WEBHOOK_VERIFY_TOKEN = process.env.META_WEBHOOK_VERIFY_TOKEN || ''
+const META_WEBHOOK_CALLBACK_URL = process.env.META_WEBHOOK_CALLBACK_URL || ''
+const SENDZEN_WEBHOOK_CALLBACK_URL = process.env.SENDZEN_WEBHOOK_CALLBACK_URL || ''
+const SENDZEN_WEBHOOK_SECRET = process.env.SENDZEN_WEBHOOK_SECRET || ''
+const APP_URL = process.env.APP_URL || ''
 
 // Serializa processamento por numero para evitar respostas duplicadas em rajadas.
 const filaProcessamento = new Map()
@@ -194,6 +210,92 @@ const processarWebhookSerializado = (chave, fn) => {
   return proxima
 }
 
+const obterMetaPublicConfig = () => ({
+  enabled: Boolean(META_APP_ID && META_APP_SECRET && META_EMBEDDED_SIGNUP_CONFIG_ID && META_WEBHOOK_VERIFY_TOKEN),
+  appId: META_APP_ID || null,
+  configId: META_EMBEDDED_SIGNUP_CONFIG_ID || null,
+  apiVersion: META_API_VERSION,
+  webhookCallbackUrl: META_WEBHOOK_CALLBACK_URL || null,
+})
+
+const chamarGraphApi = async (path, { method = 'GET', accessToken, query = {}, body } = {}) => {
+  const url = new URL(`https://graph.facebook.com/${META_API_VERSION}/${path.replace(/^\//, '')}`)
+
+  Object.entries(query || {}).forEach(([chave, valor]) => {
+    if (valor != null && valor !== '') url.searchParams.set(chave, String(valor))
+  })
+
+  const headers = {}
+  if (accessToken) headers.Authorization = `Bearer ${accessToken}`
+  if (body) headers['Content-Type'] = 'application/json'
+
+  const resposta = await fetch(url, {
+    method,
+    headers,
+    body: body ? JSON.stringify(body) : undefined,
+  })
+
+  const dados = await resposta.json().catch(() => ({}))
+  if (!resposta.ok) {
+    throw new Error(dados?.error?.message || `Meta Graph error ${resposta.status}`)
+  }
+
+  return dados
+}
+
+const trocarCodePorTokenMeta = async (code) => {
+  const url = new URL(`https://graph.facebook.com/${META_API_VERSION}/oauth/access_token`)
+  url.searchParams.set('client_id', META_APP_ID)
+  url.searchParams.set('client_secret', META_APP_SECRET)
+  url.searchParams.set('code', code)
+
+  const resposta = await fetch(url)
+  const dados = await resposta.json().catch(() => ({}))
+  if (!resposta.ok) {
+    throw new Error(dados?.error?.message || `Meta OAuth error ${resposta.status}`)
+  }
+  return dados
+}
+
+const resolverTenantMeta = async ({ tenantId = null, phoneNumberId = null, wabaId = null }) => {
+  if (tenantId) {
+    return buscarTenant(tenantId)
+  }
+
+  if (!phoneNumberId && !wabaId) return null
+
+  return banco.tenant.findFirst({
+    where: {
+      OR: [
+        phoneNumberId ? { configWhatsApp: { path: ['phoneNumberId'], equals: String(phoneNumberId) } } : undefined,
+        wabaId ? { configWhatsApp: { path: ['wabaId'], equals: String(wabaId) } } : undefined,
+        phoneNumberId ? { configWhatsApp: { path: ['meta', 'phoneNumberId'], equals: String(phoneNumberId) } } : undefined,
+        wabaId ? { configWhatsApp: { path: ['meta', 'wabaId'], equals: String(wabaId) } } : undefined,
+      ].filter(Boolean),
+    },
+  })
+}
+
+const resolverTenantSendzen = async ({ tenantId = null, phoneNumberId = null, wabaId = null, from = null }) => {
+  if (tenantId) return buscarTenant(tenantId)
+
+  const numero = normalizarTelefone(from)
+  if (!phoneNumberId && !wabaId && !numero) return null
+
+  return banco.tenant.findFirst({
+    where: {
+      OR: [
+        phoneNumberId ? { configWhatsApp: { path: ['phoneNumberId'], equals: String(phoneNumberId) } } : undefined,
+        wabaId ? { configWhatsApp: { path: ['whatsappBusinessAccountId'], equals: String(wabaId) } } : undefined,
+        numero ? { configWhatsApp: { path: ['from'], equals: numero } } : undefined,
+        phoneNumberId ? { configWhatsApp: { path: ['sendzen', 'phoneNumberId'], equals: String(phoneNumberId) } } : undefined,
+        wabaId ? { configWhatsApp: { path: ['sendzen', 'whatsappBusinessAccountId'], equals: String(wabaId) } } : undefined,
+        numero ? { configWhatsApp: { path: ['sendzen', 'from'], equals: numero } } : undefined,
+      ].filter(Boolean),
+    },
+  })
+}
+
 // Logica central compartilhada por todos os webhooks.
 const processarWebhook = async ({
   tenantId,
@@ -207,13 +309,48 @@ const processarWebhook = async ({
   ehAudio = false,
 }) => {
   if (!mensagem?.trim() || !telefone?.trim()) return null
+  let cliente = null
 
-  const enviarRespostaWhatsapp = async (texto, { preferirAudio = false } = {}) => {
+  const enviarRespostaWhatsapp = async (texto, { preferirAudio = false, momento = 'ATENDIMENTO' } = {}) => {
     if (!configWhatsApp || !texto) return
 
-    if (ehAudio && preferirAudio) {
+    const textoHumanizado = humanizarResposta({
+      texto,
+      cliente,
+      mensagemCliente: mensagem,
+      contexto: {
+        momento,
+        aprendizadoCliente: cliente?.preferencias || null,
+      },
+    })
+
+    const formato = await decidirFormatoResposta({
+      cliente,
+      mensagemCliente: mensagem,
+      respostaTexto: textoHumanizado,
+      ehAudioEntrada: ehAudio,
+      contexto: { momento },
+    }).catch(() => ({ enviarTexto: true, enviarAudio: false, motivo: 'fallback' }))
+
+    const tomInferido = inferirTom({
+      cliente,
+      mensagem,
+      aprendizado: cliente?.preferencias || null,
+    })
+
+    const estiloAudio = ({
+      direto: 'direto',
+      premium_direto: 'direto',
+      caloroso: 'caloroso',
+      acolhedor: 'caloroso',
+      consultivo: 'consultivo',
+    })[tomInferido?.tom] || 'default'
+
+    const deveTentarAudio = Boolean(preferirAudio || formato?.enviarAudio)
+
+    if (deveTentarAudio) {
       try {
-        const audio = await sintetizarAudio(texto)
+        const audio = await sintetizarAudio(textoHumanizado, { estilo: estiloAudio })
         if (audio?.buffer?.length) {
           await whatsappServico.enviarAudio(configWhatsApp, telefone, audio.buffer, tenantId, lidWhatsapp ? `${lidWhatsapp}@lid` : null, {
             mimetype: audio.mimetype,
@@ -226,13 +363,13 @@ const processarWebhook = async ({
       }
     }
 
-    await whatsappServico.enviarMensagem(configWhatsApp, telefone, texto, tenantId, lidWhatsapp ? `${lidWhatsapp}@lid` : null)
+    await whatsappServico.enviarMensagem(configWhatsApp, telefone, textoHumanizado, tenantId, lidWhatsapp ? `${lidWhatsapp}@lid` : null)
   }
 
   if (canal === 'WHATSAPP' && eNumeroAdministrador(configWhatsApp, telefone)) {
     const respostaAdmin = await processarComandoAdmin({ tenantId, mensagem })
     if (respostaAdmin) {
-      await enviarRespostaWhatsapp(respostaAdmin)
+      await enviarRespostaWhatsapp(respostaAdmin, { momento: 'ADMIN' })
       return { tipo: 'admin', resposta: respostaAdmin }
     }
   }
@@ -246,8 +383,15 @@ const processarWebhook = async ({
     tamanhoMensagem: String(mensagem || '').trim().length,
   })
 
-  let cliente = await clientesServico.buscarOuCriarPorTelefone(tenantId, telefone, nome, lidWhatsapp)
+  cliente = await clientesServico.buscarOuCriarPorTelefone(tenantId, telefone, nome, lidWhatsapp, {
+    confiarNome: false,
+    usarNomeParaMerge: true,
+  })
   const conversa = await conversasServico.buscarOuCriarConversa(tenantId, cliente.id, canal)
+
+  if (ehAudio) {
+    atualizarPreferenciaCanal({ clienteId: cliente.id, usouAudio: true }).catch(() => {})
+  }
 
   if (await mensagemClienteDuplicadaRecente(conversa.id, mensagem)) {
     console.log('[Webhook] Mensagem duplicada recente ignorada para evitar resposta repetida')
@@ -366,7 +510,9 @@ const processarWebhook = async ({
   })
   const ehNovaSessao = !ultimaMsgIA || (Date.now() - new Date(ultimaMsgIA.criadoEm).getTime() > 2 * 60 * 60 * 1000)
 
-  if (ehSaudacaoSimples && ehNovaSessao && tenant) {
+  // A saudacao inicial deve ser centralizada no ia.servico para manter
+  // persona, regras de link e contexto premium em um unico lugar.
+  if (false && ehSaudacaoSimples && ehNovaSessao && tenant) {
     // Monta horário de funcionamento
     const profs = await banco.profissional.findMany({ where: { tenantId, ativo: true }, select: { horarioTrabalho: true } })
     const DIAS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab']
@@ -401,8 +547,8 @@ const processarWebhook = async ({
 
     const nomeIA = tenant.nomeIA || 'Don Barber'
     const saudacaoBase = cadastroConfiavel && nomeCliente
-      ? `Oi, ${nomeCliente}! Aqui é o ${nomeIA}, Assistente Virtual da ${tenant.nome} 💈\n📅 Nosso horário de Funcionamento é de ${horarioFunc}\n${difs.length > 0 ? '\n✨ Temos ' + difs.join(', ') + '.\n' : ''}\nVocê pode agendar pelo link ou me fala aqui que eu marco pra você:\n🗓️ ${link}`
-      : `Oi! Aqui é o ${nomeIA}, Assistente Virtual da ${tenant.nome} 💈\n📅 Nosso horário de Funcionamento é de ${horarioFunc}\n${difs.length > 0 ? '\n✨ Temos ' + difs.join(', ') + '.\n' : ''}\nVocê pode agendar pelo link ou me fala aqui que eu marco pra você:\n🗓️ ${link}`
+      ? `Oi, ${nomeCliente}! Aqui é o ${nomeIA}, da ${tenant.nome} 💈\n📅 Nosso horário de funcionamento é de ${horarioFunc}\n${difs.length > 0 ? '\n✨ Temos ' + difs.join(', ') + '.\n' : ''}\nSe quiser, eu já vejo seu horário por aqui.`
+      : `Oi! Aqui é o ${nomeIA}, da ${tenant.nome} 💈\n📅 Nosso horário de funcionamento é de ${horarioFunc}\n${difs.length > 0 ? '\n✨ Temos ' + difs.join(', ') + '.\n' : ''}\nSe quiser, eu já vejo seu horário por aqui.`
     const saudacao = saudacaoBase
 
     await banco.mensagem.createMany({
@@ -411,7 +557,7 @@ const processarWebhook = async ({
         { conversaId: conversa.id, remetente: 'ia', conteudo: saudacao },
       ],
     })
-    await enviarRespostaWhatsapp(saudacao)
+    await enviarRespostaWhatsapp(saudacao, { momento: 'SAUDACAO' })
     console.log('[Engine] Saudação fixa enviada (sem LLM)')
     return { tipo: 'engine', resposta: saudacao, conversaId: conversa.id }
   }
@@ -432,7 +578,7 @@ const processarWebhook = async ({
         await iaServico.executarFerramentaDireta(tenantId, direta.tool, { clienteId: cliente.id, conversaId: conversa.id })
       } catch {}
     }
-    await enviarRespostaWhatsapp(direta.resposta, { preferirAudio: true })
+    await enviarRespostaWhatsapp(direta.resposta, { preferirAudio: true, momento: 'RESPOSTA_DIRETA' })
     console.log(`[Engine] Resposta direta: ${intencao} (sem LLM)`)
     return { tipo: 'engine', resposta: direta.resposta, conversaId: conversa.id }
   }
@@ -452,10 +598,20 @@ const processarWebhook = async ({
 
   if (configWhatsApp) {
     if (resultado.mensagemProativa) {
-      await enviarRespostaWhatsapp(resultado.mensagemProativa)
+      if (resultado.mensagemProativaInterativa) {
+        await whatsappServico.enviarMensagemInterativa(
+          configWhatsApp,
+          telefone,
+          resultado.mensagemProativaInterativa,
+          tenantId,
+          lidWhatsapp ? `${lidWhatsapp}@lid` : null
+        )
+      } else {
+        await enviarRespostaWhatsapp(resultado.mensagemProativa, { momento: 'SAUDACAO' })
+      }
     }
     if (resultado.resposta) {
-      await enviarRespostaWhatsapp(resultado.resposta, { preferirAudio: true })
+      await enviarRespostaWhatsapp(resultado.resposta, { preferirAudio: true, momento: resultado.encerrado ? 'ENCERRAMENTO' : resultado.escalonado ? 'ESCALACAO' : 'ATENDIMENTO' })
     }
   }
 
@@ -474,6 +630,251 @@ const buscarTenant = async (tenantId) => {
   const tenant = await banco.tenant.findUnique({ where: { id: tenantId } })
   if (!tenant) throw { status: 404, mensagem: 'Tenant nao encontrado' }
   return tenant
+}
+
+const obterWebhookSendzenBaseUrl = (valor = null) => {
+  const fallback = APP_URL ? `${String(APP_URL).replace(/\/+$/, '')}/api/ia/webhook/sendzen` : ''
+  const origem = String(valor || SENDZEN_WEBHOOK_CALLBACK_URL || fallback || '').trim()
+  if (!origem) return null
+
+  try {
+    const url = new URL(origem)
+    const partes = url.pathname.replace(/\/+$/, '').split('/').filter(Boolean)
+    const indiceSendzen = partes.lastIndexOf('sendzen')
+    if (indiceSendzen >= 0) {
+      url.pathname = `/${partes.slice(0, indiceSendzen + 1).join('/')}`
+    }
+    return url.toString()
+  } catch {
+    const normalizado = origem.replace(/\/+$/, '')
+    const match = normalizado.match(/^(.*\/api\/ia\/webhook\/sendzen)(?:\/[^/]+)?$/)
+    return match?.[1] || normalizado
+  }
+}
+
+const construirWebhookSendzenCallbackUrl = (tenantId = null, baseUrl = null) => {
+  const urlBase = obterWebhookSendzenBaseUrl(baseUrl)
+  if (!urlBase) return null
+  if (!tenantId) return urlBase
+
+  try {
+    const url = new URL(urlBase)
+    url.pathname = `${url.pathname.replace(/\/+$/, '')}/${encodeURIComponent(String(tenantId))}`
+    return url.toString()
+  } catch {
+    return `${urlBase.replace(/\/+$/, '')}/${encodeURIComponent(String(tenantId))}`
+  }
+}
+
+const obterSendzenPublicConfig = (tenantId = null) => ({
+  enabled: true,
+  webhookCallbackUrl: construirWebhookSendzenCallbackUrl(tenantId),
+  webhookSecretConfigurado: Boolean(SENDZEN_WEBHOOK_SECRET),
+})
+
+const normalizarSegredoWebhookSendzen = (valor = '') => String(valor || '').replace(/^Bearer\s+/i, '').trim()
+
+const extrairValoresAssinaturaWebhookSendzen = (req) => {
+  const candidatos = [
+    req.headers['x-sendzen-secret'],
+    req.headers['x-webhook-secret'],
+    req.headers['authorization'],
+    req.headers['x-sendzen-signature'],
+    req.headers['x-sendzen-signature-256'],
+    req.headers['x-webhook-signature'],
+    req.headers['x-webhook-signature-256'],
+    req.headers['x-hub-signature'],
+    req.headers['x-hub-signature-256'],
+    req.body?.secret,
+    req.body?.webhookSecret,
+  ]
+
+  return candidatos
+    .flatMap((valor) => (Array.isArray(valor) ? valor : [valor]))
+    .map((valor) => normalizarSegredoWebhookSendzen(valor))
+    .filter(Boolean)
+}
+
+const gerarAssinaturasWebhookSendzen = (segredo = '', rawBody = null) => {
+  const segredoNormalizado = normalizarSegredoWebhookSendzen(segredo)
+  if (!segredoNormalizado || !rawBody) return new Set()
+
+  const payload = Buffer.isBuffer(rawBody) ? rawBody : Buffer.from(String(rawBody || ''))
+  const assinaturas = new Set()
+
+  for (const algoritmo of ['sha256', 'sha1']) {
+    for (const encoding of ['hex', 'base64']) {
+      const digest = crypto.createHmac(algoritmo, segredoNormalizado).update(payload).digest(encoding)
+      assinaturas.add(digest)
+      assinaturas.add(`${algoritmo}=${digest}`)
+      assinaturas.add(`${algoritmo}:${digest}`)
+    }
+  }
+
+  return assinaturas
+}
+
+const validarWebhookSendzen = ({ req, segredo = '' }) => {
+  const segredoNormalizado = normalizarSegredoWebhookSendzen(segredo)
+  if (!segredoNormalizado) return { verificado: true, modo: 'sem_secret' }
+
+  const valores = extrairValoresAssinaturaWebhookSendzen(req)
+  if (!valores.length) {
+    return { verificado: false, modo: 'sem_assinatura', detalhe: 'Nenhum header/body de assinatura reconhecido foi enviado.' }
+  }
+
+  if (valores.includes(segredoNormalizado)) {
+    return { verificado: true, modo: 'secret_direto' }
+  }
+
+  const assinaturasAceitas = gerarAssinaturasWebhookSendzen(segredoNormalizado, req.rawBody)
+  if (valores.some((valor) => assinaturasAceitas.has(valor))) {
+    return { verificado: true, modo: 'hmac' }
+  }
+
+  return { verificado: false, modo: 'assinatura_nao_confirmada', detalhe: 'Assinatura recebida não pôde ser validada com o secret configurado.' }
+}
+
+const PAYLOADS_BOTOES_WHATSAPP = {
+  AGENDAR: 'AGENDAR',
+  VER_HORARIOS: 'VER_HORARIOS',
+  VER_SERVICOS: 'VER_SERVICOS',
+  LINK_AGENDAMENTO: 'LINK_AGENDAMENTO',
+  FALAR_ATENDENTE: 'FALAR_ATENDENTE',
+  CONFIRMAR_AGENDAMENTO: 'CONFIRMAR_AGENDAMENTO',
+  REMARCAR_AGENDAMENTO: 'REMARCAR_AGENDAMENTO',
+  CANCELAR_AGENDAMENTO: 'CANCELAR_AGENDAMENTO',
+}
+
+const clonarObjeto = (valor) => (valor && typeof valor === 'object' ? JSON.parse(JSON.stringify(valor)) : {})
+
+const obterConfigProvedor = (cfg = {}, provedor = null) => (
+  whatsappServico.obterConfigDoProvedor(cfg || {}, provedor)
+)
+
+const preservarCamposCompartilhados = (base = {}, destino = {}) => {
+  const campos = ['numeroAdministrador']
+  for (const campo of campos) {
+    if (base?.[campo] != null && destino?.[campo] == null) destino[campo] = base[campo]
+  }
+  return destino
+}
+
+const normalizarConfigWhatsAppPersistida = (cfg = {}) => {
+  const base = clonarObjeto(cfg)
+  const normalizado = preservarCamposCompartilhados(base, {})
+
+  const metaLegada = base?.meta || (
+    base?.phoneNumberId || base?.wabaId || base?.businessAccountId || base?.appId || base?.apiToken || base?.verifiedName
+      ? {
+          token: base?.token || null,
+          apiToken: base?.apiToken || null,
+          appId: base?.appId || null,
+          configId: base?.configId || null,
+          phoneNumberId: base?.phoneNumberId || null,
+          wabaId: base?.wabaId || null,
+          businessAccountId: base?.businessAccountId || null,
+          displayPhoneNumber: base?.displayPhoneNumber || null,
+          verifiedName: base?.verifiedName || null,
+          webhookVerifyToken: base?.webhookVerifyToken || null,
+          webhookCallbackUrl: base?.webhookCallbackUrl || null,
+          embeddedSignupAt: base?.embeddedSignupAt || null,
+        }
+      : null
+  )
+
+  const sendzenLegada = base?.sendzen || (
+    base?.from || base?.apiKey || base?.whatsappBusinessAccountId
+      ? {
+          apiKey: base?.apiKey || null,
+          token: base?.token || null,
+          from: base?.from || null,
+          displayPhoneNumber: base?.displayPhoneNumber || null,
+          whatsappBusinessAccountId: base?.whatsappBusinessAccountId || null,
+          phoneNumberId: base?.phoneNumberId || null,
+          webhookSecret: base?.webhookSecret || null,
+          webhookCallbackUrl: base?.webhookCallbackUrl || null,
+          sendzenConnectedAt: base?.sendzenConnectedAt || null,
+        }
+      : null
+  )
+
+  if (metaLegada) normalizado.meta = metaLegada
+  if (sendzenLegada) normalizado.sendzen = sendzenLegada
+  const ativo = ['sendzen', 'meta'].includes(base?.provedorAtivo)
+    ? base.provedorAtivo
+    : ['sendzen', 'meta'].includes(base?.provedor)
+      ? base.provedor
+      : (sendzenLegada ? 'sendzen' : null) || (metaLegada ? 'meta' : null)
+  if (ativo) {
+    normalizado.provedorAtivo = ativo
+    normalizado.provedor = ativo
+  }
+
+  return normalizado
+}
+
+const construirConfigWhatsApp = ({ cfgAtual = {}, provedorAtivo = null, meta = undefined, sendzen = undefined }) => {
+  const base = normalizarConfigWhatsAppPersistida(cfgAtual)
+  const novoConfig = preservarCamposCompartilhados(base, {})
+
+  if (meta !== undefined) {
+    if (meta) novoConfig.meta = meta
+  } else if (base.meta) {
+    novoConfig.meta = base.meta
+  }
+
+  if (sendzen !== undefined) {
+    if (sendzen) novoConfig.sendzen = sendzen
+  } else if (base.sendzen) {
+    novoConfig.sendzen = base.sendzen
+  }
+
+  const ordemPreferencia = [provedorAtivo, base.provedorAtivo, base.provedor, 'sendzen', 'meta']
+    .filter((item) => ['sendzen', 'meta'].includes(item))
+  const ativoResolvido = ordemPreferencia.find((item) => Boolean(novoConfig?.[item]))
+  if (ativoResolvido) {
+    novoConfig.provedorAtivo = ativoResolvido
+    novoConfig.provedor = ativoResolvido
+  }
+
+  return Object.keys(novoConfig).length ? novoConfig : null
+}
+
+const traduzirPayloadBotao = (texto = '') => {
+  const valor = String(texto || '').trim()
+  switch (valor) {
+    case PAYLOADS_BOTOES_WHATSAPP.AGENDAR:
+      return 'quero agendar um horário'
+    case PAYLOADS_BOTOES_WHATSAPP.VER_HORARIOS:
+      return 'quais horários vocês têm hoje?'
+    case PAYLOADS_BOTOES_WHATSAPP.VER_SERVICOS:
+      return 'quais serviços vocês têm disponíveis?'
+    case PAYLOADS_BOTOES_WHATSAPP.LINK_AGENDAMENTO:
+      return 'me manda o link de agendamento'
+    case PAYLOADS_BOTOES_WHATSAPP.FALAR_ATENDENTE:
+      return 'quero falar com um atendente'
+    case PAYLOADS_BOTOES_WHATSAPP.CONFIRMAR_AGENDAMENTO:
+      return 'confirmar meu agendamento'
+    case PAYLOADS_BOTOES_WHATSAPP.REMARCAR_AGENDAMENTO:
+      return 'quero buscar outro horário'
+    case PAYLOADS_BOTOES_WHATSAPP.CANCELAR_AGENDAMENTO:
+      return 'quero cancelar meu agendamento'
+    default:
+      return valor
+  }
+}
+
+const extrairTextoMensagemRecebida = (messageObj = {}) => {
+  if (messageObj?.type === 'text' && messageObj?.text?.body) return messageObj.text.body
+  if (messageObj?.type === 'button') return traduzirPayloadBotao(messageObj?.button?.payload || messageObj?.button?.text || '')
+  if (messageObj?.type === 'interactive') {
+    const buttonReply = messageObj?.interactive?.button_reply
+    const listReply = messageObj?.interactive?.list_reply
+    if (buttonReply?.id || buttonReply?.title) return traduzirPayloadBotao(buttonReply.id || buttonReply.title)
+    if (listReply?.id || listReply?.title) return traduzirPayloadBotao(listReply.id || listReply.title)
+  }
+  return null
 }
 
 // POST /api/ia/webhook
@@ -520,8 +921,9 @@ const verificarWebhookMeta = (req, res) => {
   const modo = req.query['hub.mode']
   const token = req.query['hub.verify_token']
   const challenge = req.query['hub.challenge']
+  const tokenEsperado = tenantId || META_WEBHOOK_VERIFY_TOKEN
 
-  if (modo === 'subscribe' && token === tenantId) {
+  if (modo === 'subscribe' && tokenEsperado && token === tokenEsperado) {
     return res.status(200).send(challenge)
   }
 
@@ -531,156 +933,376 @@ const verificarWebhookMeta = (req, res) => {
 // POST /api/ia/webhook/meta/:tenantId
 const webhookMeta = async (req, res) => {
   try {
-    const { tenantId } = req.params
-
     res.status(200).json({ sucesso: true })
 
-    const entry = req.body?.entry?.[0]
-    const changes = entry?.changes?.[0]?.value
-    const messageObj = changes?.messages?.[0]
+    const entradas = Array.isArray(req.body?.entry) ? req.body.entry : []
 
-    if (!messageObj || messageObj.type !== 'text') return
+    for (const entry of entradas) {
+      const changes = Array.isArray(entry?.changes) ? entry.changes : []
 
-    const telefone = messageObj.from
-    const mensagem = messageObj.text?.body
-    const nome = changes?.contacts?.[0]?.profile?.name
+      for (const change of changes) {
+        const valor = change?.value || {}
+        const metadata = valor?.metadata || {}
+        const phoneNumberId = metadata?.phone_number_id || null
+        const wabaId = change?.value?.business_account_id || entry?.id || null
+        const tenant = await resolverTenantMeta({ tenantId: req.params?.tenantId || null, phoneNumberId, wabaId })
+        if (!tenant) continue
 
-    if (!mensagem) return
+        const mensagens = Array.isArray(valor?.messages) ? valor.messages : []
+        for (const messageObj of mensagens) {
+          const telefone = messageObj?.from
+          const nome = valor?.contacts?.[0]?.profile?.name
 
-    const tenant = await buscarTenant(tenantId)
-    const chave = `${tenantId}:${telefone}`
-    await processarWebhookSerializado(chave, () =>
-      processarWebhook({
-        tenantId,
-        telefone: `+${telefone}`,
-        mensagem,
-        nome,
-        canal: 'WHATSAPP',
-        configWhatsApp: tenant.configWhatsApp,
-      })
-    )
+          const textoRecebido = extrairTextoMensagemRecebida(messageObj)
+          if (textoRecebido) {
+            const chave = `${tenant.id}:${telefone}`
+            await processarWebhookSerializado(chave, () =>
+              processarWebhook({
+                tenantId: tenant.id,
+                telefone: `+${telefone}`,
+                mensagem: textoRecebido,
+                nome,
+                canal: 'WHATSAPP',
+                configWhatsApp: tenant.configWhatsApp,
+              })
+            )
+          }
+        }
+      }
+    }
   } catch (erro) {
     console.error('[Webhook Meta]', erro)
   }
 }
 
-// POST /api/ia/wwebjs/iniciar
-const iniciarWWebJS = async (req, res) => {
+const obterConfiguracaoSendzen = async (req, res) => {
+  try {
+    const tenant = await buscarTenant(req.usuario.tenantId)
+    const cfg = tenant.configWhatsApp || {}
+    const sendzenCfg = obterConfigProvedor(cfg, 'sendzen') || {}
+    const sendzen = obterSendzenPublicConfig(tenant.id)
+    const apiKey = String(sendzenCfg?.apiKey || sendzenCfg?.token || '')
+    const webhookUrl = construirWebhookSendzenCallbackUrl(tenant.id, sendzenCfg?.webhookCallbackUrl || sendzen.webhookCallbackUrl)
+
+    res.json({
+      sucesso: true,
+      dados: {
+        ...sendzen,
+        status: {
+          conectado: Boolean(apiKey && sendzenCfg?.from),
+          provedor: 'sendzen',
+          ativo: cfg?.provedorAtivo === 'sendzen' || cfg?.provedor === 'sendzen',
+          from: sendzenCfg?.from || null,
+          displayPhoneNumber: sendzenCfg?.displayPhoneNumber || null,
+          whatsappBusinessAccountId: sendzenCfg?.whatsappBusinessAccountId || null,
+          phoneNumberId: sendzenCfg?.phoneNumberId || null,
+          webhookUrl,
+          webhookSecretConfigurado: Boolean(sendzenCfg?.webhookSecret || sendzen.webhookSecretConfigurado),
+          apiKeyMascarada: apiKey ? `${apiKey.slice(0, 4)}***${apiKey.slice(-4)}` : null,
+        },
+      },
+    })
+  } catch (erro) {
+    res.status(500).json({ sucesso: false, erro: { mensagem: erro.message } })
+  }
+}
+
+const conectarSendzen = async (req, res) => {
   try {
     const tenantId = req.usuario.tenantId
+    const {
+      apiKey,
+      from,
+      displayPhoneNumber = null,
+      whatsappBusinessAccountId = null,
+      phoneNumberId = null,
+      webhookSecret = null,
+    } = req.body || {}
 
-    const onMensagem = async (telefone, texto, nome, avatarUrl, lidWhatsapp) => {
-      const tenant = await buscarTenant(tenantId)
-      const chave = `${tenantId}:${telefone}`
-      await processarWebhookSerializado(chave, () =>
-        processarWebhook({
-          tenantId,
-          telefone,
-          mensagem: texto,
-          nome,
-          avatarUrl,
-          lidWhatsapp,
-          canal: 'WHATSAPP',
-          configWhatsApp: tenant.configWhatsApp,
-        })
-      )
+    if (!apiKey || !String(apiKey).trim()) {
+      return res.status(400).json({ sucesso: false, erro: { mensagem: 'apiKey da Sendzen é obrigatória.' } })
     }
 
-    await wwebjsManager.iniciarSessao(tenantId, onMensagem)
-
-    let tentativas = 0
-    while (tentativas < 15) {
-      const { status, qr } = await wwebjsManager.obterStatus(tenantId)
-
-      if (status === wwebjsManager.STATUS.CONECTADO) {
-        return res.json({ sucesso: true, dados: { status: 'conectado', qr: null } })
-      }
-
-      if (status === wwebjsManager.STATUS.AGUARDANDO_QR && qr) {
-        return res.json({ sucesso: true, dados: { status: 'aguardando_qr', qr } })
-      }
-
-      await new Promise((resolve) => setTimeout(resolve, 1000))
-      tentativas += 1
+    const fromNormalizado = normalizarTelefone(from)
+    if (!fromNormalizado) {
+      return res.status(400).json({ sucesso: false, erro: { mensagem: 'Número remetente da Sendzen é obrigatório.' } })
     }
 
-    const { status } = await wwebjsManager.obterStatus(tenantId)
-    res.json({ sucesso: true, dados: { status, qr: null } })
-  } catch (erro) {
-    console.error('[WWebJS iniciar]', erro)
-    res.status(500).json({ sucesso: false, erro: { mensagem: erro.message } })
-  }
-}
-
-// POST /api/ia/wwebjs/status
-const statusWWebJS = async (req, res) => {
-  try {
-    const tenantId = req.usuario.tenantId
-    const { status, qr } = await wwebjsManager.obterStatus(tenantId)
-    res.json({ sucesso: true, dados: { status, qr } })
-  } catch (erro) {
-    res.status(500).json({ sucesso: false, erro: { mensagem: erro.message } })
-  }
-}
-
-// POST /api/ia/wwebjs/desconectar
-const desconectarWWebJS = async (req, res) => {
-  try {
-    const tenantId = req.usuario.tenantId
-    await wwebjsManager.destruirSessao(tenantId)
-    res.json({ sucesso: true })
-  } catch (erro) {
-    res.status(500).json({ sucesso: false, erro: { mensagem: erro.message } })
-  }
-}
-
-const inicializarSessoesWWebJS = async () => {
-  try {
-    const tenants = await banco.tenant.findMany({
-      where: { configWhatsApp: { path: ['provedor'], equals: 'wwebjs' } },
-      select: { id: true, nome: true },
+    const tenant = await buscarTenant(tenantId)
+    const cfgAtual = tenant.configWhatsApp || {}
+    const sendzenAtual = obterConfigProvedor(cfgAtual, 'sendzen') || {}
+    const webhookCallbackUrl = construirWebhookSendzenCallbackUrl(tenantId, sendzenAtual.webhookCallbackUrl)
+    const novoConfig = construirConfigWhatsApp({
+      cfgAtual,
+      provedorAtivo: 'sendzen',
+      sendzen: {
+        ...sendzenAtual,
+        apiKey: String(apiKey).trim(),
+        token: String(apiKey).trim(),
+        from: fromNormalizado,
+        displayPhoneNumber: displayPhoneNumber || sendzenAtual.displayPhoneNumber || `+${fromNormalizado}`,
+        whatsappBusinessAccountId: whatsappBusinessAccountId ? String(whatsappBusinessAccountId) : (sendzenAtual.whatsappBusinessAccountId || null),
+        phoneNumberId: phoneNumberId ? String(phoneNumberId) : (sendzenAtual.phoneNumberId || null),
+        webhookSecret: webhookSecret || sendzenAtual.webhookSecret || SENDZEN_WEBHOOK_SECRET || null,
+        webhookCallbackUrl,
+        sendzenConnectedAt: new Date().toISOString(),
+      },
     })
 
-    if (tenants.length === 0) return
+    await banco.tenant.update({
+      where: { id: tenantId },
+      data: { configWhatsApp: novoConfig },
+    })
 
-    console.log(`[WWebJS] Recarregando ${tenants.length} sessao(oes)...`)
+    res.json({
+      sucesso: true,
+      dados: {
+        provedor: 'sendzen',
+        from: novoConfig?.sendzen?.from || null,
+        displayPhoneNumber: novoConfig?.sendzen?.displayPhoneNumber || null,
+        whatsappBusinessAccountId: novoConfig?.sendzen?.whatsappBusinessAccountId || null,
+        phoneNumberId: novoConfig?.sendzen?.phoneNumberId || null,
+        webhookCallbackUrl: novoConfig?.sendzen?.webhookCallbackUrl || null,
+      },
+    })
+  } catch (erro) {
+    res.status(500).json({ sucesso: false, erro: { mensagem: erro.message || 'Não foi possível salvar a configuração da Sendzen.' } })
+  }
+}
 
-    for (const tenant of tenants) {
-      const tenantId = tenant.id
+const desconectarSendzen = async (req, res) => {
+  try {
+    const tenantId = req.usuario.tenantId
+    const tenant = await buscarTenant(tenantId)
+    const cfgAtual = tenant.configWhatsApp || {}
+    const proximoAtivo = (cfgAtual?.provedorAtivo || cfgAtual?.provedor) === 'sendzen'
+      ? (cfgAtual?.meta ? 'meta' : null)
+      : (cfgAtual?.provedorAtivo || cfgAtual?.provedor || null)
+    const novoConfig = construirConfigWhatsApp({
+      cfgAtual,
+      provedorAtivo: proximoAtivo,
+      sendzen: null,
+    })
 
-      const onMensagem = async (telefone, texto, nome, avatarUrl, lidWhatsapp, meta = {}) => {
-        console.log(`[Don] Processando mensagem de ${telefone}${lidWhatsapp ? ` (LID: ${lidWhatsapp})` : ''}: "${texto.substring(0, 50)}"`)
-        try {
-          const t = await buscarTenant(tenantId)
-          const chave = `${tenantId}:${telefone}`
-          await processarWebhookSerializado(chave, () =>
-            processarWebhook({
-              tenantId,
-              telefone,
-              mensagem: texto,
-              nome,
-              avatarUrl,
-              lidWhatsapp,
-              ehAudio: Boolean(meta?.ehAudio),
-              canal: 'WHATSAPP',
-              configWhatsApp: t.configWhatsApp,
+    await banco.tenant.update({
+      where: { id: tenantId },
+      data: { configWhatsApp: novoConfig || null },
+    })
+
+    res.json({ sucesso: true, dados: { mensagem: 'Integração da Sendzen desconectada.' } })
+  } catch (erro) {
+    res.status(500).json({ sucesso: false, erro: { mensagem: erro.message } })
+  }
+}
+
+const webhookSendzen = async (req, res) => {
+  try {
+    res.status(200).json({ sucesso: true })
+    const entries = Array.isArray(req.body?.entry) ? req.body.entry : []
+    if (!entries.length) return
+
+    const tenantFixo = req.params?.tenantId ? await buscarTenant(req.params.tenantId).catch(() => null) : null
+    if (req.params?.tenantId && !tenantFixo) {
+      console.warn(`[Webhook Sendzen] Tenant do path não encontrado: ${req.params.tenantId}`)
+      return
+    }
+
+    const validacaoPorTenant = new Map()
+
+    for (const entry of entries) {
+      const changes = Array.isArray(entry?.changes) ? entry.changes : []
+      for (const change of changes) {
+        const valor = change?.value || {}
+        const metadata = valor?.metadata || {}
+        const from = metadata?.display_phone_number || metadata?.phone_number_id || valor?.from || null
+        const tenant = tenantFixo || await resolverTenantSendzen({
+          phoneNumberId: metadata?.phone_number_id || null,
+          wabaId: change?.value?.business_account_id || entry?.id || null,
+          from,
+        })
+        if (!tenant) {
+          console.warn('[Webhook Sendzen] Nenhum tenant encontrado para o payload recebido.', {
+            phoneNumberId: metadata?.phone_number_id || null,
+            wabaId: change?.value?.business_account_id || entry?.id || null,
+            from,
+          })
+          continue
+        }
+
+        let validacao = validacaoPorTenant.get(tenant.id)
+        if (!validacao) {
+          const cfgTenant = obterConfigProvedor(tenant.configWhatsApp || {}, 'sendzen') || {}
+          const secretEsperado = cfgTenant?.webhookSecret || SENDZEN_WEBHOOK_SECRET || ''
+          validacao = validarWebhookSendzen({ req, segredo: secretEsperado })
+          validacaoPorTenant.set(tenant.id, validacao)
+
+          if (!validacao.verificado) {
+            console.warn(`[Webhook Sendzen] Não foi possível confirmar a assinatura para o tenant ${tenant.id}. Processando mesmo assim para compatibilidade.`, {
+              modo: validacao.modo,
+              detalhe: validacao.detalhe || null,
             })
-          )
-          console.log(`[Don] Resposta enviada para ${telefone}`)
-        } catch (err) {
-          console.error(
-            `[Don] ERRO ao processar mensagem de ${telefone}:`,
-            err.message,
-            err.stack?.split('\n').slice(0, 3).join(' | ')
-          )
+          }
+        }
+
+        const mensagens = Array.isArray(valor?.messages) ? valor.messages : []
+        for (const messageObj of mensagens) {
+          const telefone = messageObj?.from
+          const nome = valor?.contacts?.[0]?.profile?.name
+          const textoRecebido = extrairTextoMensagemRecebida(messageObj)
+          if (textoRecebido) {
+            const chave = `${tenant.id}:${telefone}`
+            await processarWebhookSerializado(chave, () =>
+              processarWebhook({
+                tenantId: tenant.id,
+                telefone: `+${telefone}`,
+                mensagem: textoRecebido,
+                nome,
+                canal: 'WHATSAPP',
+                configWhatsApp: tenant.configWhatsApp,
+              })
+            )
+          }
         }
       }
-
-      await wwebjsManager.iniciarSessao(tenantId, onMensagem)
-      console.log(`[WWebJS] Sessao registrada para tenant "${tenant.nome}" (${tenantId})`)
     }
-  } catch (err) {
-    console.error('[WWebJS] Erro ao recarregar sessoes:', err.message)
+  } catch (erro) {
+    console.error('[Webhook Sendzen]', erro)
+  }
+}
+
+const obterConfiguracaoMeta = async (req, res) => {
+  try {
+    const tenant = await buscarTenant(req.usuario.tenantId)
+    const meta = obterMetaPublicConfig()
+    const cfg = tenant.configWhatsApp || {}
+    const metaCfg = obterConfigProvedor(cfg, 'meta') || {}
+
+    res.json({
+      sucesso: true,
+      dados: {
+        ...meta,
+        status: {
+          conectado: Boolean(metaCfg?.phoneNumberId && (metaCfg?.token || metaCfg?.apiToken)),
+          provedor: 'meta',
+          ativo: cfg?.provedorAtivo === 'meta' || cfg?.provedor === 'meta',
+          phoneNumberId: metaCfg?.phoneNumberId || null,
+          wabaId: metaCfg?.wabaId || null,
+          businessAccountId: metaCfg?.businessAccountId || null,
+          displayPhoneNumber: metaCfg?.displayPhoneNumber || null,
+          verifiedName: metaCfg?.verifiedName || null,
+          webhookUrl: META_WEBHOOK_CALLBACK_URL || null,
+          webhookVerifyTokenConfigurado: Boolean(META_WEBHOOK_VERIFY_TOKEN),
+        },
+      },
+    })
+  } catch (erro) {
+    res.status(500).json({ sucesso: false, erro: { mensagem: erro.message } })
+  }
+}
+
+const concluirEmbeddedSignupMeta = async (req, res) => {
+  try {
+    const tenantId = req.usuario.tenantId
+    const { code, phoneNumberId, wabaId, businessAccountId = null } = req.body || {}
+
+    if (!code) {
+      return res.status(400).json({ sucesso: false, erro: { mensagem: 'Code do Embedded Signup é obrigatório.' } })
+    }
+    if (!META_APP_ID || !META_APP_SECRET || !META_EMBEDDED_SIGNUP_CONFIG_ID || !META_WEBHOOK_VERIFY_TOKEN) {
+      return res.status(400).json({ sucesso: false, erro: { mensagem: 'Variáveis da Meta não configuradas no servidor.' } })
+    }
+
+    const tokenData = await trocarCodePorTokenMeta(code)
+    const accessToken = tokenData.access_token
+    if (!accessToken) throw new Error('A Meta não retornou access_token na troca do code.')
+
+    let detalhesNumero = {}
+    if (phoneNumberId) {
+      try {
+        detalhesNumero = await chamarGraphApi(String(phoneNumberId), {
+          accessToken,
+          query: { fields: 'display_phone_number,verified_name,id' },
+        })
+      } catch (erroDetalhes) {
+        console.warn('[Meta Embedded Signup] Não foi possível buscar detalhes do número:', erroDetalhes.message)
+      }
+    }
+
+    if (wabaId) {
+      try {
+        await chamarGraphApi(`${wabaId}/subscribed_apps`, { method: 'POST', accessToken })
+      } catch (erroSubscribe) {
+        console.warn('[Meta Embedded Signup] Não foi possível inscrever app no WABA:', erroSubscribe.message)
+      }
+    }
+
+    const tenant = await buscarTenant(tenantId)
+    const cfgAtual = tenant.configWhatsApp || {}
+    const metaAtual = obterConfigProvedor(cfgAtual, 'meta') || {}
+    const novoConfig = construirConfigWhatsApp({
+      cfgAtual,
+      provedorAtivo: 'meta',
+      meta: {
+        ...metaAtual,
+      token: accessToken,
+      apiToken: accessToken,
+      appId: META_APP_ID,
+      configId: META_EMBEDDED_SIGNUP_CONFIG_ID,
+        phoneNumberId: phoneNumberId ? String(phoneNumberId) : (metaAtual.phoneNumberId || null),
+        wabaId: wabaId ? String(wabaId) : (metaAtual.wabaId || null),
+        businessAccountId: businessAccountId ? String(businessAccountId) : (metaAtual.businessAccountId || null),
+        displayPhoneNumber: detalhesNumero.display_phone_number || metaAtual.displayPhoneNumber || null,
+        verifiedName: detalhesNumero.verified_name || metaAtual.verifiedName || null,
+      webhookVerifyToken: META_WEBHOOK_VERIFY_TOKEN,
+        webhookCallbackUrl: META_WEBHOOK_CALLBACK_URL || metaAtual.webhookCallbackUrl || null,
+      embeddedSignupAt: new Date().toISOString(),
+      },
+    })
+
+    const atualizado = await banco.tenant.update({
+      where: { id: tenantId },
+      data: { configWhatsApp: novoConfig },
+      select: { id: true, configWhatsApp: true },
+    })
+
+    res.json({
+      sucesso: true,
+      dados: {
+        provedor: atualizado.configWhatsApp?.provedorAtivo || atualizado.configWhatsApp?.provedor || null,
+        phoneNumberId: atualizado.configWhatsApp?.meta?.phoneNumberId || atualizado.configWhatsApp?.phoneNumberId || null,
+        wabaId: atualizado.configWhatsApp?.meta?.wabaId || atualizado.configWhatsApp?.wabaId || null,
+        displayPhoneNumber: atualizado.configWhatsApp?.meta?.displayPhoneNumber || atualizado.configWhatsApp?.displayPhoneNumber || null,
+        verifiedName: atualizado.configWhatsApp?.meta?.verifiedName || atualizado.configWhatsApp?.verifiedName || null,
+      },
+    })
+  } catch (erro) {
+    console.error('[Meta Embedded Signup] Erro ao concluir integração:', erro)
+    res.status(500).json({ sucesso: false, erro: { mensagem: erro.message || 'Não foi possível concluir a integração com a Meta.' } })
+  }
+}
+
+const desconectarMetaOficial = async (req, res) => {
+  try {
+    const tenantId = req.usuario.tenantId
+    const tenant = await buscarTenant(tenantId)
+    const cfgAtual = tenant.configWhatsApp || {}
+    const proximoAtivo = (cfgAtual?.provedorAtivo || cfgAtual?.provedor) === 'meta'
+      ? (cfgAtual?.sendzen ? 'sendzen' : null)
+      : (cfgAtual?.provedorAtivo || cfgAtual?.provedor || null)
+    const novoConfig = construirConfigWhatsApp({
+      cfgAtual,
+      provedorAtivo: proximoAtivo,
+      meta: null,
+    })
+
+    await banco.tenant.update({
+      where: { id: tenantId },
+      data: { configWhatsApp: novoConfig || null },
+    })
+
+    res.json({ sucesso: true, dados: { mensagem: 'Integração oficial da Meta desconectada.' } })
+  } catch (erro) {
+    res.status(500).json({ sucesso: false, erro: { mensagem: erro.message } })
   }
 }
 
@@ -808,17 +1430,20 @@ const enviarLinkAgendamento = async (req, res, next) => {
 
 module.exports = {
   webhook,
+  obterConfiguracaoMeta,
+  obterConfiguracaoSendzen,
+  concluirEmbeddedSignupMeta,
+  desconectarMetaOficial,
+  conectarSendzen,
+  desconectarSendzen,
   verificarWebhookMeta,
   webhookMeta,
-  iniciarWWebJS,
-  statusWWebJS,
-  desconectarWWebJS,
+  webhookSendzen,
   simular,
   testeCliente,
   resetarTesteCliente,
   suiteTesteCliente,
   enviarLinkAgendamento,
-  inicializarSessoesWWebJS,
   iniciarCronLembretes,
   processarWebhookInterno: processarWebhook,
 }

@@ -1,15 +1,30 @@
 ﻿const { Router } = require('express')
 const { body } = require('express-validator')
+const multer = require('multer')
 const { autenticar } = require('../../middlewares/autenticacao')
 const { validar } = require('../../middlewares/validacao')
 const clientesControlador = require('./clientes.controlador')
 
 const router = Router()
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 2 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const nome = String(file.originalname || '').toLowerCase()
+    if (
+      file.mimetype === 'text/csv'
+      || file.mimetype === 'application/vnd.ms-excel'
+      || nome.endsWith('.csv')
+    ) cb(null, true)
+    else cb(new Error('Envie uma planilha CSV (.csv)'))
+  },
+})
 
 router.use(autenticar)
 
 router.get('/', clientesControlador.listar)
 router.get('/aniversariantes', clientesControlador.aniversariantes)
+router.post('/importar', upload.single('arquivo'), clientesControlador.importar)
 router.get('/:id', clientesControlador.buscarPorId)
 
 router.post(

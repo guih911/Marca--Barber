@@ -196,6 +196,59 @@ const loginOuCadastrarGoogle = async ({ googleId, email, nome, avatarUrl }) => {
   }
 }
 
+const loginOuCadastrarFacebook = async ({ facebookId, email, nome, avatarUrl }) => {
+  const emailNormalizado = email || `facebook_${facebookId}@users.marcai.local`
+
+  let usuario = await banco.usuario.findFirst({
+    where: { OR: [{ facebookId }, { email: emailNormalizado }] },
+    include: { tenant: true },
+  })
+
+  if (!usuario) {
+    const slug = await gerarSlugUnico(nome)
+    const hashPublico = await gerarHashPublico()
+
+    usuario = await banco.$transaction(async (tx) => {
+      const tenant = await tx.tenant.create({
+        data: { nome, slug, hashPublico, onboardingCompleto: false },
+      })
+
+      return tx.usuario.create({
+        data: {
+          tenantId: tenant.id,
+          nome,
+          email: emailNormalizado,
+          facebookId,
+          avatarUrl,
+          perfil: 'ADMIN',
+        },
+        include: { tenant: true },
+      })
+    })
+  } else if (!usuario.facebookId) {
+    usuario = await banco.usuario.update({
+      where: { id: usuario.id },
+      data: { facebookId, avatarUrl: avatarUrl || usuario.avatarUrl },
+      include: { tenant: true },
+    })
+  }
+
+  const tokens = gerarTokens(usuario)
+  return {
+    accessToken: tokens.accessToken,
+    refreshToken: tokens.refreshToken,
+    usuario: {
+      id: usuario.id,
+      nome: usuario.nome,
+      email: usuario.email,
+      avatarUrl: usuario.avatarUrl,
+      tenantId: usuario.tenantId,
+      perfil: usuario.perfil,
+      onboardingCompleto: usuario.tenant.onboardingCompleto,
+    },
+  }
+}
+
 // Gera token de reset de senha e envia por e-mail
 const recuperarSenha = async ({ email }) => {
   const usuario = await banco.usuario.findUnique({ where: { email } })
@@ -280,6 +333,7 @@ module.exports = {
   login,
   renovarToken,
   loginOuCadastrarGoogle,
+  loginOuCadastrarFacebook,
   recuperarSenha,
   redefinirSenha,
   buscarMeuPerfil,

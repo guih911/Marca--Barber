@@ -44,11 +44,14 @@ const criar = async (tenantId, dados) => {
       tenantId,
       nome: dados.nome,
       descricao: dados.descricao || null,
+      fotoUrl: dados.fotoUrl || null,
       unidade: normalizarUnidade(dados.unidade),
       precoCustoCentavos: dados.precoCustoCentavos || null,
       precoVendaCentavos: dados.precoVendaCentavos || null,
       quantidadeAtual: Number(dados.quantidadeAtual) || 0,
       quantidadeMinima: Number(dados.quantidadeMinima) ?? 2,
+      divulgarNoLink: Boolean(dados.divulgarNoLink),
+      permiteEntrega: dados.permiteEntrega !== false,
     },
   })
 }
@@ -61,10 +64,13 @@ const atualizar = async (tenantId, id, dados) => {
     data: {
       nome: dados.nome,
       descricao: dados.descricao ?? null,
+      fotoUrl: dados.fotoUrl ?? null,
       unidade: normalizarUnidade(dados.unidade, produtoAtual.unidade),
       precoCustoCentavos: dados.precoCustoCentavos ?? null,
       precoVendaCentavos: dados.precoVendaCentavos ?? null,
       quantidadeMinima: Number(dados.quantidadeMinima) ?? 2,
+      divulgarNoLink: dados.divulgarNoLink !== undefined ? Boolean(dados.divulgarNoLink) : produtoAtual.divulgarNoLink,
+      permiteEntrega: dados.permiteEntrega !== undefined ? Boolean(dados.permiteEntrega) : produtoAtual.permiteEntrega,
       ativo: dados.ativo,
     },
   })

@@ -7,6 +7,7 @@ router.use(autenticar)
 
 router.get('/atual', caixaControlador.obterAtual)
 router.get('/', caixaControlador.listar)
+router.get('/visao-geral', caixaControlador.obterVisaoGeral)
 router.get('/:id/resumo', caixaControlador.obterResumoPorId)
 router.post('/abrir', caixaControlador.abrir)
 router.post('/fechar', caixaControlador.fechar)

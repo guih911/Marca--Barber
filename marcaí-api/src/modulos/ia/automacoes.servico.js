@@ -98,7 +98,7 @@ const enviarWhatsApp = async (tenant, telefone, mensagem) => {
   if (!tenant?.configWhatsApp) return
   const telNormalizado = normalizarTelefone(telefone)
   if (!telNormalizado) return
-  await whatsappServico.enviarMensagem(tenant.configWhatsApp, telNormalizado, mensagem, tenant.id)
+  await whatsappServico.enviarMensagem(tenant.configWhatsApp, telNormalizado || telefone, mensagem, tenant.id)
 }
 
 const gerarMensagemIA = async (systemPrompt) => {
@@ -432,11 +432,11 @@ const enviarParabens = async () => {
 
     const tenants = await banco.tenant.findMany({
       where: { ativo: true, configWhatsApp: { not: null } },
-      select: { id: true, nome: true, configWhatsApp: true, timezone: true, fidelidadeAtivo: true },
+      select: { id: true, nome: true, configWhatsApp: true, timezone: true, aniversarianteAtivo: true },
     })
 
     for (const tenant of tenants) {
-      if (!tenant.fidelidadeAtivo) continue
+      if (!tenant.aniversarianteAtivo) continue
 
       const configFidelidade = await fidelidadeServico.obterConfig(tenant.id)
       if (!configFidelidade?.aniversarioAtivo) continue

@@ -1,6 +1,35 @@
 import { useState, useEffect } from 'react'
 import { useLocation, useParams, useSearchParams } from 'react-router-dom'
-import { Loader2, Calendar, Clock, User, Scissors, ChevronLeft, Phone, CheckCircle, MapPin, Search, ExternalLink } from 'lucide-react'
+import {
+  Loader2,
+  Calendar,
+  Clock,
+  User,
+  Scissors,
+  ChevronLeft,
+  Phone,
+  CheckCircle,
+  Search,
+  ExternalLink,
+  X,
+  Instagram,
+  MessageCircle,
+  Wifi,
+  Snowflake,
+  CreditCard,
+  Banknote,
+  QrCode,
+  Accessibility,
+  Gamepad2,
+  Sparkles,
+  Package,
+  ShoppingCart,
+  Bike,
+  MapPin,
+  Plus,
+  Minus,
+} from 'lucide-react'
+import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '../../componentes/ui/select'
 
 const API_URL = import.meta.env.VITE_API_URL ?? ''
 const MARCAI_LOGO = '/logo.svg'
@@ -50,6 +79,12 @@ const formatarDataHoraCompleta = (iso) =>
     timeZone: 'America/Sao_Paulo',
   })
 
+const resumirJanelasEntrega = (janelas = []) => {
+  if (!Array.isArray(janelas) || janelas.length === 0) return ''
+  if (janelas.length === 1) return `Entregas em ${janelas[0].label}`
+  return `Entregas em ${janelas.map((item) => item.label).join(' • ')}`
+}
+
 const formatarTelefoneExibicao = (valor = '') => {
   const digitos = valor.replace(/\D/g, '')
   const semCodigo = digitos.startsWith('55') && digitos.length > 11 ? digitos.slice(2) : digitos
@@ -69,6 +104,30 @@ const normalizarTextoComparacao = (valor = '') =>
     .replace(/[\u0300-\u036f]/g, '')
     .toLowerCase()
     .trim()
+
+const resolverIconeComodidade = (item = '') => {
+  const valor = normalizarTextoComparacao(item)
+  if (valor.includes('wifi')) return Wifi
+  if (valor.includes('ar') && valor.includes('cond')) return Snowflake
+  if (valor.includes('sinuca') || valor.includes('jogo')) return Gamepad2
+  if (valor.includes('acess')) return Accessibility
+  return Sparkles
+}
+
+const resolverIconePagamento = (item = '') => {
+  const valor = normalizarTextoComparacao(item)
+  if (valor.includes('pix')) return QrCode
+  if (valor.includes('dinheiro')) return Banknote
+  if (valor.includes('cartao') || valor.includes('cartão')) return CreditCard
+  return CreditCard
+}
+
+const resolverIconeRede = (tipo = '') => {
+  const valor = normalizarTextoComparacao(tipo)
+  if (valor.includes('instagram')) return Instagram
+  if (valor.includes('whatsapp')) return MessageCircle
+  return ExternalLink
+}
 
 const DIAS_SEMANA = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb']
 const MESES = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez']
@@ -154,7 +213,7 @@ const limparDadosLocais = (slug) => {
 }
 
 // ─── Tela de Login OTP ──────────────────────────────────────────────────────
-const TelaLoginOTP = ({ slug, onLogin, tenant }) => {
+const TelaLoginOTP = ({ slug, onLogin, tenant, compacta = false }) => {
   const [telefone, setTelefone] = useState('')
   const [codigo, setCodigo] = useState('')
   const [etapaOTP, setEtapaOTP] = useState('inicio') // inicio | codigo
@@ -207,10 +266,20 @@ const TelaLoginOTP = ({ slug, onLogin, tenant }) => {
     : null
 
   return (
-    <div style={{ minHeight: '100vh', background: C.bg, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
+    <div
+      style={{
+        minHeight: compacta ? 'auto' : '100vh',
+        background: compacta ? 'transparent' : C.bg,
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: compacta ? 'flex-start' : 'center',
+        padding: compacta ? '0' : 20,
+      }}
+    >
       <div style={{ width: '100%', maxWidth: 380 }}>
         {/* Logo */}
-        <div style={{ textAlign: 'center', marginBottom: 32 }}>
+        <div style={{ textAlign: 'center', marginBottom: compacta ? 20 : 32 }}>
           {tenant?.logoUrl ? (
             <img src={resolverMediaUrl(tenant.logoUrl)} alt={tenant.nome} style={{ width: 64, height: 64, borderRadius: 16, objectFit: 'cover', marginBottom: 12 }} />
           ) : (
@@ -218,8 +287,8 @@ const TelaLoginOTP = ({ slug, onLogin, tenant }) => {
               <Scissors size={24} style={{ color: '#fff' }} />
             </div>
           )}
-          <h1 style={{ color: C.textPrimary, fontSize: 22, fontWeight: 700, margin: '0 0 4px' }}>{tenant?.nome || 'Barbearia'}</h1>
-          <p style={{ color: C.textDim, fontSize: 13, margin: 0 }}>Agende seu horário em segundos 💈</p>
+          <h1 style={{ color: C.textPrimary, fontSize: compacta ? 20 : 22, fontWeight: 700, margin: '0 0 4px' }}>{tenant?.nome || 'Barbearia'}</h1>
+          <p style={{ color: C.textDim, fontSize: 13, margin: 0 }}>{compacta ? 'Acesse sua conta com seu WhatsApp' : 'Agende seu horário em segundos 💈'}</p>
         </div>
 
         <div style={{ background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 16, padding: 24 }}>
@@ -347,13 +416,27 @@ const AgendaPublica = () => {
   const [servicos, setServicos] = useState([])
   const [profissionais, setProfissionais] = useState([])
   const [galeria, setGaleria] = useState([])
+  const [fotoAmpliada, setFotoAmpliada] = useState(null)
   const [abaAtiva, setAbaAtiva] = useState('detalhes')
   const [buscaProfissional, setBuscaProfissional] = useState('')
+  const [produtosVenda, setProdutosVenda] = useState([])
+  const [configEntrega, setConfigEntrega] = useState(null)
+  const [carrinho, setCarrinho] = useState([])
+  const [pedidoEndereco, setPedidoEndereco] = useState('')
+  const [pedidoReferencia, setPedidoReferencia] = useState('')
+  const [pedidoObservacoes, setPedidoObservacoes] = useState('')
+  const [pedidoFormaPagamento, setPedidoFormaPagamento] = useState('')
+  const [pedidoJanela, setPedidoJanela] = useState('')
+  const [pedidoEnviando, setPedidoEnviando] = useState(false)
+  const [pedidoErro, setPedidoErro] = useState(null)
+  const [pedidoSucesso, setPedidoSucesso] = useState(null)
+  const [meusPedidos, setMeusPedidos] = useState([])
 
   // Seleções de agendamento
   const [servicoId, setServicoId] = useState('')
   const [servicoIds, setServicoIds] = useState([])
   const [profissionalId, setProfissionalId] = useState('')
+  const [profissionalEscolhido, setProfissionalEscolhido] = useState(false)
   const [data, setData] = useState('')
   const [slot, setSlot] = useState(null)
 
@@ -407,7 +490,7 @@ const AgendaPublica = () => {
   const clienteConhecido = !!(dadosSalvos?.nome && dadosSalvos?.telefone)
   // Etapas visíveis na barra de progresso (sem a tela de sucesso)
   const totalEtapas = clienteConhecido ? 3 : 4
-  const instagramRede = tenant?.redesSociais?.find((rede) => rede.tipo === 'instagram')
+  const redesSociaisVisiveis = Array.isArray(tenant?.redesSociais) ? tenant.redesSociais : []
   const whatsappHref = tenant?.whatsappNumero ? `https://wa.me/${tenant.whatsappNumero.replace(/\D/g, '')}` : null
   const diaAtualNormalizado = normalizarTextoComparacao(
     new Date().toLocaleDateString('pt-BR', { weekday: 'long', timeZone: 'America/Sao_Paulo' }),
@@ -447,11 +530,27 @@ const AgendaPublica = () => {
 
   useEffect(() => {
     if (location.pathname.endsWith('/details')) setAbaAtiva('detalhes')
+    else if (location.pathname.endsWith('/produtos')) setAbaAtiva('produtos')
     else if (location.pathname.endsWith('/profissionais')) setAbaAtiva('profissionais')
     else if (location.pathname.endsWith('/agendar')) setAbaAtiva('agendar')
     else if (location.pathname.endsWith('/conta')) setAbaAtiva('conta')
     else setAbaAtiva('detalhes')
   }, [location.pathname])
+
+  useEffect(() => {
+    window.scrollTo({ top: 0, behavior: 'auto' })
+  }, [abaAtiva])
+
+  useEffect(() => {
+    if (!fotoAmpliada) return undefined
+
+    const fecharAoEsc = (event) => {
+      if (event.key === 'Escape') setFotoAmpliada(null)
+    }
+
+    window.addEventListener('keydown', fecharAoEsc)
+    return () => window.removeEventListener('keydown', fecharAoEsc)
+  }, [fotoAmpliada])
 
   // ── Carrega meus agendamentos e verifica assinatura quando cliente é conhecido
   useEffect(() => {
@@ -469,6 +568,26 @@ const AgendaPublica = () => {
       setAssinatura(assinaturaData?.temPlano ? assinaturaData.assinatura : null)
     }).finally(() => setMeusAgsCarregando(false))
   }, [dadosSalvos, slug])
+
+  useEffect(() => {
+    if (!tenant?.entregaAtivo || !slug) return
+    apiFetch(`/api/public/${slug}/produtos`)
+      .then((dados) => {
+        setProdutosVenda(Array.isArray(dados?.produtos) ? dados.produtos : [])
+        setConfigEntrega(dados?.configuracaoEntrega || null)
+      })
+      .catch(() => {
+        setProdutosVenda([])
+        setConfigEntrega(null)
+      })
+  }, [tenant?.entregaAtivo, slug])
+
+  useEffect(() => {
+    if (!tenant?.entregaAtivo || !telClienteLimpo || !slug) return
+    apiFetch(`/api/public/${slug}/meus-pedidos?tel=${telClienteLimpo}`)
+      .then((dados) => setMeusPedidos(Array.isArray(dados) ? dados : []))
+      .catch(() => setMeusPedidos([]))
+  }, [tenant?.entregaAtivo, telClienteLimpo, slug, pedidoSucesso])
 
   useEffect(() => {
     if (!telClienteLimpo || !slug) return
@@ -721,21 +840,108 @@ const AgendaPublica = () => {
     const primeiroId = servicoIds[0]
     setServicoId(primeiroId)
     const profPreSelecionadoValido = profissionais.some((p) => p.id === profissionalId && servicoIds.every((id) => p.servicoIds.includes(id)))
-    if (!profPreSelecionadoValido) setProfissionalId('')
+    if (!profPreSelecionadoValido) {
+      setProfissionalId('')
+      setProfissionalEscolhido(false)
+    } else {
+      setProfissionalEscolhido(true)
+    }
     setBuscaProfissional('')
     setEtapa(2)
   }
 
   const avancarEtapaProfissional = () => {
+    if (!profissionalEscolhido) return
     setData('')
     setSlot(null)
     setEtapa(3)
+  }
+
+  const abrirAgendamentoDoInicio = () => {
+    setServicoId('')
+    setServicoIds([])
+    setProfissionalId('')
+    setProfissionalEscolhido(false)
+    setBuscaProfissional('')
+    setData('')
+    setSlot(null)
+    setSlots([])
+    setErroAgendamento(null)
+    setAgendamentoConfirmado(null)
+    setEtapa(1)
+    setAbaAtiva('agendar')
+  }
+
+  const alterarQuantidadeCarrinho = (produto, delta) => {
+    setCarrinho((anterior) => {
+      const atual = anterior.find((item) => item.produtoId === produto.id)
+      const quantidadeAtual = atual?.quantidade || 0
+      const proximaQuantidade = Math.max(0, quantidadeAtual + delta)
+      if (proximaQuantidade === 0) return anterior.filter((item) => item.produtoId !== produto.id)
+      if (proximaQuantidade > Number(produto.quantidadeAtual || 0)) return anterior
+      if (atual) {
+        return anterior.map((item) => item.produtoId === produto.id ? { ...item, quantidade: proximaQuantidade } : item)
+      }
+      return [...anterior, { produtoId: produto.id, nome: produto.nome, precoVendaCentavos: produto.precoVendaCentavos || 0, quantidade: proximaQuantidade }]
+    })
+  }
+
+  const subtotalCarrinho = carrinho.reduce((soma, item) => soma + ((item.precoVendaCentavos || 0) * item.quantidade), 0)
+  const taxaEntregaCarrinho = configEntrega?.taxaEntregaCentavos || 0
+  const totalCarrinho = subtotalCarrinho + taxaEntregaCarrinho
+
+  const enviarPedido = async () => {
+    const nomePedido = dadosSalvos?.nome || nomeCliente
+    const telefonePedido = dadosSalvos?.telefone || telefoneCliente
+    if (!nomePedido?.trim()) return setPedidoErro('Informe seu nome para finalizar o pedido.')
+    if (!telefonePedido?.trim()) return setPedidoErro('Informe seu WhatsApp para finalizar o pedido.')
+    if (!pedidoEndereco.trim()) return setPedidoErro('Informe o endereço de entrega.')
+    if (!pedidoFormaPagamento) return setPedidoErro('Selecione a forma de pagamento.')
+    if ((configEntrega?.janelasEntrega || []).length > 0 && !pedidoJanela) return setPedidoErro('Selecione uma janela de entrega.')
+
+    setPedidoEnviando(true)
+    setPedidoErro(null)
+    try {
+      const janelaSelecionada = (configEntrega?.janelasEntrega || []).find((item) => item.label === pedidoJanela)
+      const dados = await apiFetch(`/api/public/${slug}/pedidos`, {
+        method: 'POST',
+        body: JSON.stringify({
+          nome: nomePedido,
+          telefone: telefonePedido,
+          enderecoEntrega: pedidoEndereco,
+          referenciaEndereco: pedidoReferencia,
+          observacoes: pedidoObservacoes,
+          formaPagamento: pedidoFormaPagamento,
+          janelaEntregaLabel: janelaSelecionada?.label || null,
+          janelaEntregaInicio: janelaSelecionada?.inicio || null,
+          janelaEntregaFim: janelaSelecionada?.fim || null,
+          itens: carrinho.map((item) => ({ produtoId: item.produtoId, quantidade: item.quantidade })),
+        }),
+      })
+      if (!dadosSalvos && nomePedido && telefonePedido) {
+        const novosDados = { nome: nomePedido.trim(), telefone: telefonePedido }
+        salvarDadosLocais(slug, novosDados)
+        setDadosSalvos(novosDados)
+      }
+      setPedidoSucesso(dados)
+      setCarrinho([])
+      setPedidoEndereco('')
+      setPedidoReferencia('')
+      setPedidoObservacoes('')
+      setPedidoFormaPagamento('')
+      setPedidoJanela('')
+    } catch (e) {
+      setPedidoErro(e.message || 'Não foi possível enviar seu pedido.')
+    } finally {
+      setPedidoEnviando(false)
+    }
   }
 
   // ── Resetar para novo agendamento ─────────────────────────────────────
   const reiniciar = () => {
     setServicoId('')
     setProfissionalId('')
+    setProfissionalEscolhido(false)
     setData('')
     setSlot(null)
     setSlots([])
@@ -932,6 +1138,92 @@ const AgendaPublica = () => {
           grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
           gap: 12px;
         }
+        .details-section-card {
+          background: #171717;
+          border: 1px solid rgba(255,255,255,0.06);
+          border-radius: 18px;
+          padding: 16px;
+        }
+        .details-section-title {
+          color: ${C.textPrimary};
+          font-size: 14px;
+          font-weight: 700;
+          margin: 0 0 12px;
+        }
+        .details-icon-grid {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 10px;
+        }
+        .details-icon-card {
+          min-width: 60px;
+          min-height: 60px;
+          padding: 10px 12px;
+          border-radius: 12px;
+          background: #121212;
+          border: 1px solid rgba(255,255,255,0.05);
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          gap: 7px;
+          text-align: center;
+        }
+        .details-payment-chip {
+          padding: 10px 14px;
+          border-radius: 12px;
+          background: #121212;
+          border: 1px solid rgba(255,255,255,0.05);
+          display: inline-flex;
+          align-items: center;
+          gap: 8px;
+        }
+        .details-gallery-button {
+          width: 100%;
+          padding: 0;
+          border: 0;
+          background: transparent;
+          text-align: left;
+          cursor: zoom-in;
+        }
+        .details-gallery-modal {
+          position: fixed;
+          inset: 0;
+          z-index: 60;
+          background: rgba(0,0,0,0.92);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: 24px;
+        }
+        .details-gallery-modal-content {
+          position: relative;
+          width: min(100%, 960px);
+          max-height: 100%;
+        }
+        .details-gallery-modal-image {
+          width: 100%;
+          max-height: calc(100vh - 96px);
+          object-fit: contain;
+          border-radius: 20px;
+          display: block;
+          background: #0b0b0b;
+        }
+        .details-gallery-modal-close {
+          position: absolute;
+          top: -10px;
+          right: -10px;
+          width: 40px;
+          height: 40px;
+          border-radius: 999px;
+          border: 1px solid rgba(255,255,255,0.15);
+          background: rgba(15,15,15,0.88);
+          color: ${C.textPrimary};
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          cursor: pointer;
+        }
         .details-hours-row {
           display: grid;
           grid-template-columns: minmax(118px, 148px) 1fr;
@@ -1066,6 +1358,8 @@ const AgendaPublica = () => {
               <p className="public-brand-kicker">
                 {abaAtiva === 'detalhes'
                   ? 'Detalhes da barbearia'
+                  : abaAtiva === 'produtos'
+                    ? 'Produtos e entrega'
                   : abaAtiva === 'profissionais'
                     ? 'Escolha seu barbeiro'
                     : abaAtiva === 'conta'
@@ -1076,7 +1370,11 @@ const AgendaPublica = () => {
                 {tenant?.nome}
               </h1>
               <p style={{ color: C.textDim, fontSize: 11, margin: '4px 0 0' }}>
-                {tenant?.horarioFuncionamento || 'Escolha seu horário em poucos passos.'}
+                {abaAtiva === 'detalhes'
+                  ? 'Confira os detalhes e agende em poucos passos.'
+                  : abaAtiva === 'produtos'
+                    ? 'Peça produtos e receba no endereço informado.'
+                  : (tenant?.horarioFuncionamento || 'Escolha seu horário em poucos passos.')}
               </p>
             </div>
           </div>
@@ -1102,15 +1400,20 @@ const AgendaPublica = () => {
         <div className="public-content-shell public-tabs-shell">
           {[
             { id: 'detalhes', label: 'Detalhes' },
-            { id: 'profissionais', label: 'Profissionais' },
-            { id: 'agendar', label: 'Agendar' },
+            ...(tenant?.entregaAtivo ? [{ id: 'produtos', label: 'Produtos' }] : []),
             { id: 'conta', label: 'Minha conta' },
           ].map((aba) => {
             const ativa = abaAtiva === aba.id
             return (
               <button
                 key={aba.id}
-                onClick={() => setAbaAtiva(aba.id)}
+                onClick={() => {
+                  if (aba.id === 'agendar' && abaAtiva !== 'agendar') {
+                    abrirAgendamentoDoInicio()
+                    return
+                  }
+                  setAbaAtiva(aba.id)
+                }}
                 style={{
                   flex: 1,
                   padding: '10px 12px',
@@ -1401,7 +1704,7 @@ const AgendaPublica = () => {
       )}
 
       {/* ── Conteúdo ── */}
-      <div className="public-content-shell" style={{ flex: 1, padding: '20px 16px 112px', boxSizing: 'border-box' }}>
+      <div className="public-content-shell" style={{ flex: 1, padding: `20px 16px ${abaAtiva === 'detalhes' ? 156 : 112}px`, boxSizing: 'border-box' }}>
 
         {abaAtiva === 'detalhes' && (
           <div className="fade-in" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -1434,11 +1737,6 @@ const AgendaPublica = () => {
                   <div style={{ minWidth: 0 }}>
                     <p style={{ color: '#d5b38a', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1.6, margin: 0 }}>Sua próxima visita começa aqui</p>
                     <h2 style={{ color: C.textPrimary, fontSize: 24, lineHeight: 1.1, margin: '6px 0 8px' }}>{tenant?.nome}</h2>
-                    {tenant?.horarioFuncionamento && (
-                      <p style={{ color: '#d2d2d2', fontSize: 13, lineHeight: 1.5, margin: 0 }}>
-                        Atendimento {tenant.horarioFuncionamento}
-                      </p>
-                    )}
                   </div>
                 </div>
 
@@ -1459,81 +1757,71 @@ const AgendaPublica = () => {
                   </div>
                 </div>
 
-                {(tenant?.endereco || whatsappHref || instagramRede || tenant?.linkMaps) && (
+                {(tenant?.endereco || whatsappHref || redesSociaisVisiveis.length > 0 || tenant?.linkMaps) && (
                   <div className="details-contact-grid">
                     {(tenant?.endereco || tenant?.linkMaps) && (
-                      <div style={{ padding: 16, borderRadius: 18, background: 'rgba(0,0,0,0.22)', border: '1px solid rgba(255,255,255,0.06)' }}>
-                        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
-                          <div style={{ width: 36, height: 36, borderRadius: 12, background: 'rgba(184,137,77,0.14)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                            <MapPin size={17} style={{ color: C.gold }} />
-                          </div>
-                          <div>
-                            <p style={{ color: C.textPrimary, fontWeight: 700, fontSize: 14, margin: 0 }}>Onde estamos</p>
-                            {tenant?.endereco && <p style={{ color: '#d2d2d2', fontSize: 13, lineHeight: 1.6, margin: '6px 0 0' }}>{tenant.endereco}</p>}
-                            {tenant?.linkMaps && (
-                              <a href={tenant.linkMaps} target="_blank" rel="noreferrer" style={{ color: '#f0c893', fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 6, marginTop: 10, textDecoration: 'none', fontWeight: 700, flexWrap: 'wrap' }}>
-                                Abrir no mapa <ExternalLink size={12} />
-                              </a>
-                            )}
-                          </div>
-                        </div>
+                      <div className="details-section-card">
+                        <p className="details-section-title">Endereço</p>
+                        {tenant?.endereco && (
+                          <p style={{ color: C.textSecondary, fontSize: 14, lineHeight: 1.6, margin: 0 }}>
+                            {tenant.endereco}
+                          </p>
+                        )}
+                        {tenant?.linkMaps && (
+                          <a
+                            href={tenant.linkMaps}
+                            target="_blank"
+                            rel="noreferrer"
+                            style={{ color: '#f0c893', fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 6, marginTop: 10, textDecoration: 'none', fontWeight: 700, flexWrap: 'wrap' }}
+                          >
+                            Abrir no mapa <ExternalLink size={12} />
+                          </a>
+                        )}
                       </div>
                     )}
 
-                    {(whatsappHref || instagramRede) && (
-                      <div style={{ padding: 16, borderRadius: 18, background: 'rgba(0,0,0,0.22)', border: '1px solid rgba(255,255,255,0.06)' }}>
-                        <p style={{ color: C.textPrimary, fontWeight: 700, fontSize: 14, margin: '0 0 12px' }}>Contato rápido</p>
-                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+                    {(whatsappHref || redesSociaisVisiveis.length > 0) && (
+                      <div className="details-section-card">
+                        <p className="details-section-title">Redes sociais</p>
+                        <div className="details-icon-grid">
                           {whatsappHref && (
                             <a
                               href={whatsappHref}
                               target="_blank"
                               rel="noreferrer"
                               style={{
-                                flex: 1,
-                                minWidth: 140,
-                                padding: '12px 14px',
-                                borderRadius: 14,
-                                background: 'linear-gradient(135deg, rgba(37,211,102,0.2), rgba(37,211,102,0.08))',
-                                border: '1px solid rgba(37,211,102,0.28)',
-                                color: '#b6f3c9',
-                                fontSize: 13,
-                                fontWeight: 700,
                                 textDecoration: 'none',
-                                display: 'inline-flex',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                gap: 8,
-                              }}
-                            >
-                              <Phone size={15} /> WhatsApp
-                            </a>
-                          )}
-                          {instagramRede && (
-                            <a
-                              href={instagramRede.url}
-                              target="_blank"
-                              rel="noreferrer"
-                              style={{
-                                flex: 1,
-                                minWidth: 140,
-                                padding: '12px 14px',
-                                borderRadius: 14,
-                                background: 'linear-gradient(135deg, rgba(184,137,77,0.22), rgba(184,137,77,0.07))',
-                                border: '1px solid rgba(184,137,77,0.32)',
                                 color: '#f0c893',
-                                fontSize: 13,
-                                fontWeight: 700,
-                                textDecoration: 'none',
-                                display: 'inline-flex',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                gap: 8,
                               }}
                             >
-                              <ExternalLink size={15} /> Instagram
+                              <span className="details-icon-card" style={{ border: '1px solid rgba(184,137,77,0.18)' }}>
+                                <MessageCircle size={18} />
+                                <span style={{ fontSize: 11, fontWeight: 700 }}>WhatsApp</span>
+                              </span>
                             </a>
                           )}
+                          {redesSociaisVisiveis
+                            .filter((rede) => normalizarTextoComparacao(rede.tipo || rede.label) !== 'whatsapp')
+                            .map((rede) => {
+                            const Icone = resolverIconeRede(rede.tipo || rede.label)
+                            return (
+                              <a
+                                key={rede.tipo}
+                                href={rede.url}
+                                target="_blank"
+                                rel="noreferrer"
+                                style={{
+                                  textDecoration: 'none',
+                                  color: '#f0c893',
+                                }}
+                              >
+                                <span className="details-icon-card" style={{ border: '1px solid rgba(184,137,77,0.18)' }}>
+                                  <Icone size={18} />
+                                  <span style={{ fontSize: 11, fontWeight: 700 }}>{rede.label}</span>
+                                </span>
+                              </a>
+                            )
+                            })}
                         </div>
                       </div>
                     )}
@@ -1601,60 +1889,42 @@ const AgendaPublica = () => {
 
             <div className="details-info-grid" style={{ gap: 14 }}>
               {Array.isArray(tenant?.comodidades) && tenant.comodidades.length > 0 && (
-                <div style={{ background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 20, padding: 18 }}>
-                  <p style={{ color: C.textPrimary, fontWeight: 700, fontSize: 16, margin: '0 0 6px' }}>Comodidades</p>
-                  <p style={{ color: C.textDim, fontSize: 12, lineHeight: 1.5, margin: '0 0 12px' }}>Tudo o que melhora sua experiência durante o atendimento.</p>
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                <div className="details-section-card">
+                  <p className="details-section-title">Comodidades</p>
+                  <div className="details-icon-grid">
                     {tenant.comodidades.map((item) => (
-                      <span key={item} style={{ padding: '9px 11px', borderRadius: 999, background: 'rgba(255,255,255,0.03)', border: `1px solid ${C.border}`, color: C.textSecondary, fontSize: 12, fontWeight: 600 }}>
-                        {item}
-                      </span>
+                      <div
+                        key={item}
+                        className="details-icon-card"
+                        style={{
+                          color: '#f0c893',
+                          border: '1px solid rgba(184,137,77,0.18)',
+                          background: 'rgba(184,137,77,0.06)',
+                        }}
+                      >
+                        {(() => {
+                          const Icone = resolverIconeComodidade(item)
+                          return <Icone size={17} style={{ color: '#f0c893' }} />
+                        })()}
+                        <span style={{ fontSize: 10, fontWeight: 600, lineHeight: 1.3 }}>{item}</span>
+                      </div>
                     ))}
                   </div>
                 </div>
               )}
 
               {Array.isArray(tenant?.pagamentos) && tenant.pagamentos.length > 0 && (
-                <div style={{ background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 20, padding: 18 }}>
-                  <p style={{ color: C.textPrimary, fontWeight: 700, fontSize: 16, margin: '0 0 6px' }}>Formas de pagamento</p>
-                  <p style={{ color: C.textDim, fontSize: 12, lineHeight: 1.5, margin: '0 0 12px' }}>Escolha a forma mais prática para fechar seu atendimento.</p>
+                <div className="details-section-card">
+                  <p className="details-section-title">Formas de pagamento</p>
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
                     {tenant.pagamentos.map((item) => (
-                      <span key={item} style={{ padding: '9px 11px', borderRadius: 999, background: 'rgba(184,137,77,0.08)', border: '1px solid rgba(184,137,77,0.18)', color: '#e9c08e', fontSize: 12, fontWeight: 700 }}>
+                      <span key={item} className="details-payment-chip" style={{ color: C.textPrimary, fontSize: 12, fontWeight: 700 }}>
+                        {(() => {
+                          const Icone = resolverIconePagamento(item)
+                          return <Icone size={15} style={{ color: C.gold }} />
+                        })()}
                         {item}
                       </span>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {Array.isArray(tenant?.redesSociais) && tenant.redesSociais.length > 0 && (
-                <div style={{ background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 20, padding: 18 }}>
-                  <p style={{ color: C.textPrimary, fontWeight: 700, fontSize: 16, margin: '0 0 6px' }}>Redes sociais</p>
-                  <p style={{ color: C.textDim, fontSize: 12, lineHeight: 1.5, margin: '0 0 12px' }}>Veja trabalhos recentes, novidades e acompanhe a rotina da casa.</p>
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-                    {tenant.redesSociais.map((rede) => (
-                      <a
-                        key={rede.tipo}
-                        href={rede.url}
-                        target="_blank"
-                        rel="noreferrer"
-                        style={{
-                          padding: '10px 12px',
-                          borderRadius: 14,
-                          background: 'rgba(255,255,255,0.03)',
-                          border: `1px solid ${C.border}`,
-                          color: C.textSecondary,
-                          fontSize: 12,
-                          fontWeight: 700,
-                          textDecoration: 'none',
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          gap: 6,
-                        }}
-                      >
-                        {rede.label} <ExternalLink size={12} />
-                      </a>
                     ))}
                   </div>
                 </div>
@@ -1672,9 +1942,11 @@ const AgendaPublica = () => {
                 </div>
                 <div className="details-gallery-grid">
                   {galeria.map((foto, index) => (
-                    <div
+                    <button
                       key={foto.id}
-                      className={index === 0 ? 'details-gallery-card-feature' : ''}
+                      type="button"
+                      className={`details-gallery-button ${index === 0 ? 'details-gallery-card-feature' : ''}`}
+                      onClick={() => setFotoAmpliada(foto)}
                       style={{
                         borderRadius: 18,
                         overflow: 'hidden',
@@ -1693,29 +1965,271 @@ const AgendaPublica = () => {
                           )}
                         </div>
                       )}
-                    </div>
+                    </button>
                   ))}
                 </div>
               </div>
             )}
 
-            <button
-              onClick={() => setAbaAtiva('agendar')}
+            <div
               style={{
-                width: '100%',
-                padding: '16px 0',
-                borderRadius: 16,
-                border: 'none',
-                background: 'linear-gradient(135deg, #c39257, #a9783f)',
-                color: C.textOnGold,
-                fontWeight: 700,
-                fontSize: 15,
-                cursor: 'pointer',
-                boxShadow: '0 18px 26px rgba(184,137,77,0.18)',
+                position: 'fixed',
+                left: '50%',
+                bottom: 22,
+                transform: 'translateX(-50%)',
+                width: 'min(320px, calc(100vw - 32px))',
+                zIndex: 30,
               }}
             >
-              Ir para o agendamento
-            </button>
+              <button
+                onClick={abrirAgendamentoDoInicio}
+                style={{
+                  width: '100%',
+                  padding: '16px 18px',
+                  borderRadius: 999,
+                  border: '1px solid rgba(184,137,77,0.3)',
+                  background: 'linear-gradient(135deg, #c39257, #a9783f)',
+                  color: C.textOnGold,
+                  fontWeight: 700,
+                  fontSize: 15,
+                  cursor: 'pointer',
+                  boxShadow: '0 18px 32px rgba(0,0,0,0.34)',
+                }}
+              >
+                Ir para o agendamento
+              </button>
+            </div>
+          </div>
+        )}
+
+        {abaAtiva === 'produtos' && (
+          <div className="fade-in" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+            <div
+              style={{
+                background: 'radial-gradient(circle at top right, rgba(184,137,77,0.16), transparent 34%), linear-gradient(180deg, rgba(184,137,77,0.12), rgba(22,22,22,0.98))',
+                border: `1px solid ${C.border}`,
+                borderRadius: 24,
+                padding: 20,
+                boxShadow: '0 18px 42px rgba(0,0,0,0.24)',
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+                <div>
+                  <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, marginBottom: 10, padding: '7px 11px', borderRadius: 999, border: '1px solid rgba(184,137,77,0.22)', background: 'rgba(184,137,77,0.08)', color: C.gold, fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1.3 }}>
+                    <Bike size={12} />
+                    Delivery da barbearia
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+                    <Package size={18} style={{ color: C.gold }} />
+                    <h2 style={{ color: C.textPrimary, fontSize: 20, margin: 0 }}>Produtos para entrega</h2>
+                  </div>
+                  <p style={{ color: C.textSecondary, fontSize: 13, margin: 0, maxWidth: 520, lineHeight: 1.5 }}>
+                    Monte seu pedido, escolha a forma de pagamento e acompanhe o andamento da entrega direto pelo seu WhatsApp.
+                  </p>
+                </div>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  {(configEntrega?.janelasEntrega || []).length > 0 && (
+                    <span style={{ padding: '9px 12px', borderRadius: 999, background: 'rgba(255,255,255,0.05)', border: `1px solid ${C.border}`, color: C.textPrimary, fontSize: 12, fontWeight: 600 }}>
+                      {resumirJanelasEntrega(configEntrega.janelasEntrega)}
+                    </span>
+                  )}
+                  {configEntrega?.tempoMedioEntregaMin > 0 && (
+                    <span style={{ padding: '9px 12px', borderRadius: 999, background: 'rgba(255,255,255,0.05)', border: `1px solid ${C.border}`, color: C.textPrimary, fontSize: 12, fontWeight: 600 }}>
+                      {configEntrega.tempoMedioEntregaMin} min em média
+                    </span>
+                  )}
+                  {configEntrega?.taxaEntregaCentavos > 0 && (
+                    <span style={{ padding: '9px 12px', borderRadius: 999, background: 'rgba(255,255,255,0.05)', border: `1px solid ${C.border}`, color: C.textPrimary, fontSize: 12, fontWeight: 600 }}>
+                      Taxa {formatarReais(configEntrega.taxaEntregaCentavos)}
+                    </span>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {produtosVenda.length === 0 ? (
+              <div style={{ background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 22, padding: 24, textAlign: 'center', color: C.textDim }}>
+                Nenhum produto disponível para entrega no momento.
+              </div>
+            ) : (
+              <div style={{ display: 'grid', gap: 12 }}>
+                {produtosVenda.map((produto) => {
+                  const itemCarrinho = carrinho.find((item) => item.produtoId === produto.id)
+                  return (
+                    <div
+                      key={produto.id}
+                      style={{
+                        background: itemCarrinho ? 'linear-gradient(180deg, rgba(184,137,77,0.08), rgba(22,22,22,1))' : C.bgCard,
+                        border: `1px solid ${itemCarrinho ? 'rgba(184,137,77,0.38)' : C.border}`,
+                        borderRadius: 22,
+                        padding: 14,
+                        display: 'flex',
+                        gap: 14,
+                        boxShadow: itemCarrinho ? '0 16px 32px rgba(0,0,0,0.2)' : 'none',
+                      }}
+                    >
+                      <div style={{ width: 84, height: 84, borderRadius: 18, overflow: 'hidden', background: '#111', flexShrink: 0, border: `1px solid ${C.border}` }}>
+                        {produto.fotoUrl
+                          ? <img src={resolverMediaUrl(produto.fotoUrl)} alt={produto.nome} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                          : <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: C.gold }}><Package size={24} /></div>}
+                      </div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10 }}>
+                          <div>
+                            <p style={{ color: C.textPrimary, fontWeight: 700, fontSize: 15, margin: 0 }}>{produto.nome}</p>
+                            {produto.descricao && <p style={{ color: C.textDim, fontSize: 12, margin: '6px 0 0', lineHeight: 1.45 }}>{produto.descricao}</p>}
+                          </div>
+                          {itemCarrinho && (
+                            <span style={{ padding: '6px 9px', borderRadius: 999, background: 'rgba(184,137,77,0.14)', color: C.gold, fontSize: 11, fontWeight: 700, whiteSpace: 'nowrap' }}>
+                              No carrinho
+                            </span>
+                          )}
+                        </div>
+                        <p style={{ color: C.gold, fontSize: 15, fontWeight: 700, margin: '10px 0 0' }}>{formatarReais(produto.precoVendaCentavos)}</p>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 12, gap: 12 }}>
+                          <span style={{ color: C.textDim, fontSize: 11 }}>Disponível: {produto.quantidadeAtual}</span>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: 4, borderRadius: 999, background: 'rgba(255,255,255,0.04)', border: `1px solid ${C.border}` }}>
+                            <button onClick={() => alterarQuantidadeCarrinho(produto, -1)} style={{ width: 32, height: 32, borderRadius: 999, border: `1px solid ${C.border}`, background: 'transparent', color: C.textPrimary, display: 'flex', alignItems: 'center', justifyContent: 'center' }}><Minus size={14} /></button>
+                            <span style={{ color: C.textPrimary, minWidth: 24, textAlign: 'center', fontWeight: 700 }}>{itemCarrinho?.quantidade || 0}</span>
+                            <button onClick={() => alterarQuantidadeCarrinho(produto, 1)} style={{ width: 32, height: 32, borderRadius: 999, border: `1px solid rgba(184,137,77,0.26)`, background: C.bgSelected, color: C.gold, display: 'flex', alignItems: 'center', justifyContent: 'center' }}><Plus size={14} /></button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+
+            <div style={{ background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 24, padding: 18, boxShadow: '0 18px 42px rgba(0,0,0,0.2)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'flex-start', marginBottom: 14, flexWrap: 'wrap' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <ShoppingCart size={18} style={{ color: C.gold }} />
+                  <div>
+                    <p style={{ color: C.textPrimary, fontWeight: 700, fontSize: 17, margin: 0 }}>Carrinho e entrega</p>
+                    <p style={{ color: C.textDim, fontSize: 12, margin: '4px 0 0' }}>Feche o pedido com endereço, pagamento e janela disponível.</p>
+                  </div>
+                </div>
+                {carrinho.length > 0 && (
+                  <span style={{ padding: '8px 11px', borderRadius: 999, background: 'rgba(184,137,77,0.12)', color: C.gold, fontSize: 12, fontWeight: 700 }}>
+                    {carrinho.reduce((total, item) => total + item.quantidade, 0)} item(ns)
+                  </span>
+                )}
+              </div>
+              {(configEntrega?.janelasEntrega || []).length > 0 && (
+                <div style={{ marginBottom: 14, padding: '12px 14px', borderRadius: 16, background: 'rgba(184,137,77,0.08)', border: '1px solid rgba(184,137,77,0.18)' }}>
+                  <p style={{ color: C.textPrimary, fontSize: 13, fontWeight: 700, margin: 0 }}>Horários de delivery</p>
+                  <p style={{ color: C.textSecondary, fontSize: 12, lineHeight: 1.5, margin: '6px 0 0' }}>
+                    Os pedidos são entregues nestes períodos: {configEntrega.janelasEntrega.map((item) => item.label).join(' • ')}.
+                  </p>
+                </div>
+              )}
+              {carrinho.length === 0 ? (
+                <p style={{ color: C.textDim, fontSize: 12, margin: 0 }}>Adicione produtos para montar seu pedido.</p>
+              ) : (
+                <div style={{ display: 'grid', gap: 12 }}>
+                  <div style={{ display: 'grid', gap: 8 }}>
+                    {carrinho.map((item) => (
+                      <div key={item.produtoId} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '12px 14px', borderRadius: 16, background: C.bg, border: `1px solid ${C.border}` }}>
+                        <div>
+                          <p style={{ color: C.textPrimary, fontWeight: 600, fontSize: 13, margin: 0 }}>{item.nome}</p>
+                          <p style={{ color: C.textDim, fontSize: 11, margin: '2px 0 0' }}>{item.quantidade} x {formatarReais(item.precoVendaCentavos)}</p>
+                        </div>
+                        <span style={{ color: C.gold, fontWeight: 700, fontSize: 13 }}>{formatarReais(item.quantidade * item.precoVendaCentavos)}</span>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: 14, display: 'grid', gap: 8 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', color: C.textDim, fontSize: 12 }}>
+                      <span>Subtotal</span>
+                      <span>{formatarReais(subtotalCarrinho)}</span>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', color: C.textDim, fontSize: 12 }}>
+                      <span>Taxa de entrega</span>
+                      <span>{formatarReais(taxaEntregaCarrinho)}</span>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', color: C.textPrimary, fontSize: 14, fontWeight: 700 }}>
+                      <span>Total</span>
+                      <span>{formatarReais(totalCarrinho)}</span>
+                    </div>
+                    {configEntrega?.valorMinimoEntregaCentavos > 0 && (
+                      <p style={{ color: C.textDim, fontSize: 11, margin: 0 }}>
+                        Pedido mínimo para entrega: {formatarReais(configEntrega.valorMinimoEntregaCentavos)}
+                      </p>
+                    )}
+                  </div>
+
+                  {!dadosSalvos && (
+                    <>
+                      <input value={nomeCliente} onChange={(e) => setNomeCliente(e.target.value)} placeholder="Seu nome" style={{ width: '100%', padding: '13px 14px', borderRadius: 14, background: C.bg, border: `1px solid ${C.border}`, color: C.textPrimary, boxSizing: 'border-box' }} />
+                      <input value={telefoneCliente} onChange={(e) => setTelefoneCliente(mascaraTelefone(e.target.value))} placeholder="Seu WhatsApp" style={{ width: '100%', padding: '13px 14px', borderRadius: 14, background: C.bg, border: `1px solid ${C.border}`, color: C.textPrimary, boxSizing: 'border-box' }} />
+                    </>
+                  )}
+                  <input value={pedidoEndereco} onChange={(e) => setPedidoEndereco(e.target.value)} placeholder="Endereço de entrega" style={{ width: '100%', padding: '13px 14px', borderRadius: 14, background: C.bg, border: `1px solid ${C.border}`, color: C.textPrimary, boxSizing: 'border-box' }} />
+                  <input value={pedidoReferencia} onChange={(e) => setPedidoReferencia(e.target.value)} placeholder="Ponto de referência (opcional)" style={{ width: '100%', padding: '13px 14px', borderRadius: 14, background: C.bg, border: `1px solid ${C.border}`, color: C.textPrimary, boxSizing: 'border-box' }} />
+                  <textarea value={pedidoObservacoes} onChange={(e) => setPedidoObservacoes(e.target.value)} placeholder="Observações do pedido (opcional)" rows={3} style={{ width: '100%', padding: '13px 14px', borderRadius: 14, background: C.bg, border: `1px solid ${C.border}`, color: C.textPrimary, boxSizing: 'border-box', resize: 'vertical' }} />
+
+                  <Select value={pedidoFormaPagamento || '__sel__'} onValueChange={(valor) => setPedidoFormaPagamento(valor === '__sel__' ? '' : valor)}>
+                    <SelectTrigger className="h-12 rounded-[14px] border-[#2a2a2a] bg-[#111111] text-white data-[placeholder]:text-[#888888]">
+                      <SelectValue placeholder="Forma de pagamento" />
+                    </SelectTrigger>
+                    <SelectContent className="border-[#2a2a2a] bg-[#111111]">
+                      <SelectItem className="text-white focus:bg-[#1a1208] focus:text-[#B8894D]" value="__sel__">Forma de pagamento</SelectItem>
+                      {(tenant?.pagamentos || []).map((pagamento) => (
+                        <SelectItem className="text-white focus:bg-[#1a1208] focus:text-[#B8894D]" key={pagamento} value={pagamento}>
+                          {pagamento}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+
+                  {(configEntrega?.janelasEntrega || []).length > 0 && (
+                    <Select value={pedidoJanela || '__sel__'} onValueChange={(valor) => setPedidoJanela(valor === '__sel__' ? '' : valor)}>
+                      <SelectTrigger className="h-12 rounded-[14px] border-[#2a2a2a] bg-[#111111] text-white data-[placeholder]:text-[#888888]">
+                        <SelectValue placeholder="Horário de entrega" />
+                      </SelectTrigger>
+                      <SelectContent className="border-[#2a2a2a] bg-[#111111]">
+                        <SelectItem className="text-white focus:bg-[#1a1208] focus:text-[#B8894D]" value="__sel__">Horário de entrega</SelectItem>
+                        {configEntrega.janelasEntrega.map((item) => (
+                          <SelectItem className="text-white focus:bg-[#1a1208] focus:text-[#B8894D]" key={item.label} value={item.label}>
+                            {item.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )}
+
+                  {pedidoErro && <p style={{ color: '#f87171', fontSize: 12, margin: 0 }}>{pedidoErro}</p>}
+                  {pedidoSucesso && (
+                    <div style={{ padding: 12, borderRadius: 12, background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.24)' }}>
+                      <p style={{ color: '#86efac', fontSize: 12, fontWeight: 700, margin: 0 }}>Pedido enviado com sucesso!</p>
+                      <p style={{ color: C.textSecondary, fontSize: 12, margin: '6px 0 0' }}>
+                        {pedidoSucesso.previsaoEntregaEm ? `Previsão aproximada: ${formatarDataHoraCompleta(pedidoSucesso.previsaoEntregaEm)}` : 'Seu pedido entrou na fila de entrega.'}
+                      </p>
+                    </div>
+                  )}
+
+                  <button
+                    onClick={enviarPedido}
+                    disabled={carrinho.length === 0 || pedidoEnviando}
+                    style={{
+                      width: '100%',
+                      padding: '15px 0',
+                      borderRadius: 14,
+                      border: carrinho.length === 0 ? 'none' : '1px solid rgba(184,137,77,0.24)',
+                      background: carrinho.length === 0 ? C.border : 'linear-gradient(135deg, #c39257, #a9783f)',
+                      color: carrinho.length === 0 ? C.textDim : C.textOnGold,
+                      fontWeight: 700,
+                      cursor: carrinho.length === 0 ? 'not-allowed' : 'pointer',
+                      boxShadow: carrinho.length === 0 ? 'none' : '0 16px 28px rgba(0,0,0,0.22)',
+                    }}
+                  >
+                    {pedidoEnviando ? 'Enviando pedido...' : 'Fechar pedido'}
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
         )}
 
@@ -1852,6 +2366,25 @@ const AgendaPublica = () => {
                 )}
               </div>
 
+              {tenant?.entregaAtivo && (
+                <div style={{ background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 18, padding: 18 }}>
+                  <p style={{ color: C.textPrimary, fontWeight: 700, fontSize: 16, margin: '0 0 10px' }}>Meus pedidos</p>
+                  {meusPedidos.length === 0 ? (
+                    <p style={{ color: C.textDim, fontSize: 12, margin: 0 }}>Você ainda não fez nenhum pedido de entrega.</p>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                      {meusPedidos.map((pedido) => (
+                        <div key={pedido.id} style={{ padding: 12, borderRadius: 12, background: C.bg, border: `1px solid ${C.border}` }}>
+                          <p style={{ color: C.textPrimary, fontWeight: 700, fontSize: 13, margin: 0 }}>{pedido.itens.map((item) => item.nomeProduto).join(', ')}</p>
+                          <p style={{ color: C.textSecondary, fontSize: 12, margin: '4px 0 0' }}>{pedido.formaPagamento}</p>
+                          <p style={{ color: C.gold, fontSize: 12, margin: '4px 0 0' }}>{pedido.status} · {formatarReais(pedido.totalCentavos)}</p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
               <div style={{ background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 18, padding: 18 }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 10 }}>
                   <p style={{ color: C.textPrimary, fontWeight: 700, fontSize: 16, margin: 0 }}>Histórico</p>
@@ -1920,6 +2453,7 @@ const AgendaPublica = () => {
             <TelaLoginOTP
               slug={slug}
               tenant={tenant}
+              compacta
               onLogin={(dados) => {
                 setDadosSalvos(dados)
                 setTelefoneCliente(formatarTelefoneExibicao(dados.telefone || ''))
@@ -1984,8 +2518,11 @@ const AgendaPublica = () => {
                   <button
                     onClick={() => {
                       setProfissionalId(p.id)
+                      setProfissionalEscolhido(true)
+                      setData('')
+                      setSlot(null)
                       setAbaAtiva('agendar')
-                      setEtapa(1)
+                      setEtapa(2)
                     }}
                     style={{
                       padding: '10px 12px',
@@ -2059,26 +2596,13 @@ const AgendaPublica = () => {
                 </div>
               )
             })}
-            {servicoIds.length > 0 && (
-              <>
-                {servicoIds.length > 1 && (
-                  <div style={{ background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 10, padding: '10px 14px', marginBottom: 12 }}>
-                    <p style={{ color: C.textDim, fontSize: 11, margin: 0 }}>
-                      {servicoIds.length} serviços — {servicoIds.reduce((t, id) => t + (servicos.find(s => s.id === id)?.duracaoMinutos || 0), 0)} min total
-                      {(() => { const total = servicoIds.reduce((t, id) => t + (servicos.find(s => s.id === id)?.precoCentavos || 0), 0); return total ? ` — ${formatarReais(total)}` : '' })()}
-                    </p>
-                  </div>
-                )}
-                <button
-                  onClick={avancarEtapaServico}
-                  style={{
-                    width: '100%', padding: '14px 0', borderRadius: 12, border: 'none',
-                    background: C.gold, color: C.textOnGold, fontWeight: 700, fontSize: 14, cursor: 'pointer',
-                  }}
-                >
-                  Continuar
-                </button>
-              </>
+            {servicoIds.length > 1 && (
+              <div style={{ background: C.bgCard, border: `1px solid ${C.border}`, borderRadius: 10, padding: '10px 14px', marginBottom: 12 }}>
+                <p style={{ color: C.textDim, fontSize: 11, margin: 0 }}>
+                  {servicoIds.length} serviços — {servicoIds.reduce((t, id) => t + (servicos.find(s => s.id === id)?.duracaoMinutos || 0), 0)} min total
+                  {(() => { const total = servicoIds.reduce((t, id) => t + (servicos.find(s => s.id === id)?.precoCentavos || 0), 0); return total ? ` — ${formatarReais(total)}` : '' })()}
+                </p>
+              </div>
             )}
           </div>
         )}
@@ -2106,10 +2630,15 @@ const AgendaPublica = () => {
 
             <div
               className="card-sel"
-              onClick={() => { setProfissionalId(''); setData(''); setSlot(null); setEtapa(3) }}
+              onClick={() => {
+                setProfissionalId('')
+                setProfissionalEscolhido(true)
+                setData('')
+                setSlot(null)
+              }}
               style={{
-                background: !profissionalId ? C.bgSelected : C.bgCard,
-                border: `1.5px solid ${!profissionalId ? C.gold : C.border}`,
+                background: profissionalEscolhido && !profissionalId ? C.bgSelected : C.bgCard,
+                border: `1.5px solid ${profissionalEscolhido && !profissionalId ? C.gold : C.border}`,
                 borderRadius: 14, padding: '14px 16px', marginBottom: 10, cursor: 'pointer',
               }}
             >
@@ -2141,7 +2670,12 @@ const AgendaPublica = () => {
                 <div
                   key={p.id}
                   className="card-sel"
-                  onClick={() => { setProfissionalId(p.id); setData(''); setSlot(null); setEtapa(3) }}
+                  onClick={() => {
+                    setProfissionalId(p.id)
+                    setProfissionalEscolhido(true)
+                    setData('')
+                    setSlot(null)
+                  }}
                   style={{
                     background: sel ? C.bgSelected : C.bgCard,
                     border: `1.5px solid ${sel ? C.gold : C.border}`,
@@ -2291,29 +2825,6 @@ const AgendaPublica = () => {
                           </p>
                         )}
                       </div>
-
-                      {/* Botão de continuar / confirmar */}
-                      <button
-                        onClick={avancarAposSlot}
-                        disabled={agendando}
-                        style={{
-                          width: '100%', marginTop: 4,
-                          background: agendando ? '#333' : C.gold,
-                          color: '#fff', border: 'none', borderRadius: 12,
-                          padding: '13px', fontWeight: 700, fontSize: 15,
-                          cursor: agendando ? 'not-allowed' : 'pointer',
-                          fontFamily: 'inherit',
-                          display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-                        }}
-                      >
-                        {agendando ? (
-                          <><Loader2 size={18} className="spin" /> Confirmando...</>
-                        ) : clienteConhecido ? (
-                          `Confirmar agendamento`
-                        ) : (
-                          'Continuar'
-                        )}
-                      </button>
 
                       {/* Erro de agendamento */}
                       {erroAgendamento && (
@@ -2470,43 +2981,6 @@ const AgendaPublica = () => {
               </div>
             )}
 
-            {!clienteConsultado ? (
-              <button
-                onClick={consultarClientePorTelefone}
-                disabled={telefoneCliente.replace(/\D/g, '').length < 10 || consultandoCliente}
-                style={{
-                  width: '100%',
-                  background: telefoneCliente.replace(/\D/g, '').length < 10 || consultandoCliente ? '#1a1a1a' : C.gold,
-                  color: '#fff', border: 'none', borderRadius: 12, padding: '13px', fontWeight: 700,
-                  fontSize: 15, cursor: telefoneCliente.replace(/\D/g, '').length < 10 || consultandoCliente ? 'not-allowed' : 'pointer',
-                  fontFamily: 'inherit', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-                  opacity: telefoneCliente.replace(/\D/g, '').length < 10 ? 0.5 : 1,
-                }}
-              >
-                {consultandoCliente ? <><Loader2 size={18} className="spin" /> Validando...</> : 'Continuar'}
-              </button>
-            ) : (
-              <button
-                onClick={confirmarDadosPessoais}
-                disabled={(!clienteConsultado.existe && !nomeCliente.trim()) || agendando}
-                style={{
-                  width: '100%',
-                  background: ((!clienteConsultado.existe && !nomeCliente.trim()) || agendando) ? '#1a1a1a' : C.gold,
-                  color: '#fff', border: 'none', borderRadius: 12, padding: '13px', fontWeight: 700,
-                  fontSize: 15,
-                  cursor: ((!clienteConsultado.existe && !nomeCliente.trim()) || agendando) ? 'not-allowed' : 'pointer',
-                  fontFamily: 'inherit', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-                  opacity: (!clienteConsultado.existe && !nomeCliente.trim()) ? 0.5 : 1,
-                  transition: 'opacity 0.2s, background 0.2s',
-                }}
-              >
-                {agendando ? (
-                  <><Loader2 size={18} className="spin" /> Confirmando...</>
-                ) : (
-                  'Confirmar agendamento'
-                )}
-              </button>
-            )}
           </div>
         )}
 
@@ -2605,6 +3079,33 @@ const AgendaPublica = () => {
 
       </div>
 
+      {fotoAmpliada && (
+        <div className="details-gallery-modal" onClick={() => setFotoAmpliada(null)}>
+          <div className="details-gallery-modal-content" onClick={(event) => event.stopPropagation()}>
+            <button type="button" className="details-gallery-modal-close" onClick={() => setFotoAmpliada(null)}>
+              <X size={18} />
+            </button>
+            <img
+              className="details-gallery-modal-image"
+              src={resolverMediaUrl(fotoAmpliada.fotoUrl)}
+              alt={fotoAmpliada.titulo || fotoAmpliada.servicoNome || 'Foto da galeria'}
+            />
+            {(fotoAmpliada.titulo || fotoAmpliada.profissional || fotoAmpliada.servicoNome) && (
+              <div style={{ marginTop: 14, textAlign: 'center' }}>
+                <p style={{ color: C.textPrimary, fontSize: 16, fontWeight: 700, margin: 0 }}>
+                  {fotoAmpliada.titulo || fotoAmpliada.servicoNome || 'Trabalho recente'}
+                </p>
+                {(fotoAmpliada.profissional || fotoAmpliada.servicoNome) && (
+                  <p style={{ color: C.textDim, fontSize: 12, margin: '6px 0 0' }}>
+                    {[fotoAmpliada.profissional, fotoAmpliada.servicoNome].filter(Boolean).join(' • ')}
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {abaAtiva === 'agendar' && etapa < 5 && (
         <div style={{
           position: 'sticky',
@@ -2626,6 +3127,7 @@ const AgendaPublica = () => {
               }}
               disabled={
                 (etapa === 1 && servicoIds.length === 0)
+                || (etapa === 2 && !profissionalEscolhido)
                 || (etapa === 3 && !slot)
                 || (etapa === 4 && !clienteConsultado && telefoneCliente.replace(/\D/g, '').length < 10)
                 || (etapa === 4 && clienteConsultado && !clienteConsultado.existe && !nomeCliente.trim())
@@ -2640,6 +3142,7 @@ const AgendaPublica = () => {
                 border: 'none',
                 background: (
                   (etapa === 1 && servicoIds.length === 0)
+                  || (etapa === 2 && !profissionalEscolhido)
                   || (etapa === 3 && !slot)
                   || (etapa === 4 && !clienteConsultado && telefoneCliente.replace(/\D/g, '').length < 10)
                   || (etapa === 4 && clienteConsultado && !clienteConsultado.existe && !nomeCliente.trim())
@@ -2655,7 +3158,7 @@ const AgendaPublica = () => {
               }}
             >
               {etapa === 1 && (servicoIds.length > 0 ? 'Continuar para profissionais' : 'Escolha ao menos um serviço')}
-              {etapa === 2 && (profissionalId ? 'Continuar para horários' : 'Ver horários disponíveis')}
+              {etapa === 2 && (profissionalEscolhido ? 'Continuar para horários' : 'Escolha um profissional')}
               {etapa === 3 && (slot ? (clienteConhecido ? 'Confirmar agendamento' : 'Continuar para seus dados') : 'Escolha um horário')}
               {etapa === 4 && (
                 !clienteConsultado

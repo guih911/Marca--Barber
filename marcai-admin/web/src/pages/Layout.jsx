@@ -1,5 +1,5 @@
 import { NavLink, Outlet, useNavigate } from 'react-router-dom'
-import { LayoutDashboard, Building2, ShieldCheck, Server, ScrollText, LogOut, MessageSquare } from 'lucide-react'
+import { LayoutDashboard, Building2, ShieldCheck, Server, ScrollText, LogOut } from 'lucide-react'
 import { logout, getUser } from '../api'
 
 const links = [
@@ -8,7 +8,6 @@ const links = [
   { to: '/admins', icon: ShieldCheck, label: 'Admins' },
   { to: '/sistema', icon: Server, label: 'Sistema' },
   { to: '/logs', icon: ScrollText, label: 'Logs' },
-  { to: '/vendas', icon: MessageSquare, label: 'Vendas WPP' },
 ]
 
 export default function Layout() {

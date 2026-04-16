@@ -1,5 +1,6 @@
-import { useState, useEffect } from 'react'
-import { Loader2, LockOpen, Lock, DollarSign, TrendingUp, Users, Clock, RefreshCw, ChevronDown, ChevronUp, ArrowDownCircle, ArrowUpCircle, X } from 'lucide-react'
+import { useState, useEffect, useMemo } from 'react'
+import { Loader2, LockOpen, Lock, DollarSign, TrendingUp, Users, Clock, RefreshCw, ChevronDown, ChevronUp, ArrowDownCircle, ArrowUpCircle, X, Wallet, Scissors, BarChart3 } from 'lucide-react'
+import { ResponsiveContainer, BarChart, Bar, CartesianGrid, XAxis, YAxis, Tooltip } from 'recharts'
 import api from '../../servicos/api'
 import { useToast } from '../../contextos/ToastContexto'
 
@@ -25,12 +26,56 @@ const formatarDuracao = (abertura) => {
   return m > 0 ? `${h}h ${m}min` : `${h}h`
 }
 
-const LABELS_FORMA = { PIX: 'Pix', DINHEIRO: 'Dinheiro', CREDITO: 'Crédito', DEBITO: 'Débito' }
+const LABELS_FORMA = { PIX: 'Pix', DINHEIRO: 'Dinheiro', CREDITO: 'Crédito', DEBITO: 'Débito', NAO_INFORMADO: 'Não informado' }
+
+const calcularVariacaoClasse = (valor) => {
+  if (valor == null) return 'text-texto-sec'
+  if (valor > 0) return 'text-green-600'
+  if (valor < 0) return 'text-red-500'
+  return 'text-texto-sec'
+}
+
+const formatarVariacao = (valor) => {
+  if (valor == null) return 'Sem base anterior'
+  if (valor === 0) return '0% vs mês anterior'
+  return `${valor > 0 ? '+' : ''}${valor}% vs mês anterior`
+}
+
+const CardFinanceiro = ({ titulo, valor, subtitulo, variacao, icone: Icone }) => (
+  <div className="bg-white rounded-2xl border border-borda p-4 shadow-sm">
+    <div className="flex items-start justify-between gap-3">
+      <div>
+        <p className="text-xs font-medium text-texto-sec uppercase tracking-wide">{titulo}</p>
+        <p className="text-2xl font-bold text-texto mt-1">{valor}</p>
+        {subtitulo && <p className="text-xs text-texto-sec mt-1">{subtitulo}</p>}
+      </div>
+      <div className="w-10 h-10 rounded-xl bg-primaria/10 flex items-center justify-center shrink-0">
+        <Icone size={18} className="text-primaria" />
+      </div>
+    </div>
+    <p className={`text-xs font-semibold mt-3 ${calcularVariacaoClasse(variacao)}`}>{formatarVariacao(variacao)}</p>
+  </div>
+)
+
+const TooltipFinanceiro = ({ active, payload, label }) => {
+  if (!active || !payload?.length) return null
+  return (
+    <div className="bg-white border border-borda rounded-xl shadow-lg px-3 py-2 text-xs">
+      <p className="font-semibold text-texto mb-1">{label}</p>
+      {payload.map((item) => (
+        <p key={item.dataKey} style={{ color: item.color }}>
+          {item.name}: {formatarReais(item.value)}
+        </p>
+      ))}
+    </div>
+  )
+}
 
 const Caixa = () => {
   const toast = useToast()
   const [resumo, setResumo] = useState(null)
   const [historico, setHistorico] = useState([])
+  const [visaoGeral, setVisaoGeral] = useState(null)
   const [carregando, setCarregando] = useState(true)
   const [mostrarHistorico, setMostrarHistorico] = useState(false)
   const [resumosSessao, setResumosSessao] = useState({})
@@ -50,12 +95,14 @@ const Caixa = () => {
   const carregar = async () => {
     setCarregando(true)
     try {
-      const [resAtual, resHist] = await Promise.allSettled([
+      const [resAtual, resHist, resVisao] = await Promise.allSettled([
         api.get('/api/caixa/atual'),
         api.get('/api/caixa?limite=10'),
+        api.get('/api/caixa/visao-geral?meses=6'),
       ])
       setResumo(resAtual.status === 'fulfilled' ? resAtual.value?.dados : null)
       setHistorico(resHist.status === 'fulfilled' ? (resHist.value?.dados || []) : [])
+      setVisaoGeral(resVisao.status === 'fulfilled' ? (resVisao.value?.dados || null) : null)
     } finally {
       setCarregando(false)
     }
@@ -121,7 +168,7 @@ const Caixa = () => {
         valor: valorMovimentacao,
         descricao: descMovimentacao || undefined,
       })
-      toast(`${modalMovimentacao === 'SANGRIA' ? 'Sangria' : 'Reforço'} registrado!`, 'sucesso')
+      toast(`${modalMovimentacao === 'SANGRIA' ? 'Retirada' : 'Entrada manual'} registrada!`, 'sucesso')
       setModalMovimentacao(null)
       setValorMovimentacao('')
       setDescMovimentacao('')
@@ -134,13 +181,28 @@ const Caixa = () => {
   }
 
   const sessaoAberta = resumo?.sessao?.status === 'ABERTO'
+  const resumoMensal = visaoGeral?.atual || null
+  const serieMensal = useMemo(() => (
+    Array.isArray(visaoGeral?.serieMensal)
+      ? visaoGeral.serieMensal.map((item) => ({
+          ...item,
+          resultadoOperacional: item.receitaLiquida + item.reforcos - item.sangrias,
+        }))
+      : []
+  ), [visaoGeral])
+  const formasMesAtual = useMemo(() => (
+    resumoMensal?.porFormaPagamento
+      ? Object.entries(resumoMensal.porFormaPagamento).sort((a, b) => b[1] - a[1])
+      : []
+  ), [resumoMensal])
+  const profissionaisMesAtual = useMemo(() => resumoMensal?.topProfissionais || [], [resumoMensal])
 
   return (
-    <div className="space-y-6 max-w-2xl">
+    <div className="space-y-6 max-w-6xl">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-semibold text-texto">Controle de Caixa</h1>
-          <p className="text-texto-sec text-sm mt-1">Abertura e fechamento diário do caixa</p>
+          <h1 className="text-2xl font-semibold text-texto">Financeiro e Caixa</h1>
+          <p className="text-texto-sec text-sm mt-1">Visão mensal do faturamento da barbearia com caixa operacional do dia.</p>
         </div>
         <button onClick={carregar} className="p-2 rounded-lg border border-borda text-texto-sec hover:text-texto transition-colors" title="Atualizar">
           <RefreshCw size={16} className={carregando ? 'animate-spin' : ''} />
@@ -151,6 +213,139 @@ const Caixa = () => {
         <div className="flex justify-center py-16"><Loader2 size={28} className="animate-spin text-texto-sec" /></div>
       ) : (
         <>
+          {resumoMensal && (
+            <>
+              <div className="bg-white rounded-2xl border border-borda p-5 shadow-sm space-y-2">
+                <div className="flex items-center gap-2">
+                  <BarChart3 size={18} className="text-primaria" />
+                  <h2 className="text-sm font-semibold text-texto">Visão gerencial do mês</h2>
+                </div>
+                <p className="text-sm text-texto-sec">
+                  Aqui a leitura é de dono de barbearia: faturamento do mês, comparação com o mês anterior, formas de pagamento e resultado operacional.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+                <CardFinanceiro
+                  titulo="Faturamento líquido"
+                  valor={formatarReais(resumoMensal.receitaLiquida)}
+                  subtitulo={`${resumoMensal.atendimentos || 0} atendimento${(resumoMensal.atendimentos || 0) !== 1 ? 's' : ''} concluído${(resumoMensal.atendimentos || 0) !== 1 ? 's' : ''}`}
+                  variacao={resumoMensal.variacaoReceitaLiquida}
+                  icone={DollarSign}
+                />
+                <CardFinanceiro
+                  titulo="Ticket médio"
+                  valor={formatarReais(resumoMensal.ticketMedio)}
+                  subtitulo="quanto cada atendimento gerou em média"
+                  variacao={resumoMensal.variacaoTicketMedio}
+                  icone={TrendingUp}
+                />
+                <CardFinanceiro
+                  titulo="Atendimentos"
+                  valor={String(resumoMensal.atendimentos || 0)}
+                  subtitulo="volume concluído no mês"
+                  variacao={resumoMensal.variacaoAtendimentos}
+                  icone={Scissors}
+                />
+                <CardFinanceiro
+                  titulo="Resultado operacional"
+                  valor={formatarReais(resumoMensal.resultadoCaixa)}
+                  subtitulo="faturamento líquido + entradas manuais - retiradas"
+                  variacao={null}
+                  icone={Wallet}
+                />
+              </div>
+
+              <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+                <div className="xl:col-span-2 bg-white rounded-2xl border border-borda shadow-sm p-5">
+                  <div className="flex items-center justify-between gap-3 mb-4">
+                    <div>
+                      <p className="text-sm font-semibold text-texto">Comparativo mês a mês</p>
+                      <p className="text-xs text-texto-sec">Faturamento líquido vs resultado operacional</p>
+                    </div>
+                  </div>
+                  <ResponsiveContainer width="100%" height={240}>
+                    <BarChart data={serieMensal} margin={{ top: 5, right: 8, left: -18, bottom: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" vertical={false} />
+                      <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#6B7280' }} tickLine={false} />
+                      <YAxis tick={{ fontSize: 11, fill: '#6B7280' }} tickLine={false} axisLine={false} tickFormatter={(v) => `R$ ${Math.round(v / 100)}`} />
+                      <Tooltip content={<TooltipFinanceiro />} />
+                      <Bar dataKey="receitaLiquida" name="Faturamento líquido" fill="#c18d4b" radius={[6, 6, 0, 0]} />
+                      <Bar dataKey="resultadoOperacional" name="Resultado operacional" fill="#1f7a5a" radius={[6, 6, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+
+                <div className="bg-white rounded-2xl border border-borda shadow-sm p-5">
+                  <p className="text-sm font-semibold text-texto">Leitura financeira do mês</p>
+                  <div className="mt-4 space-y-3">
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-texto-sec">Receita bruta</span>
+                      <strong className="text-texto">{formatarReais(resumoMensal.receitaBruta)}</strong>
+                    </div>
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-texto-sec">Descontos</span>
+                      <strong className="text-red-600">-{formatarReais(resumoMensal.descontos)}</strong>
+                    </div>
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-texto-sec">Gorjetas</span>
+                      <strong className="text-green-600">+{formatarReais(resumoMensal.gorjetas)}</strong>
+                    </div>
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-texto-sec">Entradas manuais</span>
+                      <strong className="text-green-600">+{formatarReais(resumoMensal.reforcos)}</strong>
+                    </div>
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-texto-sec">Retiradas</span>
+                      <strong className="text-red-600">-{formatarReais(resumoMensal.sangrias)}</strong>
+                    </div>
+                    <div className="pt-3 border-t border-borda flex items-center justify-between">
+                      <span className="text-sm font-semibold text-texto">Resultado do mês</span>
+                      <strong className="text-base text-primaria">{formatarReais(resumoMensal.resultadoCaixa)}</strong>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                <div className="bg-white rounded-2xl border border-borda shadow-sm overflow-hidden">
+                  <div className="px-5 py-4 border-b border-borda">
+                    <p className="text-sm font-semibold text-texto">Formas de pagamento do mês</p>
+                  </div>
+                  <div className="divide-y divide-borda">
+                    {formasMesAtual.length > 0 ? formasMesAtual.map(([forma, valor]) => (
+                      <div key={forma} className="px-5 py-3 flex items-center justify-between">
+                        <span className="text-sm text-texto">{LABELS_FORMA[forma] || forma}</span>
+                        <strong className="text-sm text-primaria">{formatarReais(valor)}</strong>
+                      </div>
+                    )) : (
+                      <div className="px-5 py-8 text-sm text-texto-sec">Ainda não há pagamentos concluídos no mês.</div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="bg-white rounded-2xl border border-borda shadow-sm overflow-hidden">
+                  <div className="px-5 py-4 border-b border-borda">
+                    <p className="text-sm font-semibold text-texto">Quem mais faturou no mês</p>
+                  </div>
+                  <div className="divide-y divide-borda">
+                    {profissionaisMesAtual.length > 0 ? profissionaisMesAtual.map((item, index) => (
+                      <div key={`${item.nome}-${index}`} className="px-5 py-3 flex items-center justify-between gap-3">
+                        <div>
+                          <p className="text-sm font-medium text-texto">{item.nome}</p>
+                          <p className="text-xs text-texto-sec">{item.atendimentos} atendimento{item.atendimentos !== 1 ? 's' : ''}</p>
+                        </div>
+                        <strong className="text-sm text-primaria">{formatarReais(item.receitaLiquida)}</strong>
+                      </div>
+                    )) : (
+                      <div className="px-5 py-8 text-sm text-texto-sec">Sem faturamento suficiente para montar ranking neste mês.</div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </>
+          )}
+
           {/* Status atual */}
           <div className={`rounded-2xl border-2 p-5 ${sessaoAberta ? 'border-sucesso bg-green-50' : 'border-borda bg-white'}`}>
             <div className="flex items-center justify-between">
@@ -290,20 +485,20 @@ const Caixa = () => {
             </div>
           )}
 
-          {/* Botões sangria / reforço */}
+          {/* Botões de ajuste manual no caixa */}
           {sessaoAberta && (
             <div className="flex gap-2">
               <button
                 onClick={() => setModalMovimentacao('SANGRIA')}
                 className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-red-50 border border-red-200 text-red-700 rounded-xl text-sm font-medium hover:bg-red-100 transition-colors"
               >
-                <ArrowDownCircle size={16} /> Registrar sangria
+                <ArrowDownCircle size={16} /> Retirar dinheiro do caixa
               </button>
               <button
                 onClick={() => setModalMovimentacao('REFORCO')}
                 className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-green-50 border border-green-200 text-green-700 rounded-xl text-sm font-medium hover:bg-green-100 transition-colors"
               >
-                <ArrowUpCircle size={16} /> Registrar reforço
+                <ArrowUpCircle size={16} /> Adicionar dinheiro ao caixa
               </button>
             </div>
           )}
@@ -385,13 +580,13 @@ const Caixa = () => {
                               <>
                                 {resumo.totalReforcos > 0 && (
                                   <div className="flex justify-between text-xs">
-                                    <span className="text-green-600">Reforços</span>
+                                    <span className="text-green-600">Entradas manuais</span>
                                     <span className="font-medium text-green-600">+{formatarReais(resumo.totalReforcos)}</span>
                                   </div>
                                 )}
                                 {resumo.totalSangrias > 0 && (
                                   <div className="flex justify-between text-xs">
-                                    <span className="text-red-600">Sangrias/Retiradas</span>
+                                    <span className="text-red-600">Retiradas</span>
                                     <span className="font-medium text-red-600">-{formatarReais(resumo.totalSangrias)}</span>
                                   </div>
                                 )}
@@ -409,15 +604,15 @@ const Caixa = () => {
         </>
       )}
 
-      {/* Modal sangria / reforço */}
+      {/* Modal de ajuste manual */}
       {modalMovimentacao && (
         <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl w-full max-w-sm shadow-xl p-6 space-y-4">
             <div className="flex items-center justify-between">
               <h3 className="font-semibold text-texto flex items-center gap-2">
                 {modalMovimentacao === 'SANGRIA'
-                  ? <><ArrowDownCircle size={18} className="text-red-600" /> Registrar sangria</>
-                  : <><ArrowUpCircle size={18} className="text-green-600" /> Registrar reforço</>}
+                  ? <><ArrowDownCircle size={18} className="text-red-600" /> Retirar dinheiro do caixa</>
+                  : <><ArrowUpCircle size={18} className="text-green-600" /> Adicionar dinheiro ao caixa</>}
               </h3>
               <button onClick={() => setModalMovimentacao(null)}><X size={20} className="text-texto-sec" /></button>
             </div>
@@ -440,7 +635,7 @@ const Caixa = () => {
                 type="text"
                 value={descMovimentacao}
                 onChange={(e) => setDescMovimentacao(e.target.value)}
-                placeholder={modalMovimentacao === 'SANGRIA' ? 'Ex: retirada para banco' : 'Ex: troco adicional'}
+                placeholder={modalMovimentacao === 'SANGRIA' ? 'Ex: retirada do dia ou depósito no banco' : 'Ex: troco inicial ou ajuste de caixa'}
                 className="w-full mt-1 border border-borda rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primaria/30"
               />
             </div>

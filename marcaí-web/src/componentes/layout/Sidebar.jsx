@@ -22,6 +22,7 @@ import {
   Images,
   ClipboardList,
   BarChart3,
+  Bike,
 } from 'lucide-react'
 import { cn, obterIniciais } from '../../lib/utils'
 import useAuth from '../../hooks/useAuth'
@@ -33,11 +34,12 @@ const todosItensOperacao = [
   { label: 'Mensagens', icone: MessageSquare, rota: '/dashboard/mensagens' },
   { label: 'Clientes', icone: Users, rota: '/operacao/clientes' },
   { label: 'Plano Mensal', icone: BadgeDollarSign, rota: '/operacao/planos', recurso: 'membershipsAtivo' },
-  { label: 'Fidelidade', icone: Gift, rota: '/operacao/fidelidade', recurso: 'fidelidadeAtivo' },
+  { label: 'Aniversário', icone: Gift, rota: '/operacao/fidelidade', recurso: ['fidelidadeAtivo', 'aniversarianteAtivo'] },
   { label: 'Comissões', icone: BarChart2, rota: '/operacao/comissoes', recurso: 'comissoesAtivo', plano: 'SALAO' },
   { label: 'Estoque', icone: Archive, rota: '/operacao/estoque', recurso: 'estoqueAtivo' },
   { label: 'Comanda', icone: FileText, rota: '/operacao/comanda', recurso: 'comandaAtivo' },
   { label: 'Caixa', icone: Landmark, rota: '/operacao/caixa', recurso: 'caixaAtivo' },
+  { label: 'Entregas', icone: Bike, rota: '/operacao/entregas', recurso: 'entregaAtivo' },
   { label: 'Lista de Espera', icone: ClipboardList, rota: '/operacao/lista-espera', recurso: 'listaEsperaAtivo' },
   { label: 'Relatórios', icone: BarChart3, rota: '/operacao/relatorios' },
   { label: 'Galeria', icone: Images, rota: '/operacao/galeria', recurso: 'galeriaAtivo' },
@@ -96,7 +98,10 @@ const Sidebar = ({ compacto = false }) => {
   const planoAtual = tenant?.planoContratado || 'SALAO' // padrão: mostra tudo se não definido
   const filtrarPorPlano = (item) => {
     if (item.plano && item.plano !== planoAtual) return false
-    if (item.recurso && !tenant?.[item.recurso]) return false
+    if (item.recurso) {
+      const recursos = Array.isArray(item.recurso) ? item.recurso : [item.recurso]
+      if (!recursos.some((recurso) => tenant?.[recurso])) return false
+    }
     return true
   }
   const itensOperacao = todosItensOperacao.filter(filtrarPorPlano)

@@ -146,6 +146,10 @@ model Tenant {
   tiktokUrl            String?
   apresentacaoSalaoAtivo Boolean @default(true) // IA apresenta o salão na primeira visita
   enviarMensagemAoCadastrarCliente Boolean @default(true) // envia WhatsApp automatico ao cadastrar cliente manualmente
+  taxaEntregaCentavos  Int       @default(0)
+  valorMinimoEntregaCentavos Int @default(0)
+  tempoMedioEntregaMin Int       @default(45)
+  janelasEntrega       Json?
 
   // ── Plano contratado pelo cliente (SOLO = 1 profissional, SALAO = equipe) ──
   planoContratado      String    @default("SALAO")  // "SOLO" | "SALAO"
@@ -154,6 +158,8 @@ model Tenant {
   // ── Feature flags (cada salão habilita o que quer) ──
   npsAtivo             Boolean   @default(true)   // Pesquisa de satisfação pós-atendimento
   fidelidadeAtivo      Boolean   @default(false)  // Programa de pontos/fidelidade
+  aniversarianteAtivo  Boolean   @default(false)  // Parabéns + benefício de aniversário
+  entregaAtivo         Boolean   @default(false)  // Venda de produtos com entrega
   estoqueAtivo         Boolean   @default(false)  // Controle de estoque de produtos
   comandaAtivo         Boolean   @default(false)  // Comanda digital por atendimento
   comissoesAtivo       Boolean   @default(false)  // Controle de comissões de profissionais
@@ -185,6 +191,7 @@ model Tenant {
   fotosGaleria     FotoGaleria[]
   sessoesCaixa     SessaoCaixa[]
   movimentacoesCaixa CaixaMovimentacao[]
+  pedidosEntrega   PedidoEntrega[]
 
   @@map("tenants")
 }
@@ -196,6 +203,7 @@ model Usuario {
   email        String   @unique
   senhaHash    String?
   googleId     String?  @unique
+  facebookId   String?  @unique
   avatarUrl    String?
   perfil       Perfil   @default(ADMIN)
   ativo        Boolean  @default(true)
@@ -297,6 +305,7 @@ model Cliente {
   assinaturasCliente AssinaturaCliente[]
   campanhasGrowthEnvios CampanhaGrowthEnvio[]
   pontosFidelidade PontosFidelidade[]
+  pedidosEntrega PedidoEntrega[]
 
   @@unique([tenantId, telefone])
   @@map("clientes")
@@ -603,11 +612,14 @@ model Produto {
   tenantId           String
   nome               String
   descricao          String?
+  fotoUrl            String?
   unidade            String   @default("unid") // unid, ml, g, etc.
   precoCustoCentavos Int?     // custo de aquisição
   precoVendaCentavos Int?     // preço de venda (se vender)
   quantidadeAtual    Float    @default(0)
   quantidadeMinima   Float    @default(2)  // alerta de estoque baixo
+  divulgarNoLink     Boolean  @default(false)
+  permiteEntrega     Boolean  @default(true)
   ativo              Boolean  @default(true)
   alertaEnviadoEm    DateTime? // última vez que alerta foi enviado
   criadoEm           DateTime @default(now())
@@ -616,6 +628,7 @@ model Produto {
   tenant     Tenant             @relation(fields: [tenantId], references: [id])
   movimentos MovimentoEstoque[]
   comandaItens ComandaItem[]
+  pedidoItens PedidoEntregaItem[]
 
   @@index([tenantId, ativo])
   @@map("produtos")
@@ -749,6 +762,15 @@ enum TipoMovimentacao {
   REFORCO
 }
 
+enum StatusPedidoEntrega {
+  NOVO
+  PREPARANDO
+  A_CAMINHO
+  CHEGUEI
+  FINALIZADO
+  CANCELADO
+}
+
 model CaixaMovimentacao {
   id          String           @id @default(uuid())
   tenantId    String
@@ -763,4 +785,56 @@ model CaixaMovimentacao {
 
   @@index([tenantId, sessaoId])
   @@map("caixa_movimentacoes")
+}
+
+model PedidoEntrega {
+  id                       String               @id @default(uuid())
+  tenantId                 String
+  clienteId                String?
+  clienteNome              String
+  clienteTelefone          String
+  enderecoEntrega          String
+  referenciaEndereco       String?
+  observacoes              String?
+  formaPagamento           String
+  taxaEntregaCentavos      Int                  @default(0)
+  subtotalCentavos         Int                  @default(0)
+  totalCentavos            Int                  @default(0)
+  janelaEntregaLabel       String?
+  janelaEntregaInicio      String?
+  janelaEntregaFim         String?
+  previsaoEntregaEm        DateTime?
+  status                   StatusPedidoEntrega  @default(NOVO)
+  preparandoEm             DateTime?
+  saiuParaEntregaEm        DateTime?
+  chegouEm                 DateTime?
+  finalizadoEm             DateTime?
+  canceladoEm              DateTime?
+  criadoEm                 DateTime             @default(now())
+  atualizadoEm             DateTime             @updatedAt
+
+  tenant      Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  cliente     Cliente?            @relation(fields: [clienteId], references: [id])
+  itens       PedidoEntregaItem[]
+
+  @@index([tenantId, status, criadoEm])
+  @@index([tenantId, clienteTelefone])
+  @@map("pedidos_entrega")
+}
+
+model PedidoEntregaItem {
+  id                    String   @id @default(uuid())
+  pedidoId              String
+  produtoId             String?
+  nomeProduto           String
+  quantidade            Float    @default(1)
+  precoUnitarioCentavos Int      @default(0)
+  subtotalCentavos      Int      @default(0)
+  criadoEm              DateTime @default(now())
+
+  pedido  PedidoEntrega @relation(fields: [pedidoId], references: [id], onDelete: Cascade)
+  produto Produto?      @relation(fields: [produtoId], references: [id])
+
+  @@index([pedidoId])
+  @@map("pedido_entrega_itens")
 }

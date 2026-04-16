@@ -17,7 +17,6 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.82.0",
     "@prisma/client": "^5.14.0",
-    "@whiskeysockets/baileys": "^6.17.16",
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
     "crypto": "^1.0.1",
@@ -29,8 +28,8 @@
     "nodemailer": "^6.9.14",
     "openai": "^6.29.0",
     "passport": "^0.7.0",
-    "passport-google-oauth20": "^2.0.0",
-    "qrcode": "^1.5.4"
+    "passport-facebook": "^3.0.0",
+    "passport-google-oauth20": "^2.0.0"
   },
   "devDependencies": {
     "nodemon": "^3.1.4",

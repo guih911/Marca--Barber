@@ -33,6 +33,7 @@ const fmt = (centavos) =>
   centavos != null ? (centavos / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }) : '—'
 
 const normalizarTelefone = (valor = '') => valor.replace(/\D/g, '').slice(0, 11)
+const gerarInicioWalkIn = () => new Date(Date.now() + 60 * 1000).toISOString()
 
 const formatarTelefoneMascara = (valor = '') => {
   const nums = normalizarTelefone(valor)
@@ -1616,10 +1617,47 @@ const ModalWalkIn = ({ onClose, onSalvar }) => {
 
   useEffect(() => {
     Promise.all([api.get('/api/profissionais'), api.get('/api/servicos')]).then(([p, s]) => {
-      setProfissionais(p.dados || [])
+      const listaProfissionais = p.dados || []
+      setProfissionais(listaProfissionais)
       setServicos(s.dados || [])
+      const ativos = listaProfissionais.filter((profissional) => profissional.ativo !== false)
+      if (ativos.length === 1) {
+        setForm((anterior) => ({
+          ...anterior,
+          profissionalId: anterior.profissionalId || ativos[0].id,
+        }))
+      }
     })
   }, [])
+
+  const profissionalSelecionado = profissionais.find((profissional) => profissional.id === form.profissionalId)
+  const servicosDisponiveis = (() => {
+    const servicosAtivos = servicos.filter((servico) => servico.ativo)
+    const servicosDoProfissional = profissionalSelecionado?.servicos || []
+    if (!profissionalSelecionado || servicosDoProfissional.length === 0) return servicosAtivos
+
+    const permitidos = new Set(
+      servicosDoProfissional
+        .map((item) => item?.servicoId || item?.servico?.id)
+        .filter(Boolean)
+    )
+
+    return servicosAtivos.filter((servico) => permitidos.has(servico.id))
+  })()
+
+  useEffect(() => {
+    if (servicosDisponiveis.length === 1) {
+      setForm((anterior) => ({
+        ...anterior,
+        servicoId: anterior.servicoId || servicosDisponiveis[0].id,
+      }))
+      return
+    }
+
+    if (form.servicoId && !servicosDisponiveis.some((servico) => servico.id === form.servicoId)) {
+      setForm((anterior) => ({ ...anterior, servicoId: '' }))
+    }
+  }, [form.servicoId, servicosDisponiveis])
 
   const handleSalvar = async () => {
     if (!form.profissionalId || !form.servicoId || !form.clienteTelefone) {
@@ -1652,7 +1690,7 @@ const ModalWalkIn = ({ onClose, onSalvar }) => {
         clienteId,
         profissionalId: form.profissionalId,
         servicoId: form.servicoId,
-        inicio: new Date().toISOString(),
+        inicio: gerarInicioWalkIn(),
         walkin: true,
       })
       const statusCriado = novoAgendamento?.dados?.status
@@ -1723,7 +1761,7 @@ const ModalWalkIn = ({ onClose, onSalvar }) => {
                 <SelectTrigger><SelectValue placeholder="Selecionar" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="__sel__">Selecionar</SelectItem>
-                  {servicos.filter(s => s.ativo).map((s) => <SelectItem key={s.id} value={s.id}>{s.nome}</SelectItem>)}
+                  {servicosDisponiveis.map((s) => <SelectItem key={s.id} value={s.id}>{s.nome}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>

@@ -59,6 +59,8 @@ const atualizar = async (tenantId, dados) => {
   if (dados.exigirConfirmacaoPresenca !== undefined) campos.exigirConfirmacaoPresenca = Boolean(dados.exigirConfirmacaoPresenca)
   if (dados.npsAtivo !== undefined) campos.npsAtivo = Boolean(dados.npsAtivo)
   if (dados.fidelidadeAtivo !== undefined) campos.fidelidadeAtivo = Boolean(dados.fidelidadeAtivo)
+  if (dados.aniversarianteAtivo !== undefined) campos.aniversarianteAtivo = Boolean(dados.aniversarianteAtivo)
+  if (dados.entregaAtivo !== undefined) campos.entregaAtivo = Boolean(dados.entregaAtivo)
   if (dados.relatorioDiarioAtivo !== undefined) campos.relatorioDiarioAtivo = Boolean(dados.relatorioDiarioAtivo)
   if (dados.comissoesAtivo !== undefined) campos.comissoesAtivo = Boolean(dados.comissoesAtivo)
   if (dados.comandaAtivo !== undefined) campos.comandaAtivo = Boolean(dados.comandaAtivo)
@@ -84,6 +86,10 @@ const atualizar = async (tenantId, dados) => {
   if (dados.nomeIA !== undefined) campos.nomeIA = dados.nomeIA?.trim() || null
   if (dados.apresentacaoSalaoAtivo !== undefined) campos.apresentacaoSalaoAtivo = Boolean(dados.apresentacaoSalaoAtivo)
   if (dados.enviarMensagemAoCadastrarCliente !== undefined) campos.enviarMensagemAoCadastrarCliente = Boolean(dados.enviarMensagemAoCadastrarCliente)
+  if (dados.taxaEntregaCentavos !== undefined) campos.taxaEntregaCentavos = Math.max(0, Number(dados.taxaEntregaCentavos) || 0)
+  if (dados.valorMinimoEntregaCentavos !== undefined) campos.valorMinimoEntregaCentavos = Math.max(0, Number(dados.valorMinimoEntregaCentavos) || 0)
+  if (dados.tempoMedioEntregaMin !== undefined) campos.tempoMedioEntregaMin = Math.max(5, Number(dados.tempoMedioEntregaMin) || 45)
+  if (dados.janelasEntrega !== undefined) campos.janelasEntrega = Array.isArray(dados.janelasEntrega) ? dados.janelasEntrega : null
 
   return banco.tenant.update({ where: { id: tenantId }, data: campos })
 }

@@ -28,7 +28,8 @@ const caixaRotas = require('./modulos/caixa/caixa.rotas')
 const galeriaRotas = require('./modulos/galeria/galeria.rotas')
 const filaEsperaRotas = require('./modulos/fila-espera/fila-espera.rotas')
 const pagamentosRotas = require('./modulos/pagamentos/pagamentos.rotas')
-const { inicializarSessoesWWebJS, iniciarCronLembretes } = require('./modulos/ia/ia.controlador')
+const entregasRotas = require('./modulos/entregas/entregas.rotas')
+const { iniciarCronLembretes } = require('./modulos/ia/ia.controlador')
 const { iniciarCronAutomacoes } = require('./modulos/ia/automacoes.servico')
 
 const app = express()
@@ -80,7 +81,12 @@ app.use(
     credentials: true,
   })
 )
-app.use(express.json({ limit: '1mb' }))
+app.use(express.json({
+  limit: '1mb',
+  verify: (req, _res, buf) => {
+    if (buf?.length) req.rawBody = Buffer.from(buf)
+  },
+}))
 app.use(express.urlencoded({ extended: true }))
 app.use(passport.initialize())
 
@@ -135,6 +141,7 @@ app.use('/api/caixa', caixaRotas)
 app.use('/api/galeria', galeriaRotas)
 app.use('/api/fila-espera', filaEsperaRotas)
 app.use('/api/pagamentos', pagamentosRotas)
+app.use('/api/entregas', entregasRotas)
 
 // Rota 404
 app.use((req, res) => {
@@ -158,8 +165,7 @@ if (require.main === module) {
     console.log(`[Servidor] Ambiente: ${process.env.NODE_ENV || 'development'}`)
     console.log(`[Servidor] Frontend permitido: ${process.env.FRONTEND_URL || 'http://localhost:5173'}`)
 
-    // Recarrega sessoes WhatsApp Web.js para tenants que ja tinham QR conectado
-    inicializarSessoesWWebJS()
+    console.log('[WhatsApp] Meta oficial e Sendzen disponíveis no painel de integrações')
 
     // Proteção contra duplicação de crons (importante para pm2/cluster)
     if (!cronsIniciados) {
@@ -178,4 +184,3 @@ if (require.main === module) {
   })
 }
 module.exports = app
-

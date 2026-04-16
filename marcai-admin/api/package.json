@@ -8,13 +8,11 @@
   },
   "dependencies": {
     "@prisma/client": "^6.13.0",
-    "@whiskeysockets/baileys": "^6.17.16",
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
     "express": "^4.21.0",
     "jsonwebtoken": "^9.0.2",
     "openai": "^4.104.0",
-    "prisma": "^6.13.0",
-    "qrcode": "^1.5.4"
+    "prisma": "^6.13.0"
   }
 }

@@ -22,5 +22,11 @@ module.exports = {
     callbackURL: process.env.GOOGLE_CALLBACK_URL || 'http://localhost:3001/api/auth/google/callback',
   },
 
+  facebook: {
+    appID: process.env.FACEBOOK_APP_ID,
+    appSecret: process.env.FACEBOOK_APP_SECRET,
+    callbackURL: process.env.FACEBOOK_CALLBACK_URL || 'http://localhost:3001/api/auth/facebook/callback',
+  },
+
   bcryptSaltRounds: 10,
 }

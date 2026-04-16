@@ -16,6 +16,13 @@ const listar = async (req, res, next) => {
   } catch (erro) { next(erro) }
 }
 
+const obterVisaoGeral = async (req, res, next) => {
+  try {
+    const dados = await caixaServico.obterVisaoGeral(req.usuario.tenantId, req.query.meses)
+    res.json({ sucesso: true, dados })
+  } catch (erro) { next(erro) }
+}
+
 const abrir = async (req, res, next) => {
   try {
     const sessao = await caixaServico.abrirSessao(req.usuario.tenantId, req.usuario.id, req.body)
@@ -54,4 +61,4 @@ const registrarMovimentacao = async (req, res, next) => {
   }
 }
 
-module.exports = { obterAtual, listar, abrir, fechar, obterResumoPorId, registrarMovimentacao }
+module.exports = { obterAtual, listar, obterVisaoGeral, abrir, fechar, obterResumoPorId, registrarMovimentacao }

@@ -1,5 +1,16 @@
 const authServico = require('./auth.servico')
 
+const obterFrontendOAuthUrl = () => {
+  const origem =
+    process.env.OAUTH_REDIRECT_URL ||
+    process.env.APP_URL ||
+    String(process.env.FRONTEND_URL || 'http://localhost:5173')
+      .split(',')[0]
+      .trim()
+
+  return `${origem.replace(/\/$/, '')}/oauth`
+}
+
 const cadastrar = async (req, res, next) => {
   try {
     const { nome, email, senha } = req.body
@@ -44,12 +55,20 @@ const meuPerfil = async (req, res, next) => {
 
 const googleCallback = (req, res) => {
   const { accessToken, refreshToken } = req.user
-  const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173'
   const params = new URLSearchParams({
     accessToken,
     refreshToken,
   })
-  res.redirect(`${frontendUrl}/auth/callback?${params}`)
+  res.redirect(`${obterFrontendOAuthUrl()}?${params}`)
+}
+
+const facebookCallback = (req, res) => {
+  const { accessToken, refreshToken } = req.user
+  const params = new URLSearchParams({
+    accessToken,
+    refreshToken,
+  })
+  res.redirect(`${obterFrontendOAuthUrl()}?${params}`)
 }
 
 const recuperarSenha = async (req, res, next) => {
@@ -72,4 +91,4 @@ const redefinirSenha = async (req, res, next) => {
   }
 }
 
-module.exports = { cadastrar, login, refresh, meuPerfil, googleCallback, recuperarSenha, redefinirSenha }
+module.exports = { cadastrar, login, refresh, meuPerfil, googleCallback, facebookCallback, recuperarSenha, redefinirSenha }

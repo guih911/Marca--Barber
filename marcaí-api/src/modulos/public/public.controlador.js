@@ -3,8 +3,8 @@ const disponibilidadeServico = require('../agendamentos/disponibilidade.servico'
 const agendamentosServico = require('../agendamentos/agendamentos.servico')
 const clientesServico = require('../clientes/clientes.servico')
 const conversasServico = require('../conversas/conversas.servico')
-const baileysManager = require('../ia/baileys.manager')
 const whatsappServico = require('../ia/whatsapp.servico')
+const entregasServico = require('../entregas/entregas.servico')
 const { logClienteTrace, resumirCliente } = require('../../utils/clienteTrace')
 const { resumirHorarioFuncionamento, montarHorarioDetalhado } = require('../../utils/horarioFuncionamento')
 
@@ -217,6 +217,11 @@ const info = async (req, res, next) => {
       facebookUrl: true,
       tiktokUrl: true,
       galeriaAtivo: true,
+      entregaAtivo: true,
+      taxaEntregaCentavos: true,
+      valorMinimoEntregaCentavos: true,
+      tempoMedioEntregaMin: true,
+      janelasEntrega: true,
     })
     if (!tenant || !tenant.ativo) {
       return res.status(404).json({ sucesso: false, erro: { mensagem: 'Barbearia não encontrada' } })
@@ -275,8 +280,20 @@ const info = async (req, res, next) => {
           horarioDetalhado,
           pagamentos,
           comodidades,
+          entregaAtivo: Boolean(tenant.entregaAtivo),
+          entregaConfiguracao: tenant.entregaAtivo ? {
+            taxaEntregaCentavos: tenant.taxaEntregaCentavos || 0,
+            valorMinimoEntregaCentavos: tenant.valorMinimoEntregaCentavos || 0,
+            tempoMedioEntregaMin: tenant.tempoMedioEntregaMin || 45,
+            janelasEntrega: Array.isArray(tenant.janelasEntrega) ? tenant.janelasEntrega : [],
+          } : null,
           redesSociais,
-          whatsappNumero: baileysManager.obterNumeroConectado(tenant.id) || null,
+          whatsappNumero:
+            tenant.configWhatsApp?.sendzen?.displayPhoneNumber
+            || tenant.configWhatsApp?.meta?.displayPhoneNumber
+            || tenant.configWhatsApp?.displayPhoneNumber
+            || tenant.telefone
+            || null,
         },
         servicos,
         profissionais: profissionais.map((p) => ({
@@ -294,6 +311,45 @@ const info = async (req, res, next) => {
         })),
       },
     })
+  } catch (erro) {
+    next(erro)
+  }
+}
+
+const produtos = async (req, res, next) => {
+  try {
+    const tenant = await buscarTenantPorIdentificador(req.params.slug, { entregaAtivo: true, ativo: true })
+    if (!tenant || !tenant.ativo) {
+      return res.status(404).json({ sucesso: false, erro: { mensagem: 'Barbearia não encontrada' } })
+    }
+    const dados = await entregasServico.listarProdutosPublicos(tenant.id)
+    res.json({ sucesso: true, dados })
+  } catch (erro) {
+    next(erro)
+  }
+}
+
+const criarPedido = async (req, res, next) => {
+  try {
+    const tenant = await buscarTenantPorIdentificador(req.params.slug, { entregaAtivo: true, ativo: true })
+    if (!tenant || !tenant.ativo) {
+      return res.status(404).json({ sucesso: false, erro: { mensagem: 'Barbearia não encontrada' } })
+    }
+    const dados = await entregasServico.criarPedidoPublico(tenant.id, req.body)
+    res.status(201).json({ sucesso: true, dados })
+  } catch (erro) {
+    next(erro)
+  }
+}
+
+const meusPedidos = async (req, res, next) => {
+  try {
+    const tenant = await buscarTenantPorIdentificador(req.params.slug, { entregaAtivo: true, ativo: true })
+    if (!tenant || !tenant.ativo) {
+      return res.status(404).json({ sucesso: false, erro: { mensagem: 'Barbearia não encontrada' } })
+    }
+    const dados = await entregasServico.listarPedidosClientePublico(tenant.id, req.query.tel)
+    res.json({ sucesso: true, dados })
   } catch (erro) {
     next(erro)
   }
@@ -697,8 +753,7 @@ const agendar = async (req, res, next) => {
 
     if (tenant.configWhatsApp?.provedor) {
       try {
-        const lidJid = cliente.lidWhatsapp ? `${cliente.lidWhatsapp}@lid` : null
-        await whatsappServico.enviarMensagem(tenant.configWhatsApp, cliente.telefone, mensagemConfirmacao, tenant.id, lidJid)
+        await whatsappServico.enviarMensagem(tenant.configWhatsApp, cliente.telefone, mensagemConfirmacao, tenant.id)
       } catch (errWpp) {
         console.error(`[Agendar] Falha WhatsApp:`, errWpp.message)
       }
@@ -862,8 +917,7 @@ const assinar = async (req, res, next) => {
           (resumoCreditos ? `Você tem ${resumoCreditos} por mês.\n\n` : '\n') +
           `O pagamento de *${valorFormatado}* é feito na barbearia. Qualquer dúvida, é só responder aqui! 💈`
 
-        const lidJidAssinatura = cliente.lidWhatsapp ? `${cliente.lidWhatsapp}@lid` : null
-        await whatsappServico.enviarMensagem(configWpp, cliente.telefone, mensagem, tenant.id, lidJidAssinatura)
+        await whatsappServico.enviarMensagem(configWpp, cliente.telefone, mensagem, tenant.id)
       }
     } catch (errWhats) {
       console.error('[Assinar] Erro ao enviar WhatsApp de confirmação:', errWhats.message)
@@ -1075,8 +1129,7 @@ const reagendar = async (req, res, next) => {
       try {
         const primeiroNome = cliente.nome?.split(' ')[0] || cliente.nome
         const msg = `🔄 Horário reagendado, ${primeiroNome}!\n\n✂️ ${agFull.servico.nome}\n👤 Com ${agFull.profissional.nome}\n📅 ${dataFmt}\n\nTe esperamos! 💈 — ${tenant.nome}`
-        const lidJid = cliente.lidWhatsapp ? `${cliente.lidWhatsapp}@lid` : null
-        await whatsappServico.enviarMensagem(tenant.configWhatsApp, cliente.telefone, msg, tenant.id, lidJid)
+        await whatsappServico.enviarMensagem(tenant.configWhatsApp, cliente.telefone, msg, tenant.id)
       } catch (err) {
         console.error('[Reagendar] Falha WhatsApp:', err.message)
       }
@@ -1263,4 +1316,4 @@ setInterval(() => {
   }
 }, 10 * 60 * 1000)
 
-module.exports = { info, cliente, perfil, atualizarPerfil, pacotes, painelTv, slots, slotsCombo, agendar, checkIn, planos, assinar, meusAgendamentos, historico, verificarAssinatura, reagendar, enviarCodigo, verificarCodigo }
+module.exports = { info, produtos, criarPedido, meusPedidos, cliente, perfil, atualizarPerfil, pacotes, painelTv, slots, slotsCombo, agendar, checkIn, planos, assinar, meusAgendamentos, historico, verificarAssinatura, reagendar, enviarCodigo, verificarCodigo }

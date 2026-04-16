@@ -38,6 +38,7 @@ import AgendaPublica from './paginas/public/AgendaPublica'
 import Totem from './paginas/public/Totem'
 import PlanoPublico from './paginas/public/PlanoPublico'
 import PainelTvPublico from './paginas/public/PainelTvPublico'
+import LegalPublica from './paginas/public/LegalPublica'
 
 // Operação
 import Fidelidade from './paginas/operacao/Fidelidade'
@@ -45,6 +46,7 @@ import Estoque from './paginas/operacao/Estoque'
 import Comissoes from './paginas/operacao/Comissoes'
 import Comanda from './paginas/operacao/Comanda'
 import Caixa from './paginas/operacao/Caixa'
+import Entregas from './paginas/operacao/Entregas'
 import Galeria from './paginas/operacao/Galeria'
 import ListaEspera from './paginas/operacao/ListaEspera'
 import Relatorios from './paginas/operacao/Relatorios'
@@ -70,7 +72,8 @@ const GuardaRecurso = ({ recurso, nome, children }) => {
   const { tenant, tenantCarregando, tenantInicializado } = useAuth()
   if (!tenantInicializado || tenantCarregando) return <TelaCarregandoAcesso telaInteira={false} />
   if (!tenant) return <TenantIndisponivel />
-  if (!tenant[recurso]) return <ModuloInativo nome={nome} />
+  const recursos = Array.isArray(recurso) ? recurso : [recurso]
+  if (!recursos.some((item) => tenant[item])) return <ModuloInativo nome={nome} />
   return children
 }
 
@@ -151,7 +154,7 @@ const RotaProtegida = ({ children, redirecionarOnboarding = true }) => {
   return children
 }
 
-const GoogleCallback = () => {
+const OAuthCallback = () => {
   const navigate = useNavigate()
   const { definirUsuario, carregarTenant } = useAuth()
 
@@ -201,6 +204,7 @@ const App = () => {
       {/* Agenda pública — sem autenticação */}
       <Route path="/b/:slug" element={<AgendaPublica />} />
       <Route path="/b/:slug/details" element={<AgendaPublica />} />
+      <Route path="/b/:slug/produtos" element={<AgendaPublica />} />
       <Route path="/b/:slug/profissionais" element={<AgendaPublica />} />
       <Route path="/b/:slug/agendar" element={<AgendaPublica />} />
       <Route path="/b/:slug/conta" element={<AgendaPublica />} />
@@ -211,12 +215,15 @@ const App = () => {
       <Route path="/plano/:slug" element={<PlanoPublico />} />
       {/* Painel TV público com slug + hash da barbearia */}
       <Route path="/painel/:slug/:hash" element={<PainelTvPublico />} />
+      <Route path="/termos" element={<LegalPublica tipo="termos" />} />
+      <Route path="/privacidade" element={<LegalPublica tipo="privacidade" />} />
 
       <Route path="/login" element={<Login />} />
       <Route path="/cadastro" element={<Cadastro />} />
       <Route path="/recuperar-senha" element={<RecuperarSenha />} />
       <Route path="/redefinir-senha/:token" element={<RedefinirSenha />} />
-      <Route path="/auth/callback" element={<GoogleCallback />} />
+      <Route path="/auth/callback" element={<OAuthCallback />} />
+      <Route path="/oauth" element={<OAuthCallback />} />
 
       <Route
         path="/onboarding/*"
@@ -243,11 +250,12 @@ const App = () => {
 
         <Route path="operacao/clientes" element={<ConfigClientes />} />
         <Route path="operacao/planos" element={<GuardaRecurso recurso="membershipsAtivo" nome="Plano Mensal"><ConfigPlanos /></GuardaRecurso>} />
-        <Route path="operacao/fidelidade" element={<GuardaRecurso recurso="fidelidadeAtivo" nome="Fidelidade"><Fidelidade /></GuardaRecurso>} />
+        <Route path="operacao/fidelidade" element={<GuardaRecurso recurso={['fidelidadeAtivo', 'aniversarianteAtivo']} nome="Aniversário"><Fidelidade /></GuardaRecurso>} />
         <Route path="operacao/estoque" element={<GuardaRecurso recurso="estoqueAtivo" nome="Estoque"><Estoque /></GuardaRecurso>} />
         <Route path="operacao/comissoes" element={<GuardaPlano planoPermitido="SALAO" nome="Comissões"><GuardaRecurso recurso="comissoesAtivo" nome="Comissões"><Comissoes /></GuardaRecurso></GuardaPlano>} />
         <Route path="operacao/comanda" element={<GuardaRecurso recurso="comandaAtivo" nome="Comanda Digital"><Comanda /></GuardaRecurso>} />
         <Route path="operacao/caixa" element={<GuardaRecurso recurso="caixaAtivo" nome="Caixa"><Caixa /></GuardaRecurso>} />
+        <Route path="operacao/entregas" element={<GuardaRecurso recurso="entregaAtivo" nome="Entregas"><Entregas /></GuardaRecurso>} />
         <Route path="operacao/galeria" element={<GuardaRecurso recurso="galeriaAtivo" nome="Galeria"><Galeria /></GuardaRecurso>} />
         <Route path="operacao/lista-espera" element={<GuardaRecurso recurso="listaEsperaAtivo" nome="Lista de Espera"><ListaEspera /></GuardaRecurso>} />
         <Route path="operacao/relatorios" element={<Relatorios />} />

@@ -53,6 +53,12 @@ const CENARIOS_WHATSAPP_BR = [
     tags: ['sem_link_cedo', 'urgencia'],
   },
   {
+    nome: 'agenda_premium_sem_link_jogado',
+    perfil: 'CLIENTE_CONHECIDO',
+    passos: ['quero agendar um corte hoje às 15h'],
+    tags: ['urgencia', 'premium_consultivo', 'sem_link_cedo'],
+  },
+  {
     nome: 'cliente_estressado',
     perfil: 'NOVO_LEAD',
     passos: ['mano responde ai tem horario hj ou n', 'Matheus', 'depois das 18'],
@@ -140,6 +146,12 @@ const CENARIOS_WHATSAPP_BR = [
     perfil: 'CLIENTE_CONHECIDO',
     passos: ['[FIGURINHA]'],
     tags: ['midia'],
+  },
+  {
+    nome: 'figurinha_recusa_encerramento',
+    perfil: 'CLIENTE_CONHECIDO',
+    passos: ['[FIGURINHA]', 'n vlw'],
+    tags: ['midia', 'encerramento_limpo'],
   },
   {
     nome: 'documento_enviado',
@@ -397,6 +409,12 @@ const CENARIOS_WHATSAPP_BR = [
     tags: [],
   },
   {
+    nome: 'unificar_combo_mesmo_dia',
+    perfil: 'CLIENTE_CONHECIDO',
+    passos: ['quero agendar um corte hoje às 17h', 'sim', 'quero agendar barba amanhã às 12:30', 'sim', 'da para fazer tudo no mesmo dia?', 'pode ser tudo hoje entao'],
+    tags: ['combo_contextual'],
+  },
+  {
     nome: 'duracao_servico',
     perfil: 'NOVO_LEAD',
     passos: ['quanto tempo leva um corte?'],
@@ -444,6 +462,15 @@ const analisarResposta = ({ cenario, ultimaMensagemCliente, resposta, mensagemPr
 
   if (!respostaNorm) alertas.push('sem_resposta')
   if (linhas > 7) alertas.push('mensagem_longa')
+
+  const linhasNormalizadas = String(respostaEfetiva || '')
+    .split('\n')
+    .map((linha) => normalizarTexto(linha))
+    .filter((linha) => linha && linha.length > 8)
+  const linhasDuplicadas = linhasNormalizadas.filter((linha, index) => linhasNormalizadas.indexOf(linha) !== index)
+  if (linhasDuplicadas.length > 0) {
+    alertas.push('mensagem_duplicada')
+  }
 
   if (FRASES_ROBOTICAS.some((frase) => respostaNorm.includes(frase))) {
     alertas.push('frase_robotica')
@@ -556,6 +583,44 @@ const analisarResposta = ({ cenario, ultimaMensagemCliente, resposta, mensagemPr
     && !/\b(barba|sobrancel|acabamento|pezinho|finaliz)\b/.test(respostaNorm)
   ) {
     alertas.push('consultoria_fraca')
+  }
+
+  if (
+    cenario.tags.includes('premium_consultivo')
+    && !/\b(tenho|consigo|boa|fechado|perfeito|ja vejo|já vejo|deixo reservado|com o)\b/.test(respostaNorm)
+  ) {
+    alertas.push('postura_premium_fraca')
+  }
+
+  if (
+    cenario.tags.includes('premium_consultivo')
+    && /\b(voce pode agendar pelo link|segue o link|escolher sozinho|\/b\/|https?:\/\/)\b/.test(respostaNorm)
+  ) {
+    alertas.push('link_jogado_sem_estrategia')
+  }
+
+  if (
+    cenario.tags.includes('encerramento_limpo')
+    && /\b(pode repetir|manda de novo|como posso ajudar)\b/.test(respostaNorm)
+  ) {
+    alertas.push('encerramento_reaberto')
+  }
+
+  if (
+    cenario.tags.includes('combo_contextual')
+    && /\b(tudo|mesmo dia|os dois)\b/.test(clienteNorm)
+    && !/\b(corte|barba|combo|os dois)\b/.test(respostaNorm)
+  ) {
+    alertas.push('combo_contexto_ignorado')
+  }
+
+  if (
+    cenario.tags.includes('combo_contextual')
+    && /\b(tudo|mesmo dia|os dois)\b/.test(clienteNorm)
+    && /✅/.test(resposta)
+    && !/\b(corte\b.*\bbarba|\bbarba\b.*\bcorte|combo|os dois)\b/.test(respostaNorm)
+  ) {
+    alertas.push('combo_fragmentado')
   }
 
   if (

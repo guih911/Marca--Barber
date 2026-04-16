@@ -25,11 +25,14 @@ const ModalProduto = ({ produto, onFechar, onSalvar }) => {
   const [form, setForm] = useState({
     nome: produto?.nome || '',
     descricao: produto?.descricao || '',
+    fotoUrl: produto?.fotoUrl || '',
     unidade: unidadeValida(produto?.unidade),
     precoCustoCentavos: produto?.precoCustoCentavos ? produto.precoCustoCentavos / 100 : '',
     precoVendaCentavos: produto?.precoVendaCentavos ? produto.precoVendaCentavos / 100 : '',
     quantidadeAtual: produto?.quantidadeAtual ?? 0,
     quantidadeMinima: produto?.quantidadeMinima ?? 2,
+    divulgarNoLink: Boolean(produto?.divulgarNoLink),
+    permiteEntrega: produto?.permiteEntrega !== false,
   })
   const [salvando, setSalvando] = useState(false)
 
@@ -70,6 +73,11 @@ const ModalProduto = ({ produto, onFechar, onSalvar }) => {
             <input value={form.nome} onChange={f('nome')} placeholder="Ex: Pomada Minas Gerais"
               className="w-full px-3 py-2.5 rounded-lg border border-borda focus:outline-none focus:ring-2 focus:ring-primaria/30 text-sm" />
           </div>
+          <div>
+            <label className="block text-xs font-medium text-texto-sec mb-1">Foto do produto (URL)</label>
+            <input value={form.fotoUrl} onChange={f('fotoUrl')} placeholder="https://..."
+              className="w-full px-3 py-2.5 rounded-lg border border-borda focus:outline-none focus:ring-2 focus:ring-primaria/30 text-sm" />
+          </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-medium text-texto-sec mb-1">Unidade de medida</label>
@@ -87,6 +95,16 @@ const ModalProduto = ({ produto, onFechar, onSalvar }) => {
               <input type="number" min="0" step="0.1" value={form.quantidadeAtual} onChange={f('quantidadeAtual')}
                 className="w-full px-3 py-2.5 rounded-lg border border-borda focus:outline-none focus:ring-2 focus:ring-primaria/30 text-sm" />
             </div>
+          </div>
+          <div className="grid grid-cols-1 gap-2">
+            <label className="flex items-center gap-2 text-sm text-texto">
+              <input type="checkbox" checked={form.divulgarNoLink} onChange={(e) => setForm((p) => ({ ...p, divulgarNoLink: e.target.checked }))} />
+              Divulgar no link público
+            </label>
+            <label className="flex items-center gap-2 text-sm text-texto">
+              <input type="checkbox" checked={form.permiteEntrega} onChange={(e) => setForm((p) => ({ ...p, permiteEntrega: e.target.checked }))} />
+              Disponível para entrega
+            </label>
           </div>
           <div>
             <label className="block text-xs font-medium text-texto-sec mb-1">Qtd. mínima (alerta)</label>

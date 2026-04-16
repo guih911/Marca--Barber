@@ -1,5 +1,5 @@
 # ═══════════════════════════════════════════════════════════════════════════════
-# Marcaí Barber — API (Node.js + Prisma + Baileys)
+# Marcaí Barber — API (Node.js + Prisma)
 # ═══════════════════════════════════════════════════════════════════════════════
 FROM node:20-slim
 
@@ -21,7 +21,7 @@ RUN npx prisma generate
 COPY src ./src
 
 # Diretórios persistentes
-RUN mkdir -p .baileys_auth uploads/avatares uploads/galeria
+RUN mkdir -p uploads/avatares uploads/galeria
 
 EXPOSE 3001
 

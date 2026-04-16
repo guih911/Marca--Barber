@@ -185,13 +185,14 @@ const ferramentas = [
     type: 'function',
     function: {
       name: 'cadastrarCliente',
-      description: 'Cadastra um novo cliente ou atualiza o nome de um cliente existente. Use sempre que o cliente informar como prefere ser chamado, inclusive para memória de retorno e fidelização.',
+      description: 'Cadastra um novo cliente ou atualiza os dados de um cliente existente. Use sempre que o cliente informar como prefere ser chamado ou passar a data de nascimento para memória, aniversariante e fidelização.',
       parameters: {
         type: 'object',
         properties: {
           nome: { type: 'string', description: 'Nome completo do cliente.' },
           telefone: { type: 'string', description: 'Número de telefone.' },
           email: { type: 'string', description: 'E-mail (opcional).' },
+          dataNascimento: { type: 'string', description: 'Data de nascimento no formato YYYY-MM-DD.' },
         },
         required: ['nome', 'telefone'],
       },

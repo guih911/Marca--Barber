@@ -42,6 +42,29 @@ const LEMBRETES_OPCOES = [
   { valor: 120, label: '2h' },
 ]
 
+const HORARIOS_ENTREGA_OPCOES = Array.from({ length: 48 }, (_, indice) => {
+  const hora = String(Math.floor(indice / 2)).padStart(2, '0')
+  const minuto = indice % 2 === 0 ? '00' : '30'
+  const valor = `${hora}:${minuto}`
+  return { valor, label: valor }
+})
+
+const parseJanelasEntregaTexto = (texto = '') => (
+  String(texto)
+    .split('\n')
+    .map((linha) => linha.trim())
+    .filter(Boolean)
+    .map((linha) => {
+      const [inicio, fim] = linha.split('-').map((item) => item.trim())
+      return inicio && fim ? { inicio, fim, label: `${inicio} às ${fim}` } : null
+    })
+    .filter(Boolean)
+)
+
+const serializarJanelasEntrega = (janelas = []) => (
+  janelas.map((item) => `${item.inicio}-${item.fim}`).join('\n')
+)
+
 const ConfigNegocio = () => {
   const toast = useToast()
   const { atualizarTenant } = useAuth()
@@ -67,6 +90,10 @@ const ConfigNegocio = () => {
     diferenciais: [],
     apresentacaoSalaoAtivo: true,
     enviarMensagemAoCadastrarCliente: true,
+    taxaEntrega: '',
+    valorMinimoEntrega: '',
+    tempoMedioEntregaMin: 45,
+    janelasEntregaTexto: '19:00-20:00',
   })
 
   const [configWhatsAppAtual, setConfigWhatsAppAtual] = useState({})
@@ -76,6 +103,8 @@ const ConfigNegocio = () => {
   const [carregando, setCarregando] = useState(true)
   const [salvando, setSalvando] = useState(false)
   const [sucesso, setSucesso] = useState(false)
+  const [novaJanelaEntregaInicio, setNovaJanelaEntregaInicio] = useState('18:00')
+  const [novaJanelaEntregaFim, setNovaJanelaEntregaFim] = useState('19:00')
   const inputLogoRef = useRef(null)
 
   useEffect(() => {
@@ -112,6 +141,12 @@ const ConfigNegocio = () => {
         diferenciais: Array.isArray(t.diferenciais) ? t.diferenciais : [],
         apresentacaoSalaoAtivo: t.apresentacaoSalaoAtivo !== false,
         enviarMensagemAoCadastrarCliente: t.enviarMensagemAoCadastrarCliente !== false,
+        taxaEntrega: t.taxaEntregaCentavos ? String((t.taxaEntregaCentavos / 100).toFixed(2)) : '',
+        valorMinimoEntrega: t.valorMinimoEntregaCentavos ? String((t.valorMinimoEntregaCentavos / 100).toFixed(2)) : '',
+        tempoMedioEntregaMin: t.tempoMedioEntregaMin || 45,
+        janelasEntregaTexto: Array.isArray(t.janelasEntrega) && t.janelasEntrega.length > 0
+          ? t.janelasEntrega.map((item) => `${item.inicio}-${item.fim}`).join('\n')
+          : '19:00-20:00',
       })
       setCarregando(false)
     })
@@ -193,6 +228,41 @@ const ConfigNegocio = () => {
     })
   }
 
+  const adicionarJanelaEntrega = () => {
+    if (!novaJanelaEntregaInicio || !novaJanelaEntregaFim) {
+      toast('Selecione o início e o fim do horário de entrega.', 'aviso')
+      return
+    }
+    if (novaJanelaEntregaInicio >= novaJanelaEntregaFim) {
+      toast('O horário final precisa ser depois do início.', 'aviso')
+      return
+    }
+
+    const atuais = parseJanelasEntregaTexto(form.janelasEntregaTexto)
+    const jaExiste = atuais.some((item) => item.inicio === novaJanelaEntregaInicio && item.fim === novaJanelaEntregaFim)
+    if (jaExiste) {
+      toast('Esse horário de entrega já foi adicionado.', 'aviso')
+      return
+    }
+
+    const proximas = [...atuais, { inicio: novaJanelaEntregaInicio, fim: novaJanelaEntregaFim }]
+      .sort((a, b) => a.inicio.localeCompare(b.inicio))
+
+    setForm((anterior) => ({
+      ...anterior,
+      janelasEntregaTexto: serializarJanelasEntrega(proximas),
+    }))
+  }
+
+  const removerJanelaEntrega = (indice) => {
+    const atuais = parseJanelasEntregaTexto(form.janelasEntregaTexto)
+    atuais.splice(indice, 1)
+    setForm((anterior) => ({
+      ...anterior,
+      janelasEntregaTexto: serializarJanelasEntrega(atuais),
+    }))
+  }
+
   const salvar = async (e) => {
     e.preventDefault()
     if (!form.nome?.trim()) {
@@ -225,6 +295,10 @@ const ConfigNegocio = () => {
         diferenciais: form.diferenciais,
         apresentacaoSalaoAtivo: form.apresentacaoSalaoAtivo,
         enviarMensagemAoCadastrarCliente: form.enviarMensagemAoCadastrarCliente,
+        taxaEntregaCentavos: form.taxaEntrega !== '' ? Math.round(Number(String(form.taxaEntrega).replace(',', '.')) * 100) : 0,
+        valorMinimoEntregaCentavos: form.valorMinimoEntrega !== '' ? Math.round(Number(String(form.valorMinimoEntrega).replace(',', '.')) * 100) : 0,
+        tempoMedioEntregaMin: Number(form.tempoMedioEntregaMin) || 45,
+        janelasEntrega: parseJanelasEntregaTexto(form.janelasEntregaTexto),
       }
 
       const resposta = await api.patch('/api/tenants/meu', corpo)
@@ -344,6 +418,8 @@ const ConfigNegocio = () => {
   const abrirLinkAgendamento = () => {
     abrirLinkExterno(linkAgendamento, 'O link de agendamento ainda não está disponível.')
   }
+
+  const janelasEntregaConfiguradas = parseJanelasEntregaTexto(form.janelasEntregaTexto)
 
   return (
     <div className="max-w-2xl space-y-6">
@@ -617,6 +693,112 @@ const ConfigNegocio = () => {
           </div>
         </div>
 
+        <div className="bg-white rounded-2xl border border-borda p-6 shadow-sm space-y-5">
+          <div className="flex items-center gap-2">
+            <MapPin size={16} className="text-primaria" />
+            <h2 className="text-base font-semibold text-texto">Entrega de produtos</h2>
+          </div>
+          <p className="text-xs text-texto-sec -mt-3">Configure taxa, pedido mínimo e os horários em que você realmente faz delivery. O cliente vê isso no link público antes de fechar o pedido.</p>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div>
+              <label className="block text-sm font-medium text-texto mb-1.5">Taxa de entrega (R$)</label>
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                value={form.taxaEntrega}
+                onChange={atualizar('taxaEntrega')}
+                className="w-full px-4 py-2.5 rounded-lg border border-borda focus:outline-none focus:ring-2 focus:ring-primaria/30 focus:border-primaria text-sm"
+                placeholder="0,00"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-texto mb-1.5">Pedido mínimo (R$)</label>
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                value={form.valorMinimoEntrega}
+                onChange={atualizar('valorMinimoEntrega')}
+                className="w-full px-4 py-2.5 rounded-lg border border-borda focus:outline-none focus:ring-2 focus:ring-primaria/30 focus:border-primaria text-sm"
+                placeholder="0,00"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-texto mb-1.5">Tempo médio de entrega (min)</label>
+              <input
+                type="number"
+                min="5"
+                step="5"
+                value={form.tempoMedioEntregaMin}
+                onChange={atualizar('tempoMedioEntregaMin')}
+                className="w-full px-4 py-2.5 rounded-lg border border-borda focus:outline-none focus:ring-2 focus:ring-primaria/30 focus:border-primaria text-sm"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-texto mb-1.5">Horários de entrega</label>
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-[1fr_1fr_auto]">
+              <div>
+                <label className="block text-xs font-medium text-texto-sec mb-1.5">Entrega começa às</label>
+                <Select value={novaJanelaEntregaInicio} onValueChange={setNovaJanelaEntregaInicio}>
+                  <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
+                  <SelectContent>
+                    {HORARIOS_ENTREGA_OPCOES.map((item) => <SelectItem key={item.valor} value={item.valor}>{item.label}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-texto-sec mb-1.5">Entrega termina às</label>
+                <Select value={novaJanelaEntregaFim} onValueChange={setNovaJanelaEntregaFim}>
+                  <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
+                  <SelectContent>
+                    {HORARIOS_ENTREGA_OPCOES.map((item) => <SelectItem key={item.valor} value={item.valor}>{item.label}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="flex items-end">
+                <button
+                  type="button"
+                  onClick={adicionarJanelaEntrega}
+                  className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-lg bg-primaria px-4 text-sm font-medium text-white transition-colors hover:bg-primaria/90 md:w-auto"
+                >
+                  <Plus size={14} />
+                  Adicionar
+                </button>
+              </div>
+            </div>
+
+            {janelasEntregaConfiguradas.length > 0 ? (
+              <div className="mt-3 space-y-2">
+                {janelasEntregaConfiguradas.map((item, indice) => (
+                  <div key={`${item.inicio}-${item.fim}-${indice}`} className="flex items-center justify-between gap-3 rounded-xl border border-borda bg-slate-50 px-4 py-3">
+                    <div>
+                      <p className="text-sm font-medium text-texto">{item.label}</p>
+                      <p className="text-xs text-texto-sec">Esse horário aparece no link público para o cliente.</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => removerJanelaEntrega(indice)}
+                      className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-borda text-texto-sec transition-colors hover:border-red-200 hover:bg-red-50 hover:text-red-600"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="mt-3 rounded-xl border border-dashed border-borda px-4 py-3 text-sm text-texto-sec">
+                Nenhum horário de delivery configurado ainda.
+              </div>
+            )}
+
+            <p className="text-xs text-texto-sec mt-2">Exemplo prático: se você atende no salão até 18:00 e entrega depois disso, cadastre janelas como 18:30 às 19:30 e 19:30 às 20:30.</p>
+          </div>
+        </div>
+
         {/* ── IA e WhatsApp ── */}
         <div className="bg-white rounded-2xl border border-borda p-6 shadow-sm space-y-5">
           <h2 className="text-base font-semibold text-texto">IA e WhatsApp</h2>
@@ -689,7 +871,7 @@ const ConfigNegocio = () => {
             <div>
               <h3 className="text-sm font-semibold text-texto">Lembrete de agendamento</h3>
               <p className="text-xs text-texto-sec mt-0.5">
-                Tempo antes do horário para enviar o lembrete automático por WhatsApp
+                Escolha exatamente quantos lembretes a barbearia vai enviar e com quanto tempo de antecedência no WhatsApp.
               </p>
             </div>
           </div>
@@ -709,7 +891,7 @@ const ConfigNegocio = () => {
 
             {normalizarLembretes(form.lembretesMinutosAntes).length === 0 ? (
               <div className="rounded-xl border border-dashed border-borda bg-fundo px-4 py-3 text-sm text-texto-sec">
-                Nenhum lembrete configurado. Clique em Adicionar lembrete para criar o primeiro.
+                Nenhum lembrete configurado. Se deixar assim, a barbearia não enviará lembretes automáticos por essa configuração.
               </div>
             ) : (
               <div className="space-y-3">
@@ -742,7 +924,7 @@ const ConfigNegocio = () => {
 
             {normalizarLembretes(form.lembretesMinutosAntes).length > 0 && (
               <p className="text-xs text-texto-sec mt-2">
-                A barbearia enviará {normalizarLembretes(form.lembretesMinutosAntes).length} lembrete{normalizarLembretes(form.lembretesMinutosAntes).length > 1 ? 's' : ''}: {normalizarLembretes(form.lembretesMinutosAntes).map((minutos) => formatarJanelaLembrete(minutos)).join(', ')} antes do horário.
+                A barbearia enviará exatamente {normalizarLembretes(form.lembretesMinutosAntes).length} lembrete{normalizarLembretes(form.lembretesMinutosAntes).length > 1 ? 's' : ''}: {normalizarLembretes(form.lembretesMinutosAntes).map((minutos) => formatarJanelaLembrete(minutos)).join(', ')} antes do horário.
               </p>
             )}
           </div>

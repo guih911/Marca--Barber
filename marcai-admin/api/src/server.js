@@ -357,54 +357,6 @@ app.post('/api/admin/impersonar/:tenantId', autenticar, async (req, res) => {
   }
 })
 
-// ─── Vendas WhatsApp ────────────────────────────────────────────────────────
-const vendasWpp = require('./vendas-whatsapp')
-
-app.post('/api/admin/vendas/conectar', autenticar, async (req, res) => {
-  try {
-    await vendasWpp.iniciarSessao()
-    // Aguarda QR ou conexão
-    let tentativas = 0
-    while (tentativas < 15) {
-      const { status, qr } = await vendasWpp.obterStatus()
-      if (status === 'conectado') return res.json({ status: 'conectado', qr: null })
-      if (qr) return res.json({ status: 'aguardando_qr', qr })
-      await new Promise(r => setTimeout(r, 1000))
-      tentativas++
-    }
-    const s = await vendasWpp.obterStatus()
-    res.json(s)
-  } catch (err) {
-    res.status(500).json({ erro: err.message })
-  }
-})
-
-app.get('/api/admin/vendas/status', autenticar, async (req, res) => {
-  try {
-    const s = await vendasWpp.obterStatus()
-    res.json(s)
-  } catch (err) {
-    res.status(500).json({ erro: err.message })
-  }
-})
-
-app.post('/api/admin/vendas/desconectar', autenticar, async (req, res) => {
-  try {
-    await vendasWpp.desconectar()
-    res.json({ status: 'desconectado' })
-  } catch (err) {
-    res.status(500).json({ erro: err.message })
-  }
-})
-
-app.get('/api/admin/vendas/conversas', autenticar, async (req, res) => {
-  try {
-    res.json(vendasWpp.obterConversas())
-  } catch (err) {
-    res.status(500).json({ erro: err.message })
-  }
-})
-
 // ─── Seed: cria primeiro superadmin se não existir ──────────────────────────
 const seed = async () => {
   const count = await db.superAdmin.count()

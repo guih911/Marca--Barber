@@ -17,7 +17,6 @@ services:
       - "4000"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
-      - vendas_baileys_auth:/app/.baileys_vendas
     networks:
       - soloflow-net
 
@@ -36,9 +35,6 @@ services:
       - "80"
     networks:
       - soloflow-net
-
-volumes:
-  vendas_baileys_auth:
 
 networks:
   soloflow-net:

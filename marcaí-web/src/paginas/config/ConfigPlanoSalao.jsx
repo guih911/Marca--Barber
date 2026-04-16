@@ -128,6 +128,8 @@ const ConfigPlanoSalao = () => {
             {[
               ['Memberships', tenant.membershipsAtivo],
               ['Fidelidade', tenant.fidelidadeAtivo],
+              ['Aniversariante', tenant.aniversarianteAtivo],
+              ['Entregas', tenant.entregaAtivo],
               ['Comissões', tenant.comissoesAtivo],
               ['Estoque', tenant.estoqueAtivo],
               ['Comanda Digital', tenant.comandaAtivo],

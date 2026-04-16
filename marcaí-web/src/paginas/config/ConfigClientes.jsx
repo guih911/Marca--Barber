@@ -21,6 +21,9 @@ import {
   RotateCcw,
   Link2,
   Send,
+  Download,
+  Upload,
+  FileSpreadsheet,
 } from 'lucide-react'
 import api from '../../servicos/api'
 import { formatarData, formatarTelefone } from '../../lib/utils'
@@ -217,6 +220,76 @@ const ModalCliente = ({ valorInicial, onFechar, onSalvar, salvando }) => {
               Salvar
             </button>
           </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+const ModalImportacaoClientes = ({ arquivo, onFechar, onSelecionarArquivo, onImportar, importando, resultado }) => {
+  useEffect(() => {
+    const handler = (e) => { if (e.key === 'Escape') onFechar() }
+    document.addEventListener('keydown', handler)
+    return () => document.removeEventListener('keydown', handler)
+  }, [onFechar])
+
+  return (
+    <div className="fixed inset-0 bg-black/40 z-[70] flex items-center justify-center p-4" onClick={onFechar}>
+      <div className="bg-white rounded-2xl border border-borda shadow-xl w-full max-w-lg" onClick={(e) => e.stopPropagation()}>
+        <div className="px-6 pt-5 pb-4 border-b border-borda flex items-center justify-between">
+          <div>
+            <h3 className="text-lg font-semibold text-texto">Importar clientes</h3>
+            <p className="text-sm text-texto-sec mt-1">Envie uma planilha CSV com as colunas `nome` e `telefone`.</p>
+          </div>
+          <button type="button" onClick={onFechar} className="text-texto-sec hover:text-texto transition-colors">
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="px-6 py-5 space-y-4">
+          <label className="block rounded-2xl border border-dashed border-borda bg-fundo/50 p-5 cursor-pointer hover:border-primaria/40 transition-colors">
+            <input type="file" accept=".csv,text/csv" className="hidden" onChange={onSelecionarArquivo} />
+            <div className="flex items-center gap-3">
+              <div className="h-11 w-11 rounded-2xl bg-white border border-borda flex items-center justify-center text-primaria">
+                <FileSpreadsheet size={20} />
+              </div>
+              <div>
+                <p className="text-sm font-medium text-texto">{arquivo ? arquivo.name : 'Selecionar arquivo CSV'}</p>
+                <p className="text-xs text-texto-sec mt-1">Campos aceitos: nome, telefone, email, notas, tipo_corte, preferencias, data_nascimento, instagram e tags.</p>
+              </div>
+            </div>
+          </label>
+
+          {resultado && (
+            <div className="rounded-2xl border border-borda bg-fundo/40 p-4 space-y-2">
+              <p className="text-sm font-medium text-texto">Resultado da importação</p>
+              <p className="text-sm text-texto-sec">
+                {resultado.criados} criados, {resultado.atualizados} atualizados, {resultado.ignorados} ignorados em {resultado.totalLinhas} linhas.
+              </p>
+              {Array.isArray(resultado.erros) && resultado.erros.length > 0 && (
+                <div className="max-h-32 overflow-auto rounded-xl bg-white border border-borda px-3 py-2">
+                  {resultado.erros.slice(0, 10).map((item) => (
+                    <p key={item} className="text-xs text-amber-700">{item}</p>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        <div className="px-6 py-4 border-t border-borda flex gap-3">
+          <button type="button" onClick={onFechar} className="flex-1 border border-borda text-texto-sec rounded-lg py-2.5 text-sm">
+            Fechar
+          </button>
+          <button
+            type="button"
+            onClick={onImportar}
+            disabled={!arquivo || importando}
+            className="flex-1 bg-primaria hover:bg-primaria-escura disabled:opacity-60 text-white rounded-lg py-2.5 text-sm font-medium inline-flex items-center justify-center gap-2"
+          >
+            {importando ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
+            Importar clientes
+          </button>
         </div>
       </div>
     </div>
@@ -612,6 +685,10 @@ const ConfigClientes = () => {
   const [erro, setErro] = useState('')
   const [confirmar, setConfirmar] = useState(null)
   const [filtroAtivo, setFiltroAtivo] = useState(true)
+  const [modalImportacaoAberto, setModalImportacaoAberto] = useState(false)
+  const [arquivoImportacao, setArquivoImportacao] = useState(null)
+  const [importandoPlanilha, setImportandoPlanilha] = useState(false)
+  const [resultadoImportacao, setResultadoImportacao] = useState(null)
 
   const buscaDebounced = useDebounce(busca)
   const limite = 20
@@ -733,19 +810,81 @@ const ConfigClientes = () => {
     })
   }
 
+  const baixarPlanilhaModelo = () => {
+    const csv = [
+      'nome,telefone,email,tipo_corte,preferencias,data_nascimento,instagram,notas,tags',
+      '"João Silva","62999998888","joao@email.com","Degradê baixo","Prefere tesoura","1995-08-15","@joaosilva","Cliente antigo","vip|barba"',
+      '"Maria Souza","62988887777","","Corte feminino","Gosta de atendimento pela manhã","","@maria","Indicação da Ana","indicacao"',
+    ].join('\n')
+
+    const blob = new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = 'modelo-importacao-clientes.csv'
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    URL.revokeObjectURL(url)
+  }
+
+  const abrirImportacao = () => {
+    setResultadoImportacao(null)
+    setArquivoImportacao(null)
+    setModalImportacaoAberto(true)
+  }
+
+  const selecionarArquivoImportacao = (e) => {
+    const arquivo = e.target.files?.[0] || null
+    setArquivoImportacao(arquivo)
+    setResultadoImportacao(null)
+  }
+
+  const importarPlanilha = async () => {
+    if (!arquivoImportacao) return
+    setImportandoPlanilha(true)
+    try {
+      const formData = new FormData()
+      formData.append('arquivo', arquivoImportacao)
+      const res = await api.upload('/api/clientes/importar', formData)
+      const dados = res.dados || res
+      setResultadoImportacao(dados)
+      toast(`Importação concluída: ${dados.criados} criados e ${dados.atualizados} atualizados.`, 'sucesso')
+      await carregar()
+    } catch (e) {
+      toast(e?.erro?.mensagem || 'Não foi possível importar a planilha.', 'erro')
+    } finally {
+      setImportandoPlanilha(false)
+    }
+  }
+
   return (
     <div className="max-w-6xl space-y-5">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div>
           <h1 className="text-2xl font-semibold text-texto">Clientes</h1>
           <p className="text-texto-sec text-sm mt-1">{total} clientes cadastrados • você pode adicionar, editar e excluir</p>
         </div>
-        <button
-          onClick={abrirNovo}
-          className="bg-primaria hover:bg-primaria-escura text-white rounded-lg px-4 py-2.5 text-sm font-medium inline-flex items-center gap-2"
-        >
-          <Plus size={15} /> Novo cliente
-        </button>
+        <div className="flex flex-wrap gap-2">
+          <button
+            onClick={baixarPlanilhaModelo}
+            className="border border-borda bg-white hover:bg-fundo text-texto rounded-lg px-4 py-2.5 text-sm font-medium inline-flex items-center gap-2"
+          >
+            <Download size={15} /> Planilha de importação
+          </button>
+          <button
+            onClick={abrirImportacao}
+            className="border border-borda bg-white hover:bg-fundo text-texto rounded-lg px-4 py-2.5 text-sm font-medium inline-flex items-center gap-2"
+          >
+            <Upload size={15} /> Upload de planilha
+          </button>
+          <button
+            onClick={abrirNovo}
+            className="bg-primaria hover:bg-primaria-escura text-white rounded-lg px-4 py-2.5 text-sm font-medium inline-flex items-center gap-2"
+          >
+            <Plus size={15} /> Novo cliente
+          </button>
+        </div>
       </div>
 
       {erro && (
@@ -938,6 +1077,21 @@ const ConfigClientes = () => {
           onFechar={() => setModal(null)}
           onSalvar={salvarCliente}
           salvando={salvandoModal}
+        />
+      )}
+
+      {modalImportacaoAberto && (
+        <ModalImportacaoClientes
+          arquivo={arquivoImportacao}
+          onFechar={() => {
+            setModalImportacaoAberto(false)
+            setArquivoImportacao(null)
+            setResultadoImportacao(null)
+          }}
+          onSelecionarArquivo={selecionarArquivoImportacao}
+          onImportar={importarPlanilha}
+          importando={importandoPlanilha}
+          resultado={resultadoImportacao}
         />
       )}
 
