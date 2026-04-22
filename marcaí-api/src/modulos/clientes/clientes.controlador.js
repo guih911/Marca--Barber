@@ -1,6 +1,7 @@
-﻿const clientesServico = require('./clientes.servico')
+const clientesServico = require('./clientes.servico')
 const banco = require('../../config/banco')
 const whatsappServico = require('../ia/whatsapp.servico')
+const { processarEvento } = require('../ia/messageOrchestrator')
 
 const listar = async (req, res, next) => {
   try {
@@ -36,32 +37,11 @@ const criar = async (req, res, next) => {
 }
 
 const enviarBoasVindas = async (tenantId, cliente) => {
-  const tenant = await banco.tenant.findUnique({
-    where: { id: tenantId },
-    select: { nome: true, slug: true, configWhatsApp: true, nomeIA: true, enviarMensagemAoCadastrarCliente: true },
+  processarEvento({
+    evento: 'BEM_VINDO',
+    tenantId,
+    cliente
   })
-  if (!tenant?.enviarMensagemAoCadastrarCliente || !tenant?.configWhatsApp?.provedor || !tenant.slug) return
-
-  const mensagem =
-    `💈 ${tenant.nome}\n\n` +
-    `Bem-vindo. Aqui você encontra precisão, estilo e um atendimento diferenciado.\n\n` +
-    `Eu cuido do seu agendamento de forma rápida e personalizada.\n\n` +
-    `O que você deseja agora?`
-
-  const payload = {
-    type: 'button',
-    body: { text: mensagem.slice(0, 1024) },
-    action: {
-      buttons: [
-        { type: 'reply', reply: { id: 'AGENDAR', title: 'Agendar corte' } },
-        { type: 'reply', reply: { id: 'VER_HORARIOS', title: 'Horários hoje' } },
-        { type: 'reply', reply: { id: 'VER_SERVICOS', title: 'Serviços' } },
-      ],
-    },
-  }
-
-  await whatsappServico.enviarMensagemInterativa(tenant.configWhatsApp, cliente.telefone, payload, tenantId)
-  console.log(`[Clientes] Boas-vindas enviada para ${cliente.telefone} — tenant ${tenantId}`)
 }
 
 const atualizar = async (req, res, next) => {

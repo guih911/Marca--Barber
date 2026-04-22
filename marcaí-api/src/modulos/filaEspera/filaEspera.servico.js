@@ -1,5 +1,6 @@
 const banco = require('../../config/banco')
 const whatsappServico = require('../ia/whatsapp.servico')
+const { processarEvento } = require('../ia/messageOrchestrator')
 
 const normalizarTelefone = (telefone) => {
   if (!telefone) return null
@@ -173,19 +174,17 @@ const notificarFilaParaSlot = async (tenantId, { servicoId, profissionalId, data
     const primeiroNome = entrada.cliente.nome?.split(' ')[0] || 'cliente'
     const dataFmt = formatarDataHoraFila(dataHoraLiberada, tz)
 
-    const mensagem =
-      `${primeiroNome}, abrimos um horário que você queria! 🎉\n` +
-      `${entrada.servico.nome} com ${profNome} — ${dataFmt}.\n\n` +
-      `Se quiser garantir, responde SIM que eu fecho por aqui. ✨\n` +
-      `— ${tenant.nome}`
-
     if (tenant?.configWhatsApp) {
-      await whatsappServico.enviarMensagem(
-        tenant.configWhatsApp,
-        telNormalizado,
-        mensagem,
-        tenantId
-      )
+      processarEvento({
+        evento: 'FILA_ESPERA',
+        agendamento: {
+          inicioEm: dataHoraLiberada,
+          servico: entrada.servico,
+          profissional: profissionalSlot || entrada.profissional
+        },
+        tenantId,
+        cliente: entrada.cliente
+      })
     }
 
     await atualizarStatus(entrada.id, 'NOTIFICADO', {

@@ -1,6 +1,7 @@
 const banco = require('../../config/banco')
 const clientesServico = require('../clientes/clientes.servico')
 const whatsappServico = require('../ia/whatsapp.servico')
+const { processarEvento } = require('../ia/messageOrchestrator')
 const estoqueServico = require('../estoque/estoque.servico')
 
 const STATUS_PERMITIDOS = ['NOVO', 'PREPARANDO', 'A_CAMINHO', 'CHEGUEI', 'FINALIZADO', 'CANCELADO']
@@ -212,18 +213,17 @@ const criarPedidoPublico = async (tenantId, dados) => {
   const destino = obterDestinoNotificacao(tenant)
   if (tenant.configWhatsApp && destino) {
     const resumoItens = itensNormalizados.map((item) => `- ${item.nomeProduto} x${item.quantidade}`).join('\n')
-    const mensagem = [
-      `Novo pedido de entrega em ${tenant.nome}`,
-      `${pedido.clienteNome} · ${pedido.clienteTelefone}`,
-      `Endereço: ${pedido.enderecoEntrega}`,
-      pedido.referenciaEndereco ? `Referência: ${pedido.referenciaEndereco}` : null,
-      `Pagamento: ${pedido.formaPagamento}`,
-      janelaSelecionada?.label ? `Janela: ${janelaSelecionada.label}` : null,
-      `Itens:\n${resumoItens}`,
-      `Total: ${new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(pedido.totalCentavos / 100)}`,
-    ].filter(Boolean).join('\n')
-
-    whatsappServico.enviarMensagem(tenant.configWhatsApp, destino, mensagem, tenantId).catch(() => {})
+    const resumoPedido = `Novo pedido: ${resumoItens}\nTotal: ${new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(pedido.totalCentavos / 100)}`
+    
+    processarEvento({
+      evento: 'PEDIDO_NOVO_ADMIN',
+      tenantId,
+      cliente: { nome: pedido.clienteNome, telefone: pedido.clienteTelefone }, // Mock cliente object for admin notification
+      extra: { 
+        resumoPedido,
+        destinoDireto: destino
+      }
+    })
   }
 
   return formatarPedidoResumo(pedido)
@@ -299,17 +299,12 @@ const atualizarStatus = async (tenantId, pedidoId, novoStatus) => {
   }
 
   if (pedido.tenant?.configWhatsApp) {
-    const mensagemStatus = {
-      PREPARANDO: `Seu pedido na ${pedido.tenant.nome} está sendo preparado.`,
-      A_CAMINHO: `Seu pedido na ${pedido.tenant.nome} está a caminho. Já estamos indo até você.`,
-      CHEGUEI: `Chegamos no endereço informado para entregar seu pedido da ${pedido.tenant.nome}.`,
-      FINALIZADO: `Pedido entregue com sucesso. Obrigado por comprar com a ${pedido.tenant.nome}.`,
-      CANCELADO: `Seu pedido foi cancelado. Se precisar, fale com a ${pedido.tenant.nome}.`,
-    }[novoStatus]
-
-    if (mensagemStatus) {
-      whatsappServico.enviarMensagem(pedido.tenant.configWhatsApp, pedido.clienteTelefone, mensagemStatus, tenantId).catch(() => {})
-    }
+    processarEvento({
+      evento: 'PEDIDO_STATUS',
+      tenantId,
+      cliente: { nome: pedido.clienteNome, telefone: pedido.clienteTelefone },
+      extra: { status: novoStatus }
+    })
   }
 
   return formatarPedidoResumo(atualizado)

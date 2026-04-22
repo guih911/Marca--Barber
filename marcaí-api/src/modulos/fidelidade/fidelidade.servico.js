@@ -1,5 +1,6 @@
 const banco = require('../../config/banco')
 const whatsappServico = require('../ia/whatsapp.servico')
+const { processarEvento } = require('../ia/messageOrchestrator')
 
 const CONFIG_FIDELIDADE_PADRAO = {
   pontosPerServico: 1,
@@ -175,20 +176,17 @@ const registrarPontosAtendimento = async (tenantId, clienteId, agendamentoId) =>
   // Notifica cliente via WhatsApp (melhor esforço)
   try {
     if (tenant.configWhatsApp && saldo.cliente?.telefone) {
-      const primeiroNome = saldo.cliente.nome?.split(' ')[0] || 'cliente'
-      const pontosParaResgate = config.pontosParaResgate - saldo.pontos
-      let msg = `🎉 ${primeiroNome}, você ganhou *${config.pontosPerServico} ponto(s)* de fidelidade!\n`
-      msg += `📊 Seu saldo: *${saldo.pontos} ponto(s)*\n`
-
-      if (saldo.pontos >= config.pontosParaResgate) {
-        msg += `\n✅ *Parabéns!* Você atingiu ${config.pontosParaResgate} pontos e pode resgatar: *${config.descricaoResgate}*!\n`
-        msg += `Responda "RESGATAR" para usar seu benefício. 🏆`
-      } else {
-        msg += `Faltam apenas *${pontosParaResgate}* para você ganhar: *${config.descricaoResgate}* 🔥`
-      }
-
-      await whatsappServico.enviarMensagem(tenant.configWhatsApp, saldo.cliente.telefone, msg, tenantId)
-      await salvarMensagemNaConversa(tenantId, clienteId, msg)
+      processarEvento({
+        evento: 'FIDELIDADE_PONTOS',
+        tenantId,
+        cliente: saldo.cliente,
+        extra: {
+          pontosGanhos: config.pontosPerServico,
+          saldoAtual: saldo.pontos,
+          pontosFaltantes: config.pontosParaResgate - saldo.pontos,
+          recompensa: config.descricaoResgate
+        }
+      })
     }
   } catch (err) {
     console.warn('[Fidelidade] Falha ao enviar WhatsApp de pontos:', err.message)
@@ -235,10 +233,12 @@ const resgatarPontos = async (tenantId, clienteId) => {
   try {
     const tenant = await banco.tenant.findUnique({ where: { id: tenantId }, select: { configWhatsApp: true } })
     if (tenant?.configWhatsApp && atualizado.cliente?.telefone) {
-      const primeiroNome = atualizado.cliente.nome?.split(' ')[0] || 'cliente'
-      const msg = `🏆 ${primeiroNome}, seu resgate foi confirmado!\n*${config.descricaoResgate}* está garantido no seu próximo atendimento. Aproveite! 😊`
-      await whatsappServico.enviarMensagem(tenant.configWhatsApp, atualizado.cliente.telefone, msg, tenantId)
-      await salvarMensagemNaConversa(tenantId, clienteId, msg)
+      processarEvento({
+        evento: 'FIDELIDADE_RESGATE',
+        tenantId,
+        cliente: atualizado.cliente,
+        extra: { recompensa: config.descricaoResgate }
+      })
     }
   } catch { /* silencioso */ }
 

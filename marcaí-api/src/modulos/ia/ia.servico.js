@@ -1,4 +1,4 @@
-﻿const Anthropic = require('@anthropic-ai/sdk')
+const Anthropic = require('@anthropic-ai/sdk')
 const configIA = require('../../config/ia')
 const banco = require('../../config/banco')
 const ferramentas = require('./ia.ferramentas')
@@ -950,11 +950,20 @@ const clientePediuLinkPlanoDireto = (mensagemNormalizada = '') =>
 // Envia notificação WhatsApp ao profissional (melhor esforço — não falha se não tiver telefone)
 const notificarProfissional = async (tenantId, profissional, mensagem) => {
   try {
+    const { processarEvento } = require('./messageOrchestrator')
     const tenant = await banco.tenant.findUnique({ where: { id: tenantId } })
     const telefoneDestino = tenant?.numeroDono?.trim() || profissional?.telefone
 
     if (tenant?.configWhatsApp && telefoneDestino) {
-      await whatsappServico.enviarMensagem(tenant.configWhatsApp, telefoneDestino, mensagem, tenantId)
+      processarEvento({
+        evento: 'NOTIFICACAO_INTERNA',
+        tenantId,
+        cliente: { nome: 'Profissional', telefone: telefoneDestino },
+        extra: { 
+          contexto: mensagem,
+          destinoDireto: telefoneDestino
+        }
+      })
     }
   } catch (err) {
     console.warn(`[IA] Notificação ao profissional falhou (sem impacto):`, err.message)

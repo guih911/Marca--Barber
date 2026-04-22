@@ -3,14 +3,13 @@ const { adicionarMinutos } = require('../../utils/formatarData')
 const { gerarSlots, validarJanelaTempo } = require('../../utils/gerarSlots')
 const filaEsperaServico = require('../filaEspera/filaEspera.servico')
 const whatsappServico = require('../ia/whatsapp.servico')
+const { processarEvento } = require('../ia/messageOrchestrator')
 const planosServico = require('../planos/planos.servico')
 const fidelidadeServico = require('../fidelidade/fidelidade.servico')
 const OpenAI = require('openai')
 const configIA = require('../../config/ia')
 
 const openaiAgendamentos = new OpenAI({ apiKey: configIA.apiKey, baseURL: configIA.baseURL })
-
-const { processarEvento } = require('../ia/messageOrchestrator')
 
 const notificarClienteWalkIn = async (tenantId, ag) => {
   if (ag?.cliente) {
@@ -534,8 +533,14 @@ const criarCombo = async (tenantId, dados) => {
 }
 
 const confirmar = async (tenantId, id) => {
-  await verificarPropriedade(tenantId, id)
-  return banco.agendamento.update({ where: { id }, data: { status: 'CONFIRMADO' }, include: incluirRelacoes })
+  const ag = await verificarPropriedade(tenantId, id)
+  const agAtualizado = await banco.agendamento.update({ where: { id }, data: { status: 'CONFIRMADO' }, include: incluirRelacoes })
+  
+  if (agAtualizado?.cliente) {
+    processarEvento({ evento: 'CONFIRMAR', agendamento: agAtualizado, tenantId, cliente: agAtualizado.cliente, origemViaPainel: true })
+  }
+
+  return agAtualizado
 }
 
 const confirmarPresenca = async (tenantId, id) => {
@@ -549,7 +554,7 @@ const confirmarPresenca = async (tenantId, id) => {
     }
   }
 
-  return banco.agendamento.update({
+  const agAtualizado = await banco.agendamento.update({
     where: { id },
     data: {
       status: agendamento.status === 'AGENDADO' ? 'CONFIRMADO' : agendamento.status,
@@ -557,6 +562,12 @@ const confirmarPresenca = async (tenantId, id) => {
     },
     include: incluirRelacoes,
   })
+
+  if (agAtualizado?.cliente) {
+    processarEvento({ evento: 'CONFIRMAR_PRESENCA', agendamento: agAtualizado, tenantId, cliente: agAtualizado.cliente })
+  }
+
+  return agAtualizado
 }
 
 const cancelar = async (tenantId, id, motivo, { origem = 'CLIENTE' } = {}) => {
@@ -875,21 +886,19 @@ const processarCobrancaPlanoNaVisita = async (tenantId, agendamento, tenant) => 
     }
   }
 
-  // Notifica cliente via WhatsApp
+  // Notifica cliente via WhatsApp (ORQUESTRADO/PREMIUM)
   if (tenant?.configWhatsApp && agendamento.cliente?.telefone && plano.precoCentavos > 0) {
-    try {
-      const valorFmt = `R$${(plano.precoCentavos / 100).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-      const proxFmt = novaProxCobranca.toLocaleDateString('pt-BR', { day: 'numeric', month: 'long', timeZone: tenant.timezone || 'America/Sao_Paulo' })
-      const primeiroNome = agendamento.cliente.nome?.split(' ')[0] || 'cliente'
-      const msg = `Oi, ${primeiroNome}! Seu plano *${plano.nome}* foi renovado hoje — ${valorFmt} adicionados à conta do atendimento. Próxima renovação: ${proxFmt}. Qualquer dúvida, fala com a gente! 😊`
-      await whatsappServico.enviarMensagem(tenant.configWhatsApp, agendamento.cliente.telefone, msg, tenantId)
-    } catch (err) {
-      console.warn('[PlanoMensal] Falha ao notificar cliente:', err.message)
-    }
+    processarEvento({ 
+      evento: 'RENOVACAO_PLANO', 
+      agendamento, 
+      tenantId, 
+      cliente: agendamento.cliente,
+      extra: { planoNome: plano.nome }
+    })
   }
 }
 
-const naoCompareceu = async (tenantId, id, mensagemWhatsApp) => {
+const naoCompareceu = async (tenantId, id) => {
   const ag = await banco.agendamento.findFirst({ where: { id, tenantId }, include: { cliente: true } })
   if (!ag) throw { status: 404, mensagem: 'Agendamento não encontrado', codigo: 'NAO_ENCONTRADO' }
 
@@ -905,19 +914,8 @@ const naoCompareceu = async (tenantId, id, mensagemWhatsApp) => {
 
   const agAtualizado = await banco.agendamento.update({ where: { id }, data: { status: 'NAO_COMPARECEU' }, include: incluirRelacoes })
 
-  // Envia mensagem de recontato pelo WhatsApp (melhor esforço)
-  const telefoneCliente = ag.cliente?.telefone
-  if (telefoneCliente) {
-    try {
-      const tenant = await banco.tenant.findUnique({ where: { id: tenantId } })
-      if (tenant?.configWhatsApp) {
-        // Se tem mensagem personalizada, envia ela. Senão, envia mensagem padrão da IA.
-        const msgFinal = mensagemWhatsApp?.trim() || `Oi, ${ag.cliente?.nome?.split(' ')[0] || 'tudo bem'}! Notamos que você não veio ao seu horário de ${ag.servico?.nome || 'hoje'}. Sem problema! Quer que a gente remarque pra outro dia? É só responder aqui. 😊`
-        await whatsappServico.enviarMensagem(tenant.configWhatsApp, telefoneCliente, msgFinal, tenantId)
-      }
-    } catch (err) {
-      console.warn('[NaoCompareceu] Erro ao enviar mensagem de recontato:', err.message)
-    }
+  if (agAtualizado?.cliente) {
+    processarEvento({ evento: 'NAO_COMPARECEU', agendamento: agAtualizado, tenantId, cliente: agAtualizado.cliente })
   }
 
   return agAtualizado
@@ -971,12 +969,14 @@ const cancelarPeriodo = async (tenantId, { dataInicio, dataFim, mensagemWhatsApp
           hour: '2-digit', minute: '2-digit', timeZone: tz,
         })
         const primeiroNome = ag.cliente.nome?.split(' ')[0] || 'cliente'
-        const texto = mensagemWhatsApp
-          .replace('{nome}', primeiroNome)
-          .replace('{data}', dtFmt)
-          .replace('{servico}', ag.servico?.nome || 'serviço')
         try {
-          await whatsappServico.enviarMensagem(tenant.configWhatsApp, ag.cliente.telefone, texto, tenantId)
+          processarEvento({
+            evento: 'CANCELAR_PERIODO',
+            agendamento: ag,
+            tenantId,
+            cliente: ag.cliente,
+            extra: { motivoDono: mensagemWhatsApp }
+          })
         } catch (err) {
           console.warn(`[CancelarPeriodo] Falha WhatsApp para ${ag.cliente.telefone}:`, err.message)
         }
@@ -1038,12 +1038,16 @@ const enviarPromocao = async (tenantId, { mensagem, filtro }) => {
   for (const cliente of clientes) {
     if (!cliente.telefone) continue
     const primeiroNome = cliente.nome?.split(' ')[0] || 'cliente'
-    const texto = mensagem.replace('{nome}', primeiroNome)
     try {
-      await whatsappServico.enviarMensagem(tenant.configWhatsApp, cliente.telefone, texto, tenantId)
+      processarEvento({
+        evento: 'CAMPANHA_MARKETING',
+        tenantId,
+        cliente,
+        extra: { mensagemBase: mensagem }
+      })
       enviados++
     } catch (err) {
-      console.warn(`[Promoção] Falha para ${cliente.telefone}:`, err.message)
+      console.warn(`[Promoção] Falha orquestrada para ${cliente.telefone}:`, err.message)
       falhas++
     }
   }

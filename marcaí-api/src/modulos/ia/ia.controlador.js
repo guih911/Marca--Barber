@@ -12,7 +12,7 @@ const {
 } = require('./ia.teste.servico')
 const banco = require('../../config/banco')
 const { logClienteTrace, resumirCliente } = require('../../utils/clienteTrace')
-const { sintetizarAudio } = require('./voz.servico')
+const { sintetizarAudio, transcreverAudio } = require('./voz.servico')
 const {
   humanizarResposta,
   decidirFormatoResposta,
@@ -350,19 +350,23 @@ const processarWebhook = async ({
 
     if (deveTentarAudio) {
       try {
+        console.log(`[Voz] Tentando sintetizar áudio para resposta...`)
         const audio = await sintetizarAudio(textoHumanizado, { estilo: estiloAudio })
         if (audio?.buffer?.length) {
+          console.log(`[Voz] Áudio sintetizado ok (${audio.buffer.length} bytes), enviando...`)
           await whatsappServico.enviarAudio(configWhatsApp, telefone, audio.buffer, tenantId, lidWhatsapp ? `${lidWhatsapp}@lid` : null, {
             mimetype: audio.mimetype,
             ptt: true,
           })
           return
         }
+        console.warn(`[Voz] Síntese de áudio retornou buffer vazio ou nulo.`)
       } catch (erroAudio) {
         console.warn(`[Voz] Falha ao sintetizar/enviar áudio para ${telefone}: ${erroAudio.message}`)
       }
     }
 
+    console.log(`[Voz] Enviando resposta final em TEXTO (fallback ou preferência).`)
     await whatsappServico.enviarMensagem(configWhatsApp, telefone, textoHumanizado, tenantId, lidWhatsapp ? `${lidWhatsapp}@lid` : null)
   }
 
@@ -865,15 +869,53 @@ const traduzirPayloadBotao = (texto = '') => {
   }
 }
 
-const extrairTextoMensagemRecebida = (messageObj = {}) => {
-  if (messageObj?.type === 'text' && messageObj?.text?.body) return messageObj.text.body
-  if (messageObj?.type === 'button') return traduzirPayloadBotao(messageObj?.button?.payload || messageObj?.button?.text || '')
+const extrairTextoMensagemRecebida = async (messageObj = {}, configWhatsApp = null) => {
+  console.log(`[Webhook] Raw message type: ${messageObj?.type}`, JSON.stringify(messageObj))
+  
+  if (messageObj?.type === 'text' && messageObj?.text?.body) return { texto: messageObj.text.body, ehAudio: false }
+
+  if (messageObj?.type === 'audio') {
+    const mediaId = messageObj?.audio?.id
+    const mediaUrl = messageObj?.audio?.link
+    const idOuUrl = mediaId || mediaUrl
+    console.log(`[Voz] Áudio recebido: id/url=${idOuUrl}, type=${messageObj?.type}`)
+
+    if (idOuUrl && configWhatsApp) {
+      try {
+        console.log(`[Voz] Baixando mídia...`)
+        const buffer = await whatsappServico.baixarMidia(configWhatsApp, idOuUrl)
+        if (buffer) {
+          console.log(`[Voz] Transcrevendo buffer (${buffer.length} bytes)...`)
+          const transcricao = await transcreverAudio(buffer, messageObj?.audio?.mime_type)
+          if (transcricao) {
+            console.log(`[Voz] Transcrição concluída: "${transcricao.slice(0, 50)}..."`)
+            return { texto: transcricao, ehAudio: true }
+          }
+        }
+      } catch (err) {
+        console.warn('[Voz] Falha ao processar áudio recebido:', err.message)
+      }
+    }
+  }
+
+  if (messageObj?.type === 'button') {
+    return { 
+      texto: traduzirPayloadBotao(messageObj?.button?.payload || messageObj?.button?.text || ''), 
+      ehAudio: false 
+    }
+  }
+
   if (messageObj?.type === 'interactive') {
     const buttonReply = messageObj?.interactive?.button_reply
     const listReply = messageObj?.interactive?.list_reply
-    if (buttonReply?.id || buttonReply?.title) return traduzirPayloadBotao(buttonReply.id || buttonReply.title)
-    if (listReply?.id || listReply?.title) return traduzirPayloadBotao(listReply.id || listReply.title)
+    if (buttonReply?.id || buttonReply?.title) {
+      return { texto: traduzirPayloadBotao(buttonReply.id || buttonReply.title), ehAudio: false }
+    }
+    if (listReply?.id || listReply?.title) {
+      return { texto: traduzirPayloadBotao(listReply.id || listReply.title), ehAudio: false }
+    }
   }
+
   return null
 }
 
@@ -896,18 +938,31 @@ const webhook = async (req, res, next) => {
 
     const tenant = await buscarTenant(tenantId)
     const chave = `${tenantId}:${telefone}`
-    const resultado = await processarWebhookSerializado(chave, () =>
-      processarWebhook({
+    const resultado = await processarWebhookSerializado(chave, async () => {
+      // Se já veio transcrito no corpo (ex: testes ou integrações externas), usamos direto
+      let msgFinal = mensagem
+      let audioFlag = false
+
+      if (req.body?.messageObj) {
+        const extraido = await extrairTextoMensagemRecebida(req.body.messageObj, tenant.configWhatsApp)
+        if (extraido?.texto) {
+          msgFinal = extraido.texto
+          audioFlag = extraido.ehAudio
+        }
+      }
+
+      return processarWebhook({
         tenantId,
         telefone,
-        mensagem,
+        mensagem: msgFinal,
         nome,
         lidWhatsapp,
         avatarUrl,
         canal,
         configWhatsApp: tenant.configWhatsApp,
+        ehAudio: audioFlag,
       })
-    )
+    })
 
     res.json({ sucesso: true, dados: resultado })
   } catch (erro) {
@@ -953,17 +1008,18 @@ const webhookMeta = async (req, res) => {
           const telefone = messageObj?.from
           const nome = valor?.contacts?.[0]?.profile?.name
 
-          const textoRecebido = extrairTextoMensagemRecebida(messageObj)
-          if (textoRecebido) {
+          const extraido = await extrairTextoMensagemRecebida(messageObj, tenant.configWhatsApp)
+          if (extraido?.texto) {
             const chave = `${tenant.id}:${telefone}`
             await processarWebhookSerializado(chave, () =>
               processarWebhook({
                 tenantId: tenant.id,
                 telefone: `+${telefone}`,
-                mensagem: textoRecebido,
+                mensagem: extraido.texto,
                 nome,
                 canal: 'WHATSAPP',
                 configWhatsApp: tenant.configWhatsApp,
+                ehAudio: extraido.ehAudio,
               })
             )
           }
@@ -1096,6 +1152,7 @@ const desconectarSendzen = async (req, res) => {
 }
 
 const webhookSendzen = async (req, res) => {
+  console.log('[Webhook Sendzen Bruto]', JSON.stringify(req.body))
   try {
     res.status(200).json({ sucesso: true })
     const entries = Array.isArray(req.body?.entry) ? req.body.entry : []
@@ -1148,17 +1205,18 @@ const webhookSendzen = async (req, res) => {
         for (const messageObj of mensagens) {
           const telefone = messageObj?.from
           const nome = valor?.contacts?.[0]?.profile?.name
-          const textoRecebido = extrairTextoMensagemRecebida(messageObj)
-          if (textoRecebido) {
+          const extraido = await extrairTextoMensagemRecebida(messageObj, tenant.configWhatsApp)
+          if (extraido?.texto) {
             const chave = `${tenant.id}:${telefone}`
             await processarWebhookSerializado(chave, () =>
               processarWebhook({
                 tenantId: tenant.id,
                 telefone: `+${telefone}`,
-                mensagem: textoRecebido,
+                mensagem: extraido.texto,
                 nome,
                 canal: 'WHATSAPP',
                 configWhatsApp: tenant.configWhatsApp,
+                ehAudio: extraido.ehAudio,
               })
             )
           }
@@ -1415,13 +1473,11 @@ const enviarLinkAgendamento = async (req, res, next) => {
       return res.status(404).json({ sucesso: false, erro: { mensagem: 'Cliente nao encontrado ou sem telefone.' } })
     }
 
-    const texto = mensagem ||
-      `Ola${cliente.nome ? `, ${cliente.nome.split(' ')[0]}` : ''}! 👋\n` +
-      `Voce pode agendar pelo link abaixo, ou se preferir, e so responder aqui e o Don, nosso assistente de IA, te ajuda a marcar direto pelo WhatsApp.\n\n` +
-      `🗓️ ${linkAgendamento}\n\n` +
-      `- ${tenant.nome}`
-
-    await whatsappServico.enviarMensagem(tenant.configWhatsApp, cliente.telefone, texto, tenantId)
+    processarEvento({
+      evento: 'ENVIAR_LINK_AGENDA',
+      tenantId,
+      cliente
+    })
     res.json({ sucesso: true, dados: { mensagem: 'Link enviado via WhatsApp!' } })
   } catch (erro) {
     next(erro)
