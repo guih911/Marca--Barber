@@ -10,7 +10,7 @@
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
-      "backgroundColor": "#ffffff"
+      "backgroundColor": "#B8894D"
     },
     "ios": {
       "supportsTablet": true,
@@ -21,7 +21,7 @@
       "usesCleartextTraffic": true,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#ffffff"
+        "backgroundColor": "#B8894D"
       },
       "edgeToEdgeEnabled": false
     },
@@ -38,7 +38,7 @@
       ]
     ],
     "extra": {
-      "apiBase": "http://localhost:3001"
+      "apiBase": "https://barber.xn--marca-3sa.com"
     }
   }
 }
