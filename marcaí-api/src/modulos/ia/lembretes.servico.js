@@ -21,6 +21,7 @@ const {
   obterLembretesEnviados,
   estaNaJanelaDeLembrete,
 } = require('../../utils/lembretes')
+const { processarEvento } = require('./messageOrchestrator')
 
 // Normaliza telefone para formato E.164 Brasil (ex: 11999999999 → 5511999999999)
 // Retorna null para telefones inválidos ou LIDs do WhatsApp (que não podem receber mensagens diretamente).
@@ -280,28 +281,15 @@ const enviarLembretes = async () => {
                   })
                 }
 
-                const historicoMensagens = await banco.mensagem.findMany({
-                  where: { conversaId: conversa.id },
-                  orderBy: { criadoEm: 'asc' },
+                const tempoAntecedencia = minutosAntes >= 1440 ? `${Math.round(minutosAntes / 1440)}d` : `${minutosAntes}min`
+                
+                await processarEvento({
+                  evento: 'LEMBRETE',
+                  agendamento: ag,
+                  tenantId: tenant.id,
+                  cliente: ag.cliente,
+                  extra: { tempoAntecedencia }
                 })
-
-                const mensagem = await gerarMensagemLembrete(tenant, ag, historicoMensagens, maisde24h)
-                if (!mensagem) {
-                  console.warn(`[Lembretes] IA não gerou mensagem para agendamento ${ag.id} — será reprocessado.`)
-                  continue
-                }
-
-                const resultadoEnvio = await whatsappServico.enviarMensagem(
-                  tenant.configWhatsApp,
-                  telefoneNorm || ag.cliente?.telefone,
-                  mensagem,
-                  tenant.id
-                )
-
-                if (!resultadoEnvio) {
-                  console.warn(`[Lembretes] Envio falhou para ${telefoneNorm} — WhatsApp possivelmente desconectado. NÃO marcado como enviado.`)
-                  continue
-                }
 
                 const enviadosAtualizados = [...lembretesEnviados, minutosAntes].sort((a, b) => b - a)
                 await banco.agendamento.update({
@@ -312,19 +300,7 @@ const enviarLembretes = async () => {
                   },
                 })
 
-                await banco.mensagem.createMany({
-                  data: [
-                    { conversaId: conversa.id, remetente: 'ia', conteudo: mensagem },
-                    {
-                      conversaId: conversa.id,
-                      remetente: 'sistema',
-                      conteudo: `📅 Lembrete enviado para ${ag.cliente.nome?.split(' ')[0] || ag.cliente.nome}: ${ag.servico.nome} com ${ag.profissional.nome?.split(' ')[0] || ag.profissional.nome} em ${dataFmt} (${minutosAntes}min antes)`,
-                    },
-                  ],
-                })
-                await banco.conversa.update({ where: { id: conversa.id }, data: { atualizadoEm: new Date() } })
-
-                console.log(`[Lembretes] Enviado para ${telefoneNorm} — ${ag.servico.nome} em ${dataFmt} (${minutosAntes}min antes)`)
+                console.log(`[Lembretes] Orquestrado para ${telefoneNorm} — ${ag.servico.nome} (${tempoAntecedencia} antes)`)
               } catch (errEnvio) {
                 console.error(`[Lembretes] Erro ao enviar para ${telefoneNorm}:`, errEnvio.message)
               }
@@ -426,28 +402,19 @@ const enviarLembretes = async () => {
 
               const valorFmt = `R$${((assinatura.planoAssinatura.precoCentavos || 0) / 100).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`
 
-              // Gerado pela IA — sem texto fixo
-              const msg = await gerarMensagemVencimentoPlano(
-                tenant,
-                assinatura.cliente,
-                assinatura.planoAssinatura.nome,
-                valorFmt
-              )
-
-              if (!msg) {
-                console.warn(`[PlanoMensal] IA não gerou mensagem de vencimento para ${telefoneNorm} — pulando.`)
-                continue
-              }
-
               try {
-                const resultado = await whatsappServico.enviarMensagem(tenant.configWhatsApp, telefoneNorm, msg, tenant.id)
-                if (!resultado) {
-                  console.warn(`[PlanoMensal] Envio falhou para ${telefoneNorm} — WhatsApp possivelmente desconectado.`)
-                  continue
-                }
-                console.log(`[PlanoMensal] Lembrete vencimento enviado para ${telefoneNorm} — plano: ${assinatura.planoAssinatura.nome}`)
+                await processarEvento({
+                  evento: 'RENOVACAO_PLANO',
+                  tenantId: tenant.id,
+                  cliente: assinatura.cliente,
+                  extra: { 
+                    planoNome: assinatura.planoAssinatura.nome,
+                    vencimentoAntecipado: true
+                  }
+                })
+                console.log(`[PlanoMensal] Lembrete vencimento orquestrado para ${telefoneNorm}`)
               } catch (errEnvio) {
-                console.warn(`[PlanoMensal] Falha ao enviar lembrete vencimento para ${telefoneNorm}:`, errEnvio.message)
+                console.warn(`[PlanoMensal] Falha ao orquestrar lembrete vencimento para ${telefoneNorm}:`, errEnvio.message)
               }
             }
           } catch (errPlano) {

@@ -325,10 +325,67 @@ const obterFotoPerfil = async (configWhatsApp, para, tenantId) => {
   }
 }
 
+const baixarMidiaMeta = async (config, mediaId) => {
+  const { token, apiToken } = config
+  const bearerToken = token || apiToken
+  if (!bearerToken) throw new Error('Meta Cloud API: token é obrigatório para download')
+
+  // 1. Pega URL da mídia
+  const resMeta = await fetch(`https://graph.facebook.com/v19.0/${mediaId}`, {
+    headers: { Authorization: `Bearer ${bearerToken}` },
+  })
+  if (!resMeta.ok) throw new Error(`Meta Media Get Info Erro: ${resMeta.status}`)
+  const data = await resMeta.json()
+
+  if (!data?.url) throw new Error('Meta Media URL não encontrada')
+
+  // 2. Download do binário
+  const resFile = await fetch(data.url, {
+    headers: { Authorization: `Bearer ${bearerToken}` },
+  })
+  if (!resFile.ok) throw new Error(`Meta Media Download Erro: ${resFile.status}`)
+
+  const arrayBuffer = await resFile.arrayBuffer()
+  return Buffer.from(arrayBuffer)
+}
+
+const baixarMidiaSendzen = async (config, url) => {
+  const apiKey = config?.apiKey || config?.token
+  if (!apiKey) throw new Error('SendZen: apiKey é obrigatória para download')
+
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${apiKey}` },
+  })
+  if (!res.ok) throw new Error(`SendZen Media Download Erro: ${res.status}`)
+
+  const arrayBuffer = await res.arrayBuffer()
+  return Buffer.from(arrayBuffer)
+}
+
+const baixarMidia = async (configWhatsApp, mediaIdOuUrl) => {
+  const configAtiva = resolverConfigAtiva(configWhatsApp)
+  if (!configAtiva?.provedor || !mediaIdOuUrl) return null
+
+  try {
+    switch (configAtiva.provedor) {
+      case 'meta':
+        return await baixarMidiaMeta(configAtiva, mediaIdOuUrl)
+      case 'sendzen':
+        return await baixarMidiaSendzen(configAtiva, mediaIdOuUrl)
+      default:
+        return null
+    }
+  } catch (err) {
+    console.error(`[WhatsApp] Erro ao baixar mídia (${configAtiva.provedor}):`, err.message)
+    return null
+  }
+}
+
 module.exports = {
   enviarMensagem,
   enviarMensagemInterativa,
   enviarAudio,
+  baixarMidia,
   enviarMeta,
   enviarSendzen,
   obterFotoPerfil,

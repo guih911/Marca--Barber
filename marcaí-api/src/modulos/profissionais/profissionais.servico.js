@@ -1,5 +1,6 @@
 const banco = require('../../config/banco')
 const whatsappServico = require('../ia/whatsapp.servico')
+const { processarEvento } = require('../ia/messageOrchestrator')
 const filaEsperaServico = require('../filaEspera/filaEspera.servico')
 
 const garantirLimitePlanoSolo = async (tenantId, profissionalIgnoradoId = null) => {
@@ -190,19 +191,13 @@ const registrarAusencia = async (tenantId, profissionalId, data, motivo) => {
       // Notifica cliente
       if (ag.cliente?.telefone && tenant?.configWhatsApp) {
         try {
-          const primeiroNome = ag.cliente.nome?.split(' ')[0] || 'cliente'
-          const horario = new Date(ag.inicioEm).toLocaleTimeString('pt-BR', {
-            hour: '2-digit', minute: '2-digit', timeZone: tz,
+          processarEvento({
+            evento: 'CANCELAR_PERIODO',
+            agendamento: ag,
+            tenantId,
+            cliente: ag.cliente,
+            extra: { motivoDono: motivo }
           })
-
-          const msg =
-            `${primeiroNome}, precisamos te informar que seu ${ag.servico.nome} ` +
-            `com ${profissional.nome} em ${dataFmt} às ${horario} foi cancelado. 😔\n` +
-            `${motivo ? `Motivo: ${motivo}\n` : ''}` +
-            `Sentimos muito! Quer remarcar para outro dia? Basta responder aqui. ✨\n` +
-            `— ${tenant.nome}`
-
-          await whatsappServico.enviarMensagem(tenant.configWhatsApp, ag.cliente.telefone, msg, tenantId)
           clientesNotificados++
         } catch (err) {
           console.error(`[Ausência] Erro ao notificar cliente ${ag.clienteId}:`, err.message)

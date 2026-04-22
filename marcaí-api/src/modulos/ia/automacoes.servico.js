@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Automações enterprise do Don.
  *
  * Crons independentes:
@@ -16,6 +16,7 @@ const whatsappServico = require('./whatsapp.servico')
 const filaEsperaServico = require('../filaEspera/filaEspera.servico')
 const fidelidadeServico = require('../fidelidade/fidelidade.servico')
 const { obterLembretesConfigurados } = require('../../utils/lembretes')
+const { processarEvento } = require('./messageOrchestrator')
 
 const openai = new OpenAI({ apiKey: configIA.apiKey, baseURL: configIA.baseURL })
 
@@ -98,7 +99,17 @@ const enviarWhatsApp = async (tenant, telefone, mensagem) => {
   if (!tenant?.configWhatsApp) return
   const telNormalizado = normalizarTelefone(telefone)
   if (!telNormalizado) return
-  await whatsappServico.enviarMensagem(tenant.configWhatsApp, telNormalizado || telefone, mensagem, tenant.id)
+
+  const { processarEvento } = require('./messageOrchestrator')
+  processarEvento({
+    evento: 'NOTIFICACAO_INTERNA',
+    tenantId: tenant.id,
+    cliente: { nome: 'Admin/Profissional', telefone: telNormalizado },
+    extra: { 
+      contexto: mensagem,
+      destinoDireto: telNormalizado
+    }
+  })
 }
 
 const gerarMensagemIA = async (systemPrompt) => {
@@ -158,21 +169,19 @@ const enviarLembretes2h = async () => {
           const dataInteligente = formatarDataInteligente(ag.inicioEm, tz)
           const primeiroNome = ag.cliente.nome?.split(' ')[0] || 'cliente'
 
-          const mensagem = await gerarMensagemIA(
-            `Você é Don, recepcionista da barbearia ${tenant.nome}. Tom: caloroso e direto.\n` +
-            `Escreva um lembrete de ÚLTIMO MOMENTO (daqui a 2h!) para:\n` +
-            `• Cliente: ${primeiroNome}\n• Serviço: ${ag.servico.nome}\n` +
-            `• Profissional: ${ag.profissional.nome}\n• Horário: ${dataInteligente}\n` +
-            `Máximo 3 linhas. NUNCA use * ou **. Use no máximo 1 emoji. Assine: — ${tenant.nome}`
-          )
-          if (!mensagem) continue
+          processarEvento({
+            evento: 'LEMBRETE',
+            agendamento: ag,
+            tenantId: tenant.id,
+            cliente: ag.cliente,
+            extra: { tempoAntecedencia: '2h' }
+          })
 
-          await enviarWhatsApp(tenant, ag.cliente.telefone, mensagem)
           await banco.agendamento.update({
             where: { id: ag.id },
             data: { lembrete2hEnviadoEm: new Date() },
           })
-          console.log(`[Automações] Lembrete 2h → ${ag.cliente.telefone}`)
+          console.log(`[Automações] Lembrete 2h orquestrado → ${ag.cliente.telefone}`)
         } catch (err) {
           console.error(`[Automações] Erro lembrete 2h:`, err.message)
         }
@@ -227,13 +236,14 @@ const autoCancelarNaoConfirmados = async () => {
           const primeiroNome = ag.cliente?.nome?.split(' ')[0] || 'cliente'
 
           // Notifica cliente
+          // Notifica cliente via Orquestrador
           if (ag.cliente?.telefone) {
-            const msg = await gerarMensagemIA(
-              `Você é Don, recepcionista da barbearia ${tenant.nome}. Tom: gentil e direto.\n` +
-              `Informe ${primeiroNome} que o agendamento de ${ag.servico.nome} (${dataInteligente}) foi cancelado automaticamente pois não recebemos confirmação.\n` +
-              `Convide a reagendar respondendo nesta conversa. Máximo 3 linhas. NUNCA use * ou **. Use no máximo 1 emoji. Assine: — ${tenant.nome}`
-            )
-            if (msg) await enviarWhatsApp(tenant, ag.cliente.telefone, msg)
+            processarEvento({
+              evento: 'AUTO_CANCELAMENTO',
+              agendamento: ag,
+              tenantId: tenant.id,
+              cliente: ag.cliente
+            })
           }
 
           // Notifica profissional
@@ -303,32 +313,19 @@ const enviarLembretesRetorno = async () => {
         if (dataRetornoStr !== hojeStr) continue
 
         try {
-          const primeiroNome = ag.cliente.nome?.split(' ')[0] || 'cliente'
+          processarEvento({
+            evento: 'RETORNO_POS_SERVICO',
+            agendamento: ag,
+            tenantId: tenant.id,
+            cliente: ag.cliente,
+            extra: { dias: ag.servico.retornoEmDias }
+          })
 
-          // Se o tenant tem template customizado, usa-o com substituição de variáveis
-          let mensagem
-          if (tenant.mensagemRetorno?.trim()) {
-            mensagem = tenant.mensagemRetorno
-              .replace(/\{nome\}/gi, primeiroNome)
-              .replace(/\{servico\}/gi, ag.servico.nome)
-              .replace(/\{dias\}/gi, ag.servico.retornoEmDias)
-              .replace(/\{barbearia\}/gi, tenant.nome)
-          } else {
-            mensagem = await gerarMensagemIA(
-              `Você é Don, recepcionista da barbearia ${tenant.nome}. Tom: acolhedor e direto.\n` +
-              `Escreva uma mensagem lembrando que está na hora do retorno de ${ag.servico.nome}.\n` +
-              `Cliente: ${primeiroNome}. Serviço foi há ${ag.servico.retornoEmDias} dias.\n` +
-              `Sugira agendar. Máximo 3 linhas. NUNCA use * ou **. Use no máximo 1 emoji. Assine: — ${tenant.nome}`
-            )
-            if (!mensagem) continue
-          }
-
-          await enviarWhatsApp(tenant, ag.cliente.telefone, mensagem)
           await banco.agendamento.update({
             where: { id: ag.id },
             data: { retornoEnviadoEm: new Date() },
           })
-          console.log(`[Automações] Retorno pós-serviço → ${ag.cliente.telefone}`)
+          console.log(`[Automações] Retorno orquestrado → ${ag.cliente.telefone}`)
         } catch (err) {
           console.error(`[Automações] Erro retorno ${ag.id}:`, err.message)
         }
@@ -394,23 +391,18 @@ const reativarClientesSumidos = async () => {
         if (futuro > 0) continue
 
         try {
-          const primeiroNome = cliente.nome?.split(' ')[0] || 'cliente'
-          const ultimoServico = cliente.agendamentos[0]?.servico?.nome || 'serviço'
+          processarEvento({
+            evento: 'REATIVACAO',
+            tenantId: tenant.id,
+            cliente,
+            agendamento: cliente.agendamentos[0] // usa o último como referência se houver
+          })
 
-          const mensagem = await gerarMensagemIA(
-            `Você é Don, recepcionista da barbearia ${tenant.nome}. Tom: caloroso e direto.\n` +
-            `Escreva uma mensagem de reativação para ${primeiroNome}, que não vem à barbearia há mais de 60 dias.\n` +
-            `Último serviço: ${ultimoServico}.\n` +
-            `Demonstre que sentimos falta, convide a voltar. Máximo 3 linhas. NUNCA use * ou **. Use no máximo 1 emoji. Assine: — ${tenant.nome}`
-          )
-          if (!mensagem) continue
-
-          await enviarWhatsApp(tenant, cliente.telefone, mensagem)
           await banco.cliente.update({
             where: { id: cliente.id },
             data: { reativacaoEnviadaEm: new Date() },
           })
-          console.log(`[Automações] Reativação → ${cliente.telefone}`)
+          console.log(`[Automações] Reativação orquestrada → ${cliente.telefone}`)
         } catch (err) {
           console.error(`[Automações] Erro reativação cliente ${cliente.id}:`, err.message)
         }
@@ -480,23 +472,14 @@ const enviarParabens = async () => {
             continue
           }
 
-          const mensagem = await gerarMensagemIA(
-            `Você é Don, recepcionista da barbearia ${tenant.nome}. Tom: caloroso e festivo.\n` +
-            `Escreva uma mensagem de aniversário para ${primeiroNome}.\n` +
-            `Inclua parabéns sinceros e mencione que o cliente ganhou ${beneficio}.\n` +
-            `Se fizer sentido, convide para usar o benefício no próximo atendimento.\n` +
-            `Máximo 4 linhas. NUNCA use * ou **. Use no máximo 1 emoji. Assine: — ${tenant.nome}`
-          )
-          const mensagemFinal = mensagem || montarMensagemAniversarioFallback({
-            primeiroNome,
-            tenantNome: tenant.nome,
-            beneficio,
+          processarEvento({
+            evento: 'ANIVERSARIO',
+            tenantId: tenant.id,
+            cliente,
+            extra: { beneficio }
           })
-
-          await enviarWhatsApp(tenant, cliente.telefone, mensagemFinal)
-          await salvarMensagemNaConversa(tenant.id, cliente.id, mensagemFinal)
           mensagemEnviada = true
-          console.log(`[Automações] Parabéns → ${cliente.telefone}`)
+          console.log(`[Automações] Parabéns orquestrado → ${cliente.telefone}`)
         } catch (err) {
           console.error(`[Automações] Erro parabéns cliente ${cliente.id}:`, err.message)
         } finally {
@@ -551,23 +534,18 @@ const enviarNpsPosAtendimento = async () => {
       for (const ag of agendamentos) {
         if (!ag.cliente?.telefone) continue
         try {
-          const primeiroNome = ag.cliente.nome?.split(' ')[0] || 'cliente'
-          const msg = await gerarMensagemIA(
-            `Você é Don, recepcionista da barbearia ${tenant.nome}. Tom: amigável e natural.\n` +
-            `Escreva uma pesquisa de satisfação pós-atendimento para ${primeiroNome}.\n` +
-            `Serviço: ${ag.servico.nome} com ${ag.profissional.nome}.\n` +
-            `Peça que responda com uma nota de 1 a 5 (5 = Incrível, 1 = Precisa melhorar).\n` +
-            `Máximo 4 linhas. NUNCA use * ou **. Use no máximo 1 emoji. Assine: — ${tenant.nome}`
-          )
-          if (!msg) continue
+          processarEvento({
+            evento: 'NPS',
+            agendamento: ag,
+            tenantId: tenant.id,
+            cliente: ag.cliente
+          })
 
-          await enviarWhatsApp(tenant, ag.cliente.telefone, msg)
-          await salvarMensagemNaConversa(tenant.id, ag.clienteId, msg)
           await banco.agendamento.update({
             where: { id: ag.id },
             data: { npsEnviadoEm: new Date() },
           })
-          console.log(`[NPS] Avaliação enviada → ${ag.cliente.telefone} (ag: ${ag.id})`)
+          console.log(`[Automações] NPS orquestrado → ${ag.cliente.telefone}`)
         } catch (err) {
           console.error(`[NPS] Erro ao enviar para ${ag.cliente?.telefone}:`, err.message)
         }

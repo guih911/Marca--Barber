@@ -1,5 +1,6 @@
 const banco = require('../../config/banco')
 const whatsappServico = require('../ia/whatsapp.servico')
+const { processarEvento } = require('../ia/messageOrchestrator')
 
 const UNIDADES_ESTOQUE = new Set(['unid', 'ml', 'g', 'kg', 'L', 'pacote', 'caixa', 'duzia', 'fardo'])
 
@@ -123,13 +124,16 @@ const alertarEstoqueBaixo = async (tenantId, produto, qtdAtual) => {
   const numeroAdmin = config?.numeroAdministrador
   if (!numeroAdmin) return
 
-  const msg = `⚠️ *Estoque baixo!*\n\n` +
-    `Produto: *${produto.nome}*\n` +
-    `Quantidade atual: *${qtdAtual} ${produto.unidade}*\n` +
-    `Quantidade mínima: ${produto.quantidadeMinima} ${produto.unidade}\n\n` +
-    `Acesse o painel para repor o estoque.`
-
-  await whatsappServico.enviarMensagem(config, numeroAdmin, msg, tenantId)
+  processarEvento({
+    evento: 'ESTOQUE_BAIXO_ADMIN',
+    tenantId,
+    cliente: { nome: 'Administrador', telefone: numeroAdmin }, // Mock for admin
+    extra: {
+      produtoNome: produto.nome,
+      qtdAtual: `${qtdAtual} ${produto.unidade}`,
+      destinoDireto: numeroAdmin
+    }
+  })
   await banco.produto.update({ where: { id: produto.id }, data: { alertaEnviadoEm: new Date() } })
 }
 

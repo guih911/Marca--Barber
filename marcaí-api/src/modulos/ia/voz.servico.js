@@ -1,4 +1,10 @@
+const { OpenAI } = require('openai')
 const configIA = require('../../config/ia')
+
+const openai = new OpenAI({ 
+  apiKey: configIA.apiKey || process.env.OPENAI_API_KEY, 
+  baseURL: configIA.baseURL 
+})
 
 const ELEVENLABS_API_URL = 'https://api.elevenlabs.io/v1/text-to-speech'
 
@@ -97,7 +103,39 @@ const sintetizarAudio = async (texto, { estilo = 'default' } = {}) => {
   }
 }
 
+const transcreverAudio = async (buffer, mimetype = 'audio/ogg') => {
+  if (!buffer || !buffer.length) return null
+
+  try {
+    const file = await OpenAI.toFile(buffer, `audio_${Date.now()}.ogg`, { type: mimetype })
+
+    console.log(`[Whisper] Enviando para transcrição OpenAI...`)
+    const response = await withTimeout(
+      openai.audio.transcriptions.create({
+        file,
+        model: 'whisper-1',
+        language: 'pt',
+        response_format: 'text',
+      }),
+      25000,
+      'Tempo esgotado na transcrição de áudio'
+    )
+
+    if (response) {
+      console.log(`[Whisper] Transcrição concluída: "${response.slice(0, 50)}..."`)
+    } else {
+      console.log(`[Whisper] Resposta nula ou vazia.`)
+    }
+
+    return response || null
+  } catch (err) {
+    console.warn('[Voz] Falha ao transcrever áudio:', err.message)
+    return null
+  }
+}
+
 module.exports = {
   sintetizarAudio,
+  transcreverAudio,
   sanitizarTextoParaAudio,
 }

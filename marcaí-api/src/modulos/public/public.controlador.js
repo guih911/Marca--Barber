@@ -7,6 +7,7 @@ const whatsappServico = require('../ia/whatsapp.servico')
 const entregasServico = require('../entregas/entregas.servico')
 const { logClienteTrace, resumirCliente } = require('../../utils/clienteTrace')
 const { resumirHorarioFuncionamento, montarHorarioDetalhado } = require('../../utils/horarioFuncionamento')
+const { processarEvento } = require('../ia/messageOrchestrator')
 
 const STATUS_AGENDAMENTO_OCULTOS = ['REMARCADO']
 const STATUS_SEM_OPERACAO = ['CANCELADO', 'REMARCADO', 'NAO_COMPARECEU']
@@ -725,38 +726,18 @@ const agendar = async (req, res, next) => {
     const nomesServicos = agsFull.map(a => a.servico.nome).join(' + ')
     const totalCentavos = agsFull.reduce((s, a) => s + (a.servico.precoCentavos || 0), 0)
 
-    const linhas = [
-      `✅ Agendamento confirmado, ${primeiroNome}!`,
-      ``,
-      `✂️ ${nomesServicos}`,
-      `👤 Com ${agsFull[0].profissional.nome}`,
-      `📅 ${dataFmt}`,
-    ]
-    if (totalCentavos) {
-      linhas.push(`💰 ${(totalCentavos / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}`)
-    }
-    linhas.push(``, `Até lá! 💈 — ${tenant.nome}`)
-    const mensagemConfirmacao = linhas.join('\n')
-
     try {
-      const conversa = await conversasServico.buscarOuCriarConversa(tenant.id, cliente.id, 'WHATSAPP')
-      await banco.mensagem.createMany({
-        data: [
-          { conversaId: conversa.id, remetente: 'ia', conteudo: mensagemConfirmacao },
-          { conversaId: conversa.id, remetente: 'sistema', conteudo: `📅 Agendamento via link público — ${nomesServicos} em ${dataFmt}` },
-        ],
-      })
-      await banco.conversa.update({ where: { id: conversa.id }, data: { atualizadoEm: new Date() } })
-    } catch (errConversa) {
-      console.warn('[Agendar] Erro ao registrar na conversa:', errConversa.message)
-    }
-
-    if (tenant.configWhatsApp?.provedor) {
-      try {
-        await whatsappServico.enviarMensagem(tenant.configWhatsApp, cliente.telefone, mensagemConfirmacao, tenant.id)
-      } catch (errWpp) {
-        console.error(`[Agendar] Falha WhatsApp:`, errWpp.message)
+      if (tenant.configWhatsApp) {
+        processarEvento({ 
+          evento: 'CONFIRMAR', 
+          agendamento: agsFull[0], 
+          tenantId: tenant.id, 
+          cliente,
+          origemViaPainel: false // Foi via link público
+        })
       }
+    } catch (errOrchestrator) {
+      console.warn('[Agendar] Erro ao orquestrar mensagem de confirmacao:', errOrchestrator.message)
     }
 
     res.status(201).json({
@@ -911,13 +892,15 @@ const assinar = async (req, res, next) => {
           .map((c) => `${c.creditos}x ${c.servico.nome}`)
           .join(', ')
 
-        const mensagem =
-          `✅ Plano ativado, ${cliente.nome}!\n\n` +
-          `Seu plano *${plano.nome}* está ativo. ` +
-          (resumoCreditos ? `Você tem ${resumoCreditos} por mês.\n\n` : '\n') +
-          `O pagamento de *${valorFormatado}* é feito na barbearia. Qualquer dúvida, é só responder aqui! 💈`
-
-        await whatsappServico.enviarMensagem(configWpp, cliente.telefone, mensagem, tenant.id)
+        processarEvento({
+          evento: 'ASSINATURA_NOVA',
+          tenantId: tenant.id,
+          cliente,
+          extra: { 
+            planoNome: plano.nome,
+            resumoCreditos
+          }
+        })
       }
     } catch (errWhats) {
       console.error('[Assinar] Erro ao enviar WhatsApp de confirmação:', errWhats.message)
@@ -1125,15 +1108,12 @@ const reagendar = async (req, res, next) => {
     })
 
     // Notifica via WhatsApp
-    if (tenant.configWhatsApp?.provedor) {
-      try {
-        const primeiroNome = cliente.nome?.split(' ')[0] || cliente.nome
-        const msg = `🔄 Horário reagendado, ${primeiroNome}!\n\n✂️ ${agFull.servico.nome}\n👤 Com ${agFull.profissional.nome}\n📅 ${dataFmt}\n\nTe esperamos! 💈 — ${tenant.nome}`
-        await whatsappServico.enviarMensagem(tenant.configWhatsApp, cliente.telefone, msg, tenant.id)
-      } catch (err) {
-        console.error('[Reagendar] Falha WhatsApp:', err.message)
-      }
-    }
+    processarEvento({
+      evento: 'REMARCAR',
+      agendamento: agFull,
+      tenantId: tenant.id,
+      cliente
+    })
 
     res.json({
       sucesso: true,

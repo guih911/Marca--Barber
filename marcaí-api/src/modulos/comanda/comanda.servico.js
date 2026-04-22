@@ -1,5 +1,5 @@
 const banco = require('../../config/banco')
-const whatsappServico = require('../ia/whatsapp.servico')
+const { processarEvento } = require('../ia/messageOrchestrator')
 
 const verificarRecurso = async (tenantId) => {
   const tenant = await banco.tenant.findUnique({ where: { id: tenantId }, select: { comandaAtivo: true } })
@@ -87,25 +87,27 @@ const enviarReciboWhatsApp = async (tenantId, agendamentoId) => {
   }
 
   const totalCentavos = calcularTotal(ag)
-  const primeiroNome = ag.cliente.nome?.split(' ')[0] || 'cliente'
+  const resumoFinanceiro = [
+    `✂️ ${ag.servico.nome}`,
+    ...(ag.comandaItens || []).map(i => `• ${i.descricao} (${i.quantidade}x)`)
+  ].join('\n')
 
-  let msg = `🧾 *Recibo — ${tenant.nome}*\n\n`
-  msg += `Olá, ${primeiroNome}!\n\n`
-  msg += `✂️ ${ag.servico.nome}\n`
-
-  if (ag.comandaItens?.length > 0) {
-    msg += `\n📦 *Produtos/Extras:*\n`
-    for (const item of ag.comandaItens) {
-      const val = (item.precoCentavos * item.quantidade / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
-      msg += `• ${item.descricao} (${item.quantidade}x) — ${val}\n`
-    }
+  try {
+    await processarEvento({
+      evento: 'COMANDA_RECIBO',
+      agendamento: ag,
+      tenantId,
+      cliente: ag.cliente,
+      extra: { 
+        resumoFinanceiro, 
+        total: (totalCentavos / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }) 
+      }
+    })
+    return { enviado: true, total: totalCentavos }
+  } catch (err) {
+    console.error('[Comanda] Falha ao orquestrar recibo:', err.message)
+    return { enviado: false, total: totalCentavos }
   }
-
-  msg += `\n💰 *Total: ${(totalCentavos / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}*\n`
-  msg += `\nObrigado pela visita! Até a próxima. 😊`
-
-  await whatsappServico.enviarMensagem(tenant.configWhatsApp, ag.cliente.telefone, msg, tenantId)
-  return { enviado: true, total: totalCentavos }
 }
 
 module.exports = { obterComanda, adicionarItem, removerItem, calcularTotal, enviarReciboWhatsApp }
