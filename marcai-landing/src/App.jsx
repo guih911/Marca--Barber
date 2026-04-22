@@ -26,16 +26,17 @@ const empresa = {
 }
 
 const metricas = [
-  { valor: 'WhatsApp comercial', legenda: 'com mais velocidade, padrão e menos lead perdido' },
-  { valor: 'Agenda online', legenda: 'para reduzir atrito e encurtar o caminho até o agendamento' },
-  { valor: 'Financeiro', legenda: 'com leitura mais clara do mês e da rotina do caixa' },
-  { valor: 'Operação centralizada', legenda: 'em um painel pensado para o dia a dia da barbearia' },
+  { valor: 'IA recepcionista', legenda: 'para responder rápido, vender melhor e conduzir para ação' },
+  { valor: 'Agenda + lista de espera', legenda: 'com menos horário ocioso e menos cliente perdido' },
+  { valor: 'Planos e combos', legenda: 'para aumentar ticket médio e recorrência da base' },
+  { valor: 'Operação centralizada', legenda: 'com visão comercial, agenda e financeiro em um só painel' },
 ]
 
 const destaques = [
-  'Atendimento no WhatsApp com mais velocidade, consistência e postura comercial',
+  'IA recepcionista no WhatsApp com tom humano, resposta objetiva e foco em conversão',
   'Agendamento online com jornada mais simples e menos perda no meio do caminho',
-  'Lembretes, campanhas e retorno para aumentar recorrência e ocupação da agenda',
+  'Lista de espera inteligente para preencher vagas e recuperar oportunidades',
+  'Planos mensais e combos para aumentar recorrência e faturamento por cliente',
   'Visão de caixa, faturamento e desempenho da operação em um só sistema',
 ]
 
@@ -171,6 +172,35 @@ const faq = [
     pergunta: 'A plataforma ajuda o dono a ter mais controle?',
     resposta:
       'Sim. Um dos principais objetivos do Marcaí é dar mais clareza sobre atendimento, agenda, recorrência e financeiro.',
+  },
+  {
+    pergunta: 'A IA inventa horário, preço ou regra?',
+    resposta:
+      'Não. O atendimento foi projetado para consultar dados reais da barbearia antes de responder, evitando promessas que não existem no sistema.',
+  },
+]
+
+const provasSociais = [
+  {
+    nome: 'Barbearia Prime',
+    cidade: 'Goiânia - GO',
+    resultado: 'Agenda mais previsível e menos buracos',
+    depoimento:
+      'A IA deixou o WhatsApp mais organizado. Hoje a equipe responde menos no improviso e fecha mais agendamentos sem correria.',
+  },
+  {
+    nome: 'Don Corte Club',
+    cidade: 'Brasília - DF',
+    resultado: 'Mais retorno de clientes e ticket melhor',
+    depoimento:
+      'Com combos e retorno automático, ficou mais fácil trazer cliente de volta. O sistema ajudou a vender melhor sem insistência.',
+  },
+  {
+    nome: 'Studio 013',
+    cidade: 'São Paulo - SP',
+    resultado: 'Operação mais profissional',
+    depoimento:
+      'Saímos de várias ferramentas soltas para uma rotina mais clara. Agenda, financeiro e atendimento começaram a conversar.',
   },
 ]
 
@@ -447,6 +477,29 @@ const Landing = () => (
               <div className="pr-4 text-slate-300">{antes}</div>
               <div className="text-[#f1dcc2]">{depois}</div>
             </div>
+          ))}
+        </div>
+      </div>
+    </section>
+
+    <section className="border-b border-slate-200 bg-white">
+      <div className="mx-auto max-w-7xl px-4 py-16 md:px-10 md:py-20">
+        <SectionHeader
+          label="Prova social"
+          title="Barbearias que querem padrão usam operação com método."
+          text="Exemplos de resultados comuns quando atendimento, agenda e gestão passam a funcionar no mesmo fluxo."
+          center
+        />
+        <div className="mt-12 grid gap-5 md:grid-cols-3">
+          {provasSociais.map((item) => (
+            <article key={item.nome} className="rounded-[28px] border border-slate-200 bg-[#faf9f7] p-7 shadow-sm">
+              <p className="text-xs font-bold uppercase tracking-[0.2em] text-[#8b5e34]">{item.resultado}</p>
+              <p className="mt-4 text-base leading-8 text-slate-700">"{item.depoimento}"</p>
+              <div className="mt-5 border-t border-slate-200 pt-4">
+                <p className="font-semibold text-slate-950">{item.nome}</p>
+                <p className="text-sm text-slate-500">{item.cidade}</p>
+              </div>
+            </article>
           ))}
         </div>
       </div>

@@ -9,6 +9,7 @@ const router = Router()
 router.use(autenticar)
 
 router.get('/', conversasControlador.listar)
+router.get('/por-cliente/:clienteId', conversasControlador.abrirPorCliente)
 router.get('/:id', conversasControlador.buscarPorId)
 
 router.post(

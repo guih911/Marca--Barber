@@ -40,6 +40,13 @@ const formatarDataHoraFila = (dataHora, timeZone = 'America/Sao_Paulo') => (
   })
 )
 
+const nomeClienteConfiavelEncaixe = (cliente) => {
+  const nome = String(cliente?.nome || '').trim()
+  if (!nome || nome === cliente?.telefone) return false
+  if (/^\+?\d[\d\s()\-]{5,}$/.test(nome)) return false
+  return true
+}
+
 const entradaMaisAdequadaParaSlot = (entradas = [], profissionalId, dataHoraLiberada) => {
   if (!Array.isArray(entradas) || entradas.length === 0) return null
 
@@ -63,6 +70,26 @@ const incluirRelacoes = {
   tenant: true,
 }
 
+const STATUS_VALIDOS = new Set(['AGUARDANDO', 'NOTIFICADO', 'CONVERTIDO', 'EXPIRADO'])
+
+const listar = async (tenantId, { status, dataInicio, dataFim, profissionalId } = {}) => {
+  const where = { tenantId }
+
+  if (status) where.status = status
+  if (profissionalId) where.profissionalId = profissionalId
+  if (dataInicio || dataFim) {
+    where.dataDesejada = {}
+    if (dataInicio) where.dataDesejada.gte = new Date(`${dataInicio}T00:00:00`)
+    if (dataFim) where.dataDesejada.lte = new Date(`${dataFim}T23:59:59`)
+  }
+
+  return banco.filaEspera.findMany({
+    where,
+    include: incluirRelacoes,
+    orderBy: { dataDesejada: 'asc' },
+  })
+}
+
 const atualizarStatus = async (id, status, camposExtras = {}) => banco.filaEspera.update({
   where: { id },
   data: {
@@ -72,13 +99,37 @@ const atualizarStatus = async (id, status, camposExtras = {}) => banco.filaEsper
   include: incluirRelacoes,
 })
 
+const atualizarStatusManual = async (tenantId, id, status) => {
+  if (!STATUS_VALIDOS.has(status)) {
+    throw { status: 400, mensagem: 'Status de fila inválido.' }
+  }
+
+  const entrada = await banco.filaEspera.findFirst({ where: { id, tenantId } })
+  if (!entrada) throw { status: 404, mensagem: 'Entrada não encontrada.' }
+
+  const camposExtras = status === 'NOTIFICADO' ? { notificadoEm: new Date() } : {}
+  if (status === 'AGUARDANDO') camposExtras.notificadoEm = null
+
+  return atualizarStatus(id, status, camposExtras)
+}
+
 /**
  * Coloca o cliente na fila de espera para um serviço/data.
  * Idempotente: ignora se já existe entrada equivalente aguardando ou recém-notificada.
  */
-const entrar = async (tenantId, { clienteId, servicoId, profissionalId, dataDesejada }) => {
+const entrar = async (tenantId, { clienteId, servicoId, profissionalId, dataDesejada, aceitaEncaixeAutomatico = true }) => {
+  const tLista = await banco.tenant.findUnique({
+    where: { id: tenantId },
+    select: { listaEsperaAtivo: true },
+  })
+  if (!tLista?.listaEsperaAtivo) {
+    throw { status: 403, mensagem: 'Lista de espera não está ativa para este estabelecimento. Ative em Configurações → Recursos.' }
+  }
+
   const dataNormalizada = obterDataDesejadaNormalizada(dataDesejada)
   if (!dataNormalizada) throw { status: 400, mensagem: 'Data desejada inválida.' }
+
+  const aceitaEncaixe = aceitaEncaixeAutomatico === false ? false : true
 
   const existente = await banco.filaEspera.findFirst({
     where: {
@@ -101,6 +152,7 @@ const entrar = async (tenantId, { clienteId, servicoId, profissionalId, dataDese
       profissionalId: profissionalId || null,
       dataDesejada: dataNormalizada,
       status: 'AGUARDANDO',
+      aceitaEncaixeAutomatico: aceitaEncaixe,
     },
     include: incluirRelacoes,
   })
@@ -144,6 +196,12 @@ const reativarEntrada = async (tenantId, id) => {
  */
 const notificarFilaParaSlot = async (tenantId, { servicoId, profissionalId, dataHoraLiberada }) => {
   try {
+    const tenantFlags = await banco.tenant.findUnique({
+      where: { id: tenantId },
+      select: { listaEsperaAtivo: true, filaEncaixeAutomaticoAtivo: true, configWhatsApp: true, timezone: true },
+    })
+    if (!tenantFlags?.listaEsperaAtivo) return
+
     const { inicio: diaInicio, fim: diaFim } = obterJanelaDoDia(dataHoraLiberada)
 
     const entradas = await banco.filaEspera.findMany({
@@ -165,14 +223,44 @@ const notificarFilaParaSlot = async (tenantId, { servicoId, profissionalId, data
     if (!entrada || !telNormalizado) return
 
     const tenant = entrada.tenant
-    const tz = tenant?.timezone || 'America/Sao_Paulo'
     const profissionalSlot = profissionalId
       ? await banco.profissional.findUnique({ where: { id: profissionalId }, select: { id: true, nome: true } }).catch(() => null)
       : null
 
-    const profNome = profissionalSlot?.nome || entrada.profissional?.nome || 'um de nossos profissionais'
-    const primeiroNome = entrada.cliente.nome?.split(' ')[0] || 'cliente'
-    const dataFmt = formatarDataHoraFila(dataHoraLiberada, tz)
+    const profissionalCriarId = profissionalSlot?.id || entrada.profissionalId
+    if (!profissionalCriarId) {
+      console.warn('[FilaEspera] Sem profissionalId para encaixe; usando fluxo de aviso manual.')
+    }
+
+    const encaixePodeTentar = Boolean(
+      tenantFlags.filaEncaixeAutomaticoAtivo
+      && entrada.aceitaEncaixeAutomatico
+      && profissionalCriarId
+      && nomeClienteConfiavelEncaixe(entrada.cliente)
+    )
+
+    if (encaixePodeTentar) {
+      try {
+        const agendamentosServico = require('../agendamentos/agendamentos.servico')
+        await agendamentosServico.criar(tenantId, {
+          clienteId: entrada.clienteId,
+          profissionalId: profissionalCriarId,
+          servicoId: entrada.servicoId,
+          inicio: new Date(dataHoraLiberada).toISOString(),
+          origem: 'WHATSAPP',
+          encaixeFila: true,
+        })
+        await atualizarStatus(entrada.id, 'CONVERTIDO', {
+          notificadoEm: new Date(),
+          dataDesejada: new Date(dataHoraLiberada),
+          profissionalId: profissionalCriarId,
+        })
+        console.log(`[FilaEspera] Encaixe automático — ${entrada.servico.nome} | ${telNormalizado}`)
+        return
+      } catch (encErr) {
+        console.warn('[FilaEspera] Encaixe automático não foi possível, enviando aviso para confirmar:', encErr?.mensagem || encErr?.message || encErr)
+      }
+    }
 
     if (tenant?.configWhatsApp) {
       processarEvento({
@@ -231,12 +319,21 @@ const expirarEntradas = async () => {
   }
 }
 
+const remover = async (tenantId, id) => {
+  const entrada = await banco.filaEspera.findFirst({ where: { id, tenantId } })
+  if (!entrada) throw { status: 404, mensagem: 'Entrada não encontrada.' }
+  await banco.filaEspera.delete({ where: { id } })
+}
+
 module.exports = {
+  listar,
   entrar,
+  atualizarStatusManual,
   buscarNotificacaoPendente,
   marcarComoConvertido,
   marcarComoExpirado,
   notificarFilaParaSlot,
   reativarEntrada,
   expirarEntradas,
+  remover,
 }

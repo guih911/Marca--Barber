@@ -167,6 +167,7 @@ model Tenant {
   relatorioDiarioAtivo Boolean   @default(false)  // Relatório diário via WhatsApp para gestor
   galeriaAtivo         Boolean   @default(false)  // Galeria de fotos
   listaEsperaAtivo     Boolean   @default(false)  // Lista de espera
+  filaEncaixeAutomaticoAtivo Boolean @default(true)  // Vaga da fila vira agendamento sem pedir "sim" (se aceitaEncaixe na entrada)
   caixaAtivo           Boolean   @default(false)  // Caixa / financeiro
   nomeIA               String?  // nome do assistente IA (padrão: Don Barber)
   aprendizadoIA        Json?    // dados de aprendizado da IA (métricas, padrões)
@@ -410,6 +411,7 @@ model FilaEspera {
   dataDesejada   DateTime
   status         StatusFila @default(AGUARDANDO)
   notificadoEm   DateTime?
+  aceitaEncaixeAutomatico Boolean @default(true) // se false, envia vaga e pede confirmação (fluxo antigo)
   criadoEm       DateTime   @default(now())
 
   tenant       Tenant        @relation(fields: [tenantId], references: [id])

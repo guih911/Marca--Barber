@@ -5,13 +5,13 @@ services:
       dockerfile: Dockerfile.api
     restart: unless-stopped
     environment:
-      DATABASE_URL: postgresql://marcai:9lDU6zR9aAXXHA1ugndy61m11xYo0Zy2@marcai-postgres:5432/marcai_prod
-      ADMIN_JWT_SECRET: marcai-admin-jwt-secret-prod-2026
-      MAIN_JWT_SECRET: VckCBUsHuXJHKemCGEaf3lC5BriyzmSHFYbcdlJoqpyoEBzIrb3pZSoaFfq7OI
-      ADMIN_CORS_ORIGINS: https://admin.xn--marca-3sa.com,http://localhost:5174
-      ASAAS_API_KEY: ${ASAAS_API_KEY}
-      ASAAS_ENV: sandbox
-      GEMINI_API_KEY: AIzaSyBOhB_L1aV2OIRfTiGaFikQKLLT0690tBg
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL obrigatoria}
+      ADMIN_JWT_SECRET: ${ADMIN_JWT_SECRET:?ADMIN_JWT_SECRET obrigatoria}
+      MAIN_JWT_SECRET: ${MAIN_JWT_SECRET:?MAIN_JWT_SECRET obrigatoria}
+      ADMIN_CORS_ORIGINS: ${ADMIN_CORS_ORIGINS:-http://localhost:5174}
+      ASAAS_API_KEY: ${ASAAS_API_KEY:-}
+      ASAAS_ENV: ${ASAAS_ENV:-sandbox}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       PORT: 4000
     expose:
       - "4000"

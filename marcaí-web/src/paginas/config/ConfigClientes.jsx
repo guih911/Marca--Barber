@@ -1066,7 +1066,7 @@ const ConfigClientes = () => {
           onReativar={(cliente) => { setClienteSelecionado(null); reativarCliente(cliente) }}
           onVerConversa={(cliente) => {
             setClienteSelecionado(null)
-            navigate('/dashboard/mensagens', { state: { telefone: cliente.telefone } })
+            navigate('/dashboard/mensagens', { state: { clienteId: cliente.id } })
           }}
         />
       )}

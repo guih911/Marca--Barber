@@ -11,6 +11,7 @@ const {
   rodarSuiteWhatsAppBrasil,
 } = require('./ia.teste.servico')
 const banco = require('../../config/banco')
+const { montarDecisaoIA } = require('../../ai-engine/decision/decisionEngine')
 const { logClienteTrace, resumirCliente } = require('../../utils/clienteTrace')
 const { sintetizarAudio, transcreverAudio } = require('./voz.servico')
 const {
@@ -28,11 +29,129 @@ const META_WEBHOOK_VERIFY_TOKEN = process.env.META_WEBHOOK_VERIFY_TOKEN || ''
 const META_WEBHOOK_CALLBACK_URL = process.env.META_WEBHOOK_CALLBACK_URL || ''
 const SENDZEN_WEBHOOK_CALLBACK_URL = process.env.SENDZEN_WEBHOOK_CALLBACK_URL || ''
 const SENDZEN_WEBHOOK_SECRET = process.env.SENDZEN_WEBHOOK_SECRET || ''
+const SENDZEN_WEBHOOK_TENANT_ID = (process.env.SENDZEN_WEBHOOK_TENANT_ID || '').trim()
 const APP_URL = process.env.APP_URL || ''
 
 // Serializa processamento por numero para evitar respostas duplicadas em rajadas.
 const filaProcessamento = new Map()
 const normalizarTelefone = (telefone = '') => String(telefone || '').replace(/\D/g, '')
+
+/** Variações comuns (55 vs DDD) para achar o tenant no JSON configWhatsApp.sendzen.from */
+const variantesNumeroContaWhatsapp = (bruto) => {
+  const n = normalizarTelefone(bruto)
+  if (!n) return []
+  const v = new Set([n])
+  if (n.length === 11 && !n.startsWith('55')) v.add('55' + n)
+  if (n.length === 13 && n.startsWith('55')) v.add(n.slice(2))
+  if (n.length >= 11) v.add(n.slice(-11))
+  if (n.length >= 11 && !n.slice(-11).startsWith('55')) v.add('55' + n.slice(-11))
+  return [...v]
+}
+
+/**
+ * Filtro JSON do Prisma costuma falhar (equals string vs number no JSON, path aninhado).
+ * Compara o payload do webhook com o que foi salvo em configWhatsApp (sendzen + legado no topo).
+ */
+const idLongoPareceWhatsapp = (s) => String(s || '').length >= 12
+
+/** Último recurso: o JSON do tenant serializado contém o id (números longos do Cloud API). */
+const jsonConfigMencionaId = (cfg, id) => {
+  if (!id || !cfg) return false
+  const t = String(id)
+  if (!idLongoPareceWhatsapp(t)) return false
+  try {
+    return JSON.stringify(cfg).includes(t)
+  } catch {
+    return false
+  }
+}
+
+const configWhatsappCasaComWebhookSendzen = (cfg, { phoneNumberId, wabaId, numerosTentar = [] } = {}) => {
+  if (!cfg || typeof cfg !== 'object') return false
+  const sz = cfg.sendzen && typeof cfg.sendzen === 'object' ? cfg.sendzen : {}
+  const pids = [cfg.phoneNumberId, sz.phoneNumberId, sz.id, sz.phone_id]
+    .filter((x) => x != null && x !== '')
+    .map((x) => String(x))
+  const wabaIds = [
+    cfg.whatsappBusinessAccountId,
+    sz.whatsappBusinessAccountId,
+    cfg.wabaId,
+    sz.wabaId,
+    sz.businessAccountId,
+  ]
+    .filter((x) => x != null && x !== '')
+    .map((x) => String(x))
+  const froms = [cfg.from, sz.from, cfg.displayPhoneNumber, sz.displayPhoneNumber]
+    .map((x) => normalizarTelefone(x))
+    .filter(Boolean)
+
+  if (phoneNumberId && pids.includes(String(phoneNumberId))) return true
+  if (wabaId && wabaIds.includes(String(wabaId))) return true
+  if (numerosTentar.length && froms.length) {
+    for (const f of froms) {
+      if (numerosTentar.includes(f)) return true
+    }
+  }
+  if (phoneNumberId && jsonConfigMencionaId(cfg, phoneNumberId)) return true
+  if (wabaId && jsonConfigMencionaId(cfg, wabaId)) return true
+  return false
+}
+
+const resumirConfigWhatsappDebug = (cfg) => {
+  if (!cfg || typeof cfg !== 'object') return { vazio: true }
+  const sz = cfg.sendzen && typeof cfg.sendzen === 'object' ? cfg.sendzen : {}
+  return {
+    temSecaoSendzen: Boolean(cfg.sendzen),
+    phoneNumberId: String(sz.phoneNumberId || cfg.phoneNumberId || ''),
+    waba: String(sz.whatsappBusinessAccountId || sz.wabaId || cfg.whatsappBusinessAccountId || cfg.wabaId || ''),
+    from: normalizarTelefone(sz.from || cfg.from || ''),
+    provedor: cfg.provedorAtivo || cfg.provedor || '',
+  }
+}
+
+const resolverTenantSendzenFallbackMemoria = async ({ phoneNumberId, wabaId, from = null } = {}) => {
+  const numerosTentar = from ? variantesNumeroContaWhatsapp(from) : []
+  if (!phoneNumberId && !wabaId && !numerosTentar.length) return null
+
+  const candidatos = await banco.tenant.findMany({
+    where: { configWhatsApp: { not: null } },
+    select: { id: true, configWhatsApp: true, nome: true },
+  })
+
+  if (candidatos.length === 0) {
+    console.warn(
+      '[Webhook Sendzen] Nenhum registro de tenant com configWhatsApp preenchido. Salve a integração Sendzen no painel (ou defina SENDZEN_WEBHOOK_TENANT_ID no .env em dev).'
+    )
+  }
+
+  for (const t of candidatos) {
+    if (
+      configWhatsappCasaComWebhookSendzen(t.configWhatsApp, {
+        phoneNumberId,
+        wabaId,
+        numerosTentar,
+      })
+    ) {
+      console.log('[Webhook Sendzen] Tenant resolvido (fallback em memória)', { tenantId: t.id, nome: t.nome })
+      return buscarTenant(t.id)
+    }
+  }
+
+  if (candidatos.length > 0) {
+    const amostra = candidatos.slice(0, 3).map((c) => ({
+      id: c.id,
+      nome: c.nome,
+      cfg: resumirConfigWhatsappDebug(c.configWhatsApp),
+    }))
+    console.warn('[Webhook Sendzen] Nenhum configWhatsApp bateu com o webhook. Candidatos no banco (amostra):', {
+      total: candidatos.length,
+      procurado: { phoneNumberId, wabaId, numerosTentar },
+      amostra,
+    })
+  }
+  return null
+}
+
 const nomePareceTelefone = (nome = '') => /^\+?\d[\d\s()\-]{5,}$/.test(String(nome || '').trim())
 const telefonePareceReal = (telefone = '') => {
   const digitos = normalizarTelefone(telefone)
@@ -279,21 +398,38 @@ const resolverTenantMeta = async ({ tenantId = null, phoneNumberId = null, wabaI
 const resolverTenantSendzen = async ({ tenantId = null, phoneNumberId = null, wabaId = null, from = null }) => {
   if (tenantId) return buscarTenant(tenantId)
 
-  const numero = normalizarTelefone(from)
-  if (!phoneNumberId && !wabaId && !numero) return null
+  if (SENDZEN_WEBHOOK_TENANT_ID) {
+    try {
+      const t = await buscarTenant(SENDZEN_WEBHOOK_TENANT_ID)
+      console.log('[Webhook Sendzen] Usando tenant fixo (SENDZEN_WEBHOOK_TENANT_ID)', { tenantId: t.id, nome: t.nome })
+      return t
+    } catch (e) {
+      console.error('[Webhook Sendzen] SENDZEN_WEBHOOK_TENANT_ID inválido:', e?.message || e)
+    }
+  }
 
-  return banco.tenant.findFirst({
+  const numerosTentar = from ? variantesNumeroContaWhatsapp(from) : []
+  if (!phoneNumberId && !wabaId && !numerosTentar.length) return null
+
+  const paresFrom = (prefixo) =>
+    numerosTentar.map((d) => ({ configWhatsApp: { path: prefixo ? [...prefixo, 'from'] : ['from'], equals: d } }))
+
+  const viaPrisma = await banco.tenant.findFirst({
     where: {
       OR: [
         phoneNumberId ? { configWhatsApp: { path: ['phoneNumberId'], equals: String(phoneNumberId) } } : undefined,
+        wabaId ? { configWhatsApp: { path: ['wabaId'], equals: String(wabaId) } } : undefined,
         wabaId ? { configWhatsApp: { path: ['whatsappBusinessAccountId'], equals: String(wabaId) } } : undefined,
-        numero ? { configWhatsApp: { path: ['from'], equals: numero } } : undefined,
         phoneNumberId ? { configWhatsApp: { path: ['sendzen', 'phoneNumberId'], equals: String(phoneNumberId) } } : undefined,
         wabaId ? { configWhatsApp: { path: ['sendzen', 'whatsappBusinessAccountId'], equals: String(wabaId) } } : undefined,
-        numero ? { configWhatsApp: { path: ['sendzen', 'from'], equals: numero } } : undefined,
+        wabaId ? { configWhatsApp: { path: ['sendzen', 'wabaId'], equals: String(wabaId) } } : undefined,
+        ...paresFrom(null),
+        ...paresFrom(['sendzen']),
       ].filter(Boolean),
     },
   })
+  if (viaPrisma) return viaPrisma
+  return resolverTenantSendzenFallbackMemoria({ phoneNumberId, wabaId, from })
 }
 
 // Logica central compartilhada por todos os webhooks.
@@ -587,14 +723,19 @@ const processarWebhook = async ({
     return { tipo: 'engine', resposta: direta.resposta, conversaId: conversa.id }
   }
 
-  // Engine busca dados reais antes da IA
-  const dadosEngineBase = intencao
-    ? await engine.buscarDadosReais(intencao, { tenantId, clienteId: cliente.id, timezone: tenant?.timezone, tenant, mensagem })
-    : ''
-  const dadosEngine = `${dadosEngineBase || ''}${instrucaoCapturaCadastro}`.trim()
+  const decisaoIA = await montarDecisaoIA({
+    mensagem,
+    tenantId,
+    clienteId: cliente.id,
+    timezone: tenant?.timezone,
+    tenant,
+    contextoConversa: { temContextoRecenteDeRemarcacao },
+    instrucaoExtra: instrucaoCapturaCadastro,
+  })
 
-  // Escolhe modelo: Haiku (rápido) ou Sonnet (complexo)
-  const usarComplexo = engine.deveUsarModeloComplexo(mensagem, intencao)
+  intencao = decisaoIA.intencao || intencao
+  const dadosEngine = decisaoIA.instrucaoEngine
+  const usarComplexo = decisaoIA.usarModeloComplexo
   if (usarComplexo) console.log(`[Engine] Usando modelo complexo (Sonnet) para: "${mensagem.substring(0, 50)}"`)
 
   // ═══ CHAMA A IA (com dados reais + modelo adequado) ═══
@@ -603,13 +744,18 @@ const processarWebhook = async ({
   if (configWhatsApp) {
     if (resultado.mensagemProativa) {
       if (resultado.mensagemProativaInterativa) {
-        await whatsappServico.enviarMensagemInterativa(
-          configWhatsApp,
-          telefone,
-          resultado.mensagemProativaInterativa,
-          tenantId,
-          lidWhatsapp ? `${lidWhatsapp}@lid` : null
-        )
+        try {
+          await whatsappServico.enviarMensagemInterativa(
+            configWhatsApp,
+            telefone,
+            resultado.mensagemProativaInterativa,
+            tenantId,
+            lidWhatsapp ? `${lidWhatsapp}@lid` : null
+          )
+        } catch (errInterativo) {
+          console.error('[WhatsApp] Envio interativo falhou, usando texto puro:', errInterativo?.message || errInterativo)
+          await enviarRespostaWhatsapp(resultado.mensagemProativa, { momento: 'SAUDACAO' })
+        }
       } else {
         await enviarRespostaWhatsapp(resultado.mensagemProativa, { momento: 'SAUDACAO' })
       }
@@ -1171,20 +1317,28 @@ const webhookSendzen = async (req, res) => {
       for (const change of changes) {
         const valor = change?.value || {}
         const metadata = valor?.metadata || {}
-        const from = metadata?.display_phone_number || metadata?.phone_number_id || valor?.from || null
+        // Só o display_phone é número; phone_number_id não pode ir em "from" (quebra a resolução por dígitos)
+        const fromParaResolver = metadata?.display_phone_number || null
         const tenant = tenantFixo || await resolverTenantSendzen({
           phoneNumberId: metadata?.phone_number_id || null,
           wabaId: change?.value?.business_account_id || entry?.id || null,
-          from,
+          from: fromParaResolver,
         })
         if (!tenant) {
           console.warn('[Webhook Sendzen] Nenhum tenant encontrado para o payload recebido.', {
             phoneNumberId: metadata?.phone_number_id || null,
             wabaId: change?.value?.business_account_id || entry?.id || null,
-            from,
+            from: fromParaResolver,
+            dica: 'Conecte a Sendzen no painel e confira sendzen.from (mesmo nº), sendzen.phoneNumberId e/ou sendzen.whatsappBusinessAccountId = id da conta no payload.',
+            variantes: fromParaResolver ? variantesNumeroContaWhatsapp(fromParaResolver) : [],
           })
           continue
         }
+
+        console.log('[Webhook Sendzen] Tenant resolvido, processando mensagens', {
+          tenantId: tenant.id,
+          nome: tenant.nome,
+        })
 
         let validacao = validacaoPorTenant.get(tenant.id)
         if (!validacao) {

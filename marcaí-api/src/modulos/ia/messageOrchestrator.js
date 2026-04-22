@@ -1,11 +1,13 @@
 const { OpenAI } = require('openai')
+const Anthropic = require('@anthropic-ai/sdk')
 const configIA = require('../../config/ia')
 const whatsappServico = require('./whatsapp.servico')
 const banco = require('../../config/banco')
 const vozServico = require('./voz.servico')
 
-// OpenAI Config
+// OpenAI (fallback quando não há Anthropic)
 const openai = new OpenAI({ apiKey: configIA.apiKey || process.env.OPENAI_API_KEY, baseURL: configIA.baseURL })
+const anthropic = configIA.anthropicApiKey ? new Anthropic({ apiKey: configIA.anthropicApiKey }) : null
 
 /**
  * messageOrchestrator
@@ -75,7 +77,8 @@ const processarEvento = async ({ evento, agendamento, tenantId, cliente, origemV
     prompt += `Cliente: ${cliente.nome}.\n`
     prompt += `Histórico: ${contextoFrequencia}.\n`
     prompt += `Contexto Agenda: ${contextoAgenda}.\n\n`
-    prompt += `DIRETRIZES: NUNCA use placeholders como [Nome]. Use o link padrão ${linkAgendamento} apenas quando fizer sentido vender ou facilitar o retorno.\n\n`
+    prompt += `DIRETRIZES: NUNCA use placeholders como [Nome]. Use o link padrão ${linkAgendamento} apenas quando fizer sentido vender ou facilitar o retorno.\n`
+    prompt += 'PORTUGUÊS: use português do Brasil, com acentuação e ortografia corretas (não, você, está, ainda, nós, por favor, obrigado).\n\n'
 
     switch (evento) {
       case 'CONFIRMAR':
@@ -96,8 +99,10 @@ const processarEvento = async ({ evento, agendamento, tenantId, cliente, origemV
         break;
 
       case 'REMARCAR':
-        prompt += `EVENTO: Horário mudou para ${dataFmt} às ${horaFmt}.\n`
-        break;
+        prompt += `EVENTO: Agendamento remarcado (ex.: ajuste manual no app em +30 min ou outro horário). Novo horário OFICIAL: ${dataFmt} às ${horaFmt}.\n`
+        prompt += `Serviço: ${servicoNome}. Profissional: ${profNome}.\n`
+        prompt += 'REGRA: Mencione só essa data e hora, de forma clara. Não diga "daqui a 30 minutos" ou intervalos relativos, a não ser que coincidam exatamente com o horário acima. Não fale de "buffer" nem de adiar "os outros" agendamentos.\n'
+        break
 
       case 'NAO_COMPARECEU':
         prompt += `EVENTO: O cliente faltou ao horário das ${horaFmt} e não avisou.\n`
@@ -213,15 +218,39 @@ const processarEvento = async ({ evento, agendamento, tenantId, cliente, origemV
         return;
     }
 
-    // 4. IA Gera o Texto
-    const completion = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
-      messages: [{ role: 'system', content: prompt }],
-      temperature: 0.8,
-      max_tokens: 350,
-    })
+    // 4. IA gera o texto (mesmo modelo da recepcionista no chat: Claude Sonnet; fallback: OpenAI)
+    const systemOrchestrator = 'Você escreve mensagens de WhatsApp para clientes de barbearia. Curto, natural, em português do Brasil, com acentos corretos. Sem título, sem "Prezado cliente".'
 
-    const textoResposta = completion.choices[0]?.message?.content?.trim()
+    let textoResposta
+    if (anthropic) {
+      try {
+        const msg = await anthropic.messages.create({
+          model: configIA.modeloAnthropic || 'claude-sonnet-4-6',
+          max_tokens: 400,
+          temperature: 0.45,
+          system: systemOrchestrator,
+          messages: [{ role: 'user', content: prompt }],
+        })
+        const bloco = msg.content?.find((b) => b.type === 'text')
+        textoResposta = typeof bloco?.text === 'string' ? bloco.text.trim() : ''
+      } catch (e) {
+        console.warn('[MessageOrchestrator] Anthropic falhou, tentando OpenAI:', e?.message || e)
+      }
+    }
+    if (!textoResposta && configIA.apiKey) {
+      const completion = await openai.chat.completions.create({
+        model: 'gpt-4o-mini',
+        messages: [
+          { role: 'system', content: `${systemOrchestrator}\n\n${prompt}` },
+        ],
+        temperature: 0.55,
+        max_tokens: 350,
+      })
+      textoResposta = completion.choices[0]?.message?.content?.trim()
+    }
+    if (!textoResposta && evento === 'REMARCAR' && agendamento?.inicioEm) {
+      textoResposta = `Ei! Teu horário foi ajustado: ${dataFmt} às ${horaFmt} (${servicoNome} com ${profNome}). Até lá!`
+    }
     if (!textoResposta) return
 
     // 5. Orquestração de Canal (Interactive vs Audio vs Texto)

@@ -275,6 +275,14 @@ const buscarOuCriarConversa = async (tenantId, clienteId, canal = 'WHATSAPP') =>
   )
 }
 
+/** Garante conversa (cria vazia se necessário) e retorna a conversa completa com mensagens. */
+const abrirPorCliente = async (tenantId, clienteId) => {
+  const cliente = await banco.cliente.findFirst({ where: { id: clienteId, tenantId } })
+  if (!cliente) throw { status: 404, mensagem: 'Cliente nao encontrado', codigo: 'NAO_ENCONTRADO' }
+  const conv = await buscarOuCriarConversa(tenantId, clienteId)
+  return buscarPorId(tenantId, conv.id)
+}
+
 const adicionarNota = async (tenantId, conversaId, usuarioId, conteudo) => {
   const conversa = await banco.conversa.findFirst({ where: { id: conversaId, tenantId } })
   if (!conversa) throw { status: 404, mensagem: 'Conversa nao encontrada', codigo: 'NAO_ENCONTRADO' }
@@ -296,5 +304,6 @@ module.exports = {
   encerrar,
   reabrir,
   buscarOuCriarConversa,
+  abrirPorCliente,
   adicionarNota,
 }

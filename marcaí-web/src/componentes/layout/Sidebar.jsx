@@ -11,45 +11,30 @@ import {
   Clock,
   UserCog,
   Puzzle,
-  BadgeDollarSign,
-  Gift,
-  Archive,
-  BarChart2,
-  Package,
   Settings2,
-  FileText,
-  Landmark,
-  Images,
   ClipboardList,
-  BarChart3,
-  Bike,
+  Landmark,
 } from 'lucide-react'
 import { cn, obterIniciais } from '../../lib/utils'
 import useAuth from '../../hooks/useAuth'
 
 // plano: undefined = sem restrição | 'SALAO' = só no plano Salão
-const todosItensOperacao = [
+// Camada 1: o que o barbeiro usa no dia a dia. Camada 2: o resto (ferramentas)
+const itensDia = [
   { label: 'Início', icone: LayoutDashboard, rota: '/dashboard' },
   { label: 'Agenda', icone: Calendar, rota: '/dashboard/agenda' },
   { label: 'Mensagens', icone: MessageSquare, rota: '/dashboard/mensagens' },
   { label: 'Clientes', icone: Users, rota: '/operacao/clientes' },
-  { label: 'Plano Mensal', icone: BadgeDollarSign, rota: '/operacao/planos', recurso: 'membershipsAtivo' },
-  { label: 'Aniversário', icone: Gift, rota: '/operacao/fidelidade', recurso: ['fidelidadeAtivo', 'aniversarianteAtivo'] },
-  { label: 'Comissões', icone: BarChart2, rota: '/operacao/comissoes', recurso: 'comissoesAtivo', plano: 'SALAO' },
-  { label: 'Estoque', icone: Archive, rota: '/operacao/estoque', recurso: 'estoqueAtivo' },
-  { label: 'Comanda', icone: FileText, rota: '/operacao/comanda', recurso: 'comandaAtivo' },
+]
+const itensFerramentas = [
   { label: 'Caixa', icone: Landmark, rota: '/operacao/caixa', recurso: 'caixaAtivo' },
-  { label: 'Entregas', icone: Bike, rota: '/operacao/entregas', recurso: 'entregaAtivo' },
-  { label: 'Lista de Espera', icone: ClipboardList, rota: '/operacao/lista-espera', recurso: 'listaEsperaAtivo' },
-  { label: 'Relatórios', icone: BarChart3, rota: '/operacao/relatorios' },
-  { label: 'Galeria', icone: Images, rota: '/operacao/galeria', recurso: 'galeriaAtivo' },
+  { label: 'Lista de espera', icone: ClipboardList, rota: '/operacao/lista-espera', recurso: 'listaEsperaAtivo', plano: 'SALAO' },
 ]
 
 const todosItensConfiguracao = [
   { label: 'Profissionais', icone: UserCheck, rota: '/config/profissionais' },
   { label: 'Horários', icone: Clock, rota: '/config/horarios' },
   { label: 'Serviços', icone: Scissors, rota: '/config/servicos' },
-  { label: 'Pacotes e Combos', icone: Package, rota: '/config/pacotes', recurso: 'pacotesAtivo' },
   { label: 'Meu Negócio', icone: Building2, rota: '/config/negocio' },
   { label: 'Recursos', icone: Settings2, rota: '/config/recursos' },
   { label: 'Integrações', icone: Puzzle, rota: '/config/integracoes' },
@@ -63,10 +48,10 @@ const ItemNav = ({ item, compacto }) => (
     title={compacto ? item.label : undefined}
     className={({ isActive }) =>
       cn(
-        'flex items-center gap-3 rounded-xl text-sm font-medium transition-all duration-150 group relative',
+        'flex items-center gap-3 rounded-xl text-sm font-semibold tracking-tight transition-all duration-200 group relative',
         compacto ? 'justify-center px-0 py-2.5 mx-1' : 'px-3 py-2.5',
         isActive
-          ? 'bg-primaria text-white shadow-primaria/30 shadow-md'
+          ? 'bg-primaria text-white shadow-sidebarActive'
           : 'text-sidebar-texto hover:bg-sidebar-hover hover:text-white'
       )
     }
@@ -95,7 +80,7 @@ const Sidebar = ({ compacto = false }) => {
   const { usuario, tenant, logout } = useAuth()
   const navigate = useNavigate()
 
-  const planoAtual = tenant?.planoContratado || 'SALAO' // padrão: mostra tudo se não definido
+  const planoAtual = tenant?.planoContratado || 'SALAO'
   const filtrarPorPlano = (item) => {
     if (item.plano && item.plano !== planoAtual) return false
     if (item.recurso) {
@@ -104,7 +89,8 @@ const Sidebar = ({ compacto = false }) => {
     }
     return true
   }
-  const itensOperacao = todosItensOperacao.filter(filtrarPorPlano)
+  const itensDiaVisiveis = itensDia.filter(filtrarPorPlano)
+  const itensFerramentasVisiveis = itensFerramentas.filter(filtrarPorPlano)
   const itensConfiguracao = todosItensConfiguracao.filter(filtrarPorPlano)
 
   const handleLogout = () => {
@@ -137,13 +123,28 @@ const Sidebar = ({ compacto = false }) => {
       )}
 
       <nav className={cn('flex-1 overflow-y-auto overscroll-contain sidebar-scroll pb-4 space-y-0.5', compacto ? 'px-0' : 'px-2')}>
-        {!compacto && <p className="px-3 mb-2 text-[10px] font-semibold uppercase tracking-[0.28em] text-sidebar-texto/60">Operação</p>}
-        {itensOperacao.map((item) => (
+        {!compacto && (
+          <p className="px-3 mb-2 text-[10px] font-bold uppercase tracking-[0.32em] text-sidebar-texto/50">Seu dia</p>
+        )}
+        {itensDiaVisiveis.map((item) => (
           <ItemNav key={item.rota} item={item} compacto={compacto} />
         ))}
 
+        {itensFerramentasVisiveis.length > 0 && (
+          <div className="pt-4">
+            {!compacto && (
+              <p className="px-3 mb-2 text-[10px] font-bold uppercase tracking-[0.32em] text-sidebar-texto/50">Ferramentas</p>
+            )}
+            {itensFerramentasVisiveis.map((item) => (
+              <ItemNav key={item.rota} item={item} compacto={compacto} />
+            ))}
+          </div>
+        )}
+
         <div className="pt-4">
-          {!compacto && <p className="px-3 mb-2 text-[10px] font-semibold uppercase tracking-[0.28em] text-sidebar-texto/60">Configuração</p>}
+          {!compacto && (
+            <p className="px-3 mb-2 text-[10px] font-bold uppercase tracking-[0.32em] text-sidebar-texto/50">Configuração</p>
+          )}
           {itensConfiguracao.map((item) => (
             <ItemNav key={item.rota} item={item} compacto={compacto} />
           ))}

@@ -1,6 +1,6 @@
 ﻿import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ChevronLeft, ChevronRight, Plus, X, Loader2, Filter, MessageSquare, UserPlus, Trash2, Send, Star, CheckCircle2, Ban, CalendarClock, UserX, Clock, ListChecks } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Plus, X, Loader2, Filter, MessageSquare, UserPlus, Trash2, Star, CheckCircle2, Ban, CalendarClock, UserX, Clock, ListChecks } from 'lucide-react'
 import api from '../../servicos/api'
 import { cn, formatarHora, formatarTelefone, statusAgendamento } from '../../lib/utils'
 import { Button } from '../../componentes/ui/button'
@@ -173,125 +173,9 @@ const MiniCalendario = ({ data, onChange }) => {
   )
 }
 
-// Modal adicionar item Ã  comanda (inline na agenda)
-const ModalAdicionarItem = ({ agendamentoId, produtos, onFechar, onSalvar }) => {
-  const toast = useToast()
-  const [modo, setModo] = useState('produto')
-  const [produtoId, setProdutoId] = useState('')
-  const [descricao, setDescricao] = useState('')
-  const [quantidade, setQuantidade] = useState('1')
-  const [preco, setPreco] = useState('')
-  const [salvando, setSalvando] = useState(false)
-
-  const produtoSelecionado = produtos.find((p) => p.id === produtoId)
-
-  useEffect(() => {
-    if (produtoSelecionado?.precoVendaCentavos) {
-      setPreco((produtoSelecionado.precoVendaCentavos / 100).toFixed(2))
-      setDescricao(produtoSelecionado.nome)
-    }
-  }, [produtoId])
-
-  const salvar = async () => {
-    const desc = modo === 'produto' ? produtoSelecionado?.nome || descricao : descricao
-    if (!desc) { toast('Informe a descrição', 'aviso'); return }
-    if (!preco || isNaN(parseFloat(preco))) { toast('Informe o preço', 'aviso'); return }
-    setSalvando(true)
-    try {
-      await api.post(`/api/comanda/${agendamentoId}/itens`, {
-        produtoId: modo === 'produto' ? produtoId || null : null,
-        descricao: desc,
-        quantidade: parseInt(quantidade) || 1,
-        precoCentavos: Math.round(parseFloat(preco) * 100),
-      })
-      toast('Item adicionado!', 'sucesso')
-      onSalvar()
-    } catch (e) {
-      toast(e?.erro?.mensagem || 'Erro ao adicionar item', 'erro')
-    } finally {
-      setSalvando(false)
-    }
-  }
-
-  return (
-    <div className="fixed inset-0 bg-black/60 z-[60] flex items-end sm:items-center justify-center p-4">
-      <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-xl">
-        <div className="flex items-center justify-between mb-5">
-          <h3 className="text-base font-semibold text-texto">Adicionar item</h3>
-          <button onClick={onFechar}><X size={20} className="text-texto-sec" /></button>
-        </div>
-        <div className="flex gap-2 mb-4">
-          {[['produto', 'Produto do estoque'], ['avulso', 'Item avulso']].map(([m, label]) => (
-            <button
-              key={m}
-              className={`flex-1 py-2 rounded-xl text-sm font-medium border transition-colors ${modo === m ? 'bg-primaria text-white border-primaria' : 'border-borda text-texto-sec hover:bg-fundo'}`}
-              onClick={() => setModo(m)}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-        <div className="space-y-3">
-          {modo === 'produto' ? (
-            <div>
-              <label className="block text-xs font-medium text-texto-sec mb-1">Produto</label>
-              {produtos.length > 0 ? (
-                <Select value={produtoId || '__sel__'} onValueChange={(v) => setProdutoId(v === '__sel__' ? '' : v)}>
-                  <SelectTrigger><SelectValue placeholder="Selecione um produto..." /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="__sel__">Selecione um produto...</SelectItem>
-                    {produtos.map((p) => (
-                      <SelectItem key={p.id} value={p.id}>
-                        {p.nome}{p.quantidadeAtual !== undefined ? ` (${p.quantidadeAtual} em estoque)` : ''}{p.precoVendaCentavos ? ` — ${fmt(p.precoVendaCentavos)}` : ''}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              ) : (
-                <p className="text-sm text-texto-sec italic">Nenhum produto no estoque.</p>
-              )}
-            </div>
-          ) : (
-            <div>
-              <label className="block text-xs font-medium text-texto-sec mb-1">Descrição</label>
-              <input
-                className="w-full border border-borda rounded-xl px-3 py-2 text-sm text-texto focus:outline-none focus:ring-2 focus:ring-primaria/30"
-                placeholder="Ex: Hidratação, Pigmentação..."
-                value={descricao}
-                onChange={(e) => setDescricao(e.target.value)}
-              />
-            </div>
-          )}
-          <div className="flex gap-3">
-            <div className="w-24">
-              <label className="block text-xs font-medium text-texto-sec mb-1">Qtd</label>
-              <input type="number" min="1" className="w-full border border-borda rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primaria/30" value={quantidade} onChange={(e) => setQuantidade(e.target.value)} />
-            </div>
-            <div className="flex-1">
-              <label className="block text-xs font-medium text-texto-sec mb-1">Preço (R$)</label>
-              <input type="number" step="0.01" min="0" className="w-full border border-borda rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primaria/30" placeholder="0,00" value={preco} onChange={(e) => setPreco(e.target.value)} />
-            </div>
-          </div>
-        </div>
-        <div className="flex gap-2 mt-5">
-          <Button variante="outline" className="flex-1" onClick={onFechar}>Cancelar</Button>
-          <Button className="flex-1" onClick={salvar} disabled={salvando}>
-            {salvando ? <Loader2 size={14} className="animate-spin mr-1" /> : null} Adicionar
-          </Button>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-// Modal de detalhes do agendamento â€” com aba Comanda embutida
-const ModalDetalhes = ({ agendamento, onClose, onAcao, onRecarregar, produtos }) => {
+// Modal de detalhes do agendamento
+const ModalDetalhes = ({ agendamento, onClose, onAcao, onRecarregar }) => {
   const [carregandoAcao, setCarregandoAcao] = useState(false)
-  const [comanda, setComanda] = useState(null)
-  const [carregandoComanda, setCarregandoComanda] = useState(false)
-  const [mostrarAddItem, setMostrarAddItem] = useState(false)
-  const [removendo, setRemovendo] = useState(null)
-  const [enviando, setEnviando] = useState(false)
   const [formaPagamento, setFormaPagamento] = useState('')
   const [finalizando, setFinalizando] = useState(false)
   const [mostrarNaoCompareceu, setMostrarNaoCompareceu] = useState(false)
@@ -307,8 +191,6 @@ const ModalDetalhes = ({ agendamento, onClose, onAcao, onRecarregar, produtos })
   const { tenant } = useAuth()
   const toast = useToast()
 
-  const temComanda = tenant?.comandaAtivo && ['AGENDADO', 'CONFIRMADO', 'CONCLUIDO'].includes(statusAtual)
-  const podeEditarComanda = statusAtual !== 'CONCLUIDO'
   const exigeConfirmacaoPresenca = Boolean(tenant?.exigirConfirmacaoPresenca)
   const presencaConfirmada = clientePresente({ presencaConfirmadaEm })
   const podeOperar = ['AGENDADO', 'CONFIRMADO'].includes(statusAtual)
@@ -321,20 +203,6 @@ const ModalDetalhes = ({ agendamento, onClose, onAcao, onRecarregar, produtos })
     setPreferenciasCliente(agendamento.cliente?.preferencias || '')
     setFormaPagamento('')
   }, [agendamento.id, agendamento.status, agendamento.presencaConfirmadaEm, agendamento.cliente?.tipoCortePreferido, agendamento.cliente?.preferencias])
-
-  const carregarComanda = async () => {
-    setCarregandoComanda(true)
-    try {
-      const res = await api.get(`/api/comanda/${agendamento.id}`)
-      setComanda(res.dados)
-    } catch {
-      toast('Erro ao carregar comanda', 'erro')
-    } finally {
-      setCarregandoComanda(false)
-    }
-  }
-
-  useEffect(() => { if (temComanda) carregarComanda() }, [agendamento.id, temComanda])
 
   const executarAcao = async (acao) => {
     setCarregandoAcao(true)
@@ -392,30 +260,6 @@ const ModalDetalhes = ({ agendamento, onClose, onAcao, onRecarregar, produtos })
     }
   }
 
-  const removerItem = async (itemId) => {
-    setRemovendo(itemId)
-    try {
-      await api.delete(`/api/comanda/${agendamento.id}/itens/${itemId}`)
-      carregarComanda()
-    } catch (e) {
-      toast(e?.erro?.mensagem || 'Erro ao remover', 'erro')
-    } finally {
-      setRemovendo(null)
-    }
-  }
-
-  const enviarRecibo = async () => {
-    setEnviando(true)
-    try {
-      await api.post(`/api/comanda/${agendamento.id}/enviar-recibo`, {})
-      toast('Recibo enviado pelo WhatsApp!', 'sucesso')
-    } catch (e) {
-      toast(e?.erro?.mensagem || 'Erro ao enviar recibo', 'erro')
-    } finally {
-      setEnviando(false)
-    }
-  }
-
   const finalizar = async () => {
     if (!formaPagamento) { toast('Selecione a forma de pagamento', 'aviso'); return }
     if (presencaObrigatoriaPendente) { toast('Confirme a chegada do cliente antes de finalizar.', 'aviso'); return }
@@ -431,10 +275,6 @@ const ModalDetalhes = ({ agendamento, onClose, onAcao, onRecarregar, produtos })
       setFinalizando(false)
     }
   }
-
-  const totalCentavos = comanda
-    ? (comanda.servico?.precoCentavos || 0) + (comanda.comandaItens?.reduce((acc, i) => acc + i.precoCentavos * i.quantidade, 0) || 0)
-    : 0
 
   return (
     <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={onClose}>
@@ -495,7 +335,6 @@ const ModalDetalhes = ({ agendamento, onClose, onAcao, onRecarregar, produtos })
             </div>
           </div>
 
-          {/* â”€â”€ Comanda (quando ativa) â”€â”€ */}
           {agendamento.cliente?.avatarUrl && (
             <div className="bg-green-50 border border-green-200 rounded-xl px-3 py-2.5">
               <p className="text-xs font-semibold text-green-700 mb-1">Foto real do WhatsApp ativa</p>
@@ -511,66 +350,6 @@ const ModalDetalhes = ({ agendamento, onClose, onAcao, onRecarregar, produtos })
               <p className="text-sm text-amber-800">
                 A presença precisa ser confirmada antes de concluir este atendimento.
               </p>
-            </div>
-          )}
-
-          {temComanda && (
-            carregandoComanda ? (
-              <div className="flex justify-center py-6"><Loader2 size={22} className="animate-spin text-texto-sec" /></div>
-            ) : (
-              <div className="rounded-xl border border-borda overflow-hidden">
-                <div className="px-3 py-2 bg-fundo border-b border-borda">
-                  <p className="text-xs font-semibold text-texto-sec uppercase tracking-wide">Comanda</p>
-                </div>
-                <div className="px-3 py-2.5 flex justify-between text-sm bg-white">
-                  <span className="text-texto">{comanda?.servico?.nome || agendamento.servico?.nome}</span>
-                  <span className="font-medium">{fmt(comanda?.servico?.precoCentavos || agendamento.servico?.precoCentavos)}</span>
-                </div>
-
-                {comanda?.comandaItens?.length > 0 && (
-                  <>
-                    <div className="px-3 py-1.5 border-t border-borda bg-fundo">
-                      <p className="text-[11px] font-semibold text-texto-sec uppercase tracking-wide">Extras</p>
-                    </div>
-                    {comanda.comandaItens.map((item) => (
-                      <div key={item.id} className="px-3 py-2.5 border-t border-borda bg-white flex items-center justify-between">
-                        <div>
-                          <p className="text-sm text-texto">{item.descricao}</p>
-                          <p className="text-xs text-texto-sec">{item.quantidade}x - {fmt(item.precoCentavos)} cada</p>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm font-medium">{fmt(item.precoCentavos * item.quantidade)}</span>
-                          {podeEditarComanda && (
-                            <button onClick={() => removerItem(item.id)} disabled={removendo === item.id} className="text-red-400 hover:text-red-600 transition-colors">
-                              {removendo === item.id ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    ))}
-                  </>
-                )}
-
-                <div className="px-3 py-2.5 border-t border-primaria/20 bg-primaria/5 flex justify-between items-center">
-                  <span className="font-semibold text-sm text-texto">Total</span>
-                  <span className="text-base font-bold text-primaria">{fmt(totalCentavos)}</span>
-                </div>
-              </div>
-            )
-          )}
-
-          {/* â”€â”€ AÃ§Ãµes da comanda â”€â”€ */}
-          {temComanda && !carregandoComanda && (
-            <div className="flex gap-2">
-              {podeEditarComanda && (
-                <Button onClick={() => setMostrarAddItem(true)} className="gap-1.5 flex-1" tamanho="sm">
-                  <Plus size={13} /> Adicionar item
-                </Button>
-              )}
-              <Button variante="outline" tamanho="sm" onClick={enviarRecibo} disabled={enviando} className="gap-1.5">
-                {enviando ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />}
-                Recibo
-              </Button>
             </div>
           )}
 
@@ -653,7 +432,15 @@ const ModalDetalhes = ({ agendamento, onClose, onAcao, onRecarregar, produtos })
           </div>
 
           <button
-            onClick={() => { onClose(); navigate('/dashboard/mensagens', { state: { telefone: agendamento.cliente?.telefone || '' } }) }}
+            onClick={() => {
+              onClose()
+              const id = agendamento.cliente?.id
+              if (id) {
+                navigate('/dashboard/mensagens', { state: { clienteId: id } })
+              } else {
+                navigate('/dashboard/mensagens', { state: { telefone: agendamento.cliente?.telefone || '' } })
+              }
+            }}
             className="w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg border border-borda text-xs font-medium text-texto-sec hover:text-texto hover:border-primaria/40 transition-colors"
           >
             <MessageSquare size={13} /> Ver conversa
@@ -718,20 +505,6 @@ const ModalDetalhes = ({ agendamento, onClose, onAcao, onRecarregar, produtos })
             </>
           )}
 
-          {/* Ações para CONCLUIDO */}
-          {statusAtual === 'CONCLUIDO' && (
-            <div className="grid gap-2 pb-1">
-              <Button
-                tamanho="sm"
-                variante="outline"
-                className="gap-1.5"
-                onClick={() => { onClose(); navigate('/operacao/comanda') }}
-              >
-                <CheckCircle2 size={13} /> Ver comanda completa
-              </Button>
-            </div>
-          )}
-
           {/* Ações para CANCELADO */}
           {statusAtual === 'CANCELADO' && (
             <div className="grid gap-2 pb-1">
@@ -748,15 +521,6 @@ const ModalDetalhes = ({ agendamento, onClose, onAcao, onRecarregar, produtos })
 
         </div>
       </div>
-
-      {mostrarAddItem && (
-        <ModalAdicionarItem
-          agendamentoId={agendamento.id}
-          produtos={produtos}
-          onFechar={() => setMostrarAddItem(false)}
-          onSalvar={() => { setMostrarAddItem(false); carregarComanda() }}
-        />
-      )}
 
       {mostrarNaoCompareceu && (
         <ModalNaoCompareceu
@@ -2075,7 +1839,6 @@ const Agenda = () => {
   const [dataAtual, setDataAtual] = useState(new Date())
   const [agendamentos, setAgendamentos] = useState([])
   const [profissionais, setProfissionais] = useState([])
-  const [produtos, setProdutos] = useState([])
   const [profissionaisAtivos, setProfissionaisAtivos] = useState([])
   const [modalDetalhe, setModalDetalhe] = useState(null)
   const [mostrarNovoModal, setMostrarNovoModal] = useState(false)
@@ -2107,10 +1870,9 @@ const Agenda = () => {
   }
 
   useEffect(() => {
-    Promise.all([api.get('/api/profissionais'), api.get('/api/estoque')]).then(([r, p]) => {
+    api.get('/api/profissionais').then((r) => {
       setProfissionais(r.dados || [])
-      setProfissionaisAtivos((r.dados || []).map(prof => prof.id))
-      setProdutos(p.dados || [])
+      setProfissionaisAtivos((r.dados || []).map((prof) => prof.id))
     })
   }, [])
 
@@ -2297,7 +2059,6 @@ const Agenda = () => {
           onClose={() => setModalDetalhe(null)}
           onAcao={executarAcao}
           onRecarregar={carregarAgendamentos}
-          produtos={produtos}
         />
       )}
       {mostrarNovoModal && (

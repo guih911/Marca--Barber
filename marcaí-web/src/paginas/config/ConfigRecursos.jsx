@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Loader2, Save, Star, Package, BarChart2, Gift, Archive, Smartphone, MessageSquare, Images, ClipboardList, Landmark, Lock } from 'lucide-react'
+import { Loader2, Save, Star, BarChart2, Smartphone, ClipboardList, Landmark, Lock, Zap } from 'lucide-react'
 import api from '../../servicos/api'
 import { useToast } from '../../contextos/ToastContexto'
 import useAuth from '../../hooks/useAuth'
@@ -15,33 +15,6 @@ const recursos = [
     recomendado: true,
   },
   {
-    chave: 'fidelidadeAtivo',
-    icone: Gift,
-    titulo: 'Programa de fidelidade',
-    descricao: 'Acumule pontos por atendimento. Ao atingir o limite, o cliente recebe um benefício (ex: 1 serviço grátis).',
-    cor: 'text-purple-500',
-    fundo: 'bg-purple-50',
-    recomendado: true,
-  },
-  {
-    chave: 'aniversarianteAtivo',
-    icone: Gift,
-    titulo: 'Aniversariante do mês',
-    descricao: 'Envie parabéns automáticos e libere corte grátis ou vale-presente de aniversário, mesmo sem usar fidelidade por pontos.',
-    cor: 'text-rose-500',
-    fundo: 'bg-rose-50',
-    recomendado: true,
-  },
-  {
-    chave: 'entregaAtivo',
-    icone: Smartphone,
-    titulo: 'Entrega de produtos',
-    descricao: 'Venda produtos pelo link público, receba pedidos no painel e acompanhe a entrega até a finalização.',
-    cor: 'text-amber-600',
-    fundo: 'bg-amber-50',
-    recomendado: true,
-  },
-  {
     chave: 'relatorioDiarioAtivo',
     icone: BarChart2,
     titulo: 'Relatório diário via WhatsApp',
@@ -51,61 +24,21 @@ const recursos = [
     recomendado: true,
   },
   {
-    chave: 'comissoesAtivo',
-    icone: BarChart2,
-    titulo: 'Comissões por profissional',
-    descricao: 'Configure o percentual de comissão por serviço. Veja o relatório mensal de quanto cada profissional gerou e quanto deve receber.',
-    cor: 'text-green-500',
-    fundo: 'bg-green-50',
-    plano: 'SALAO',
-  },
-  {
-    chave: 'comandaAtivo',
-    icone: MessageSquare,
-    titulo: 'Comanda digital',
-    descricao: 'Adicione produtos e extras ao atendimento. O cliente recebe o recibo completo via WhatsApp ao final.',
-    cor: 'text-orange-500',
-    fundo: 'bg-orange-50',
-  },
-  {
-    chave: 'estoqueAtivo',
-    icone: Archive,
-    titulo: 'Controle de estoque',
-    descricao: 'Gerencie produtos, entradas e saídas. Receba alertas via WhatsApp quando um produto atingir o estoque mínimo.',
-    cor: 'text-red-500',
-    fundo: 'bg-red-50',
-  },
-  {
-    chave: 'pacotesAtivo',
-    icone: Package,
-    titulo: 'Pacotes e combos',
-    descricao: 'Crie combos de serviços com preço especial (ex: Corte + Barba por R$45). A IA pode oferecer os pacotes durante o agendamento via WhatsApp.',
-    cor: 'text-primaria',
-    fundo: 'bg-primaria-clara',
-  },
-  {
-    chave: 'membershipsAtivo',
-    icone: Smartphone,
-    titulo: 'Planos e assinaturas mensais',
-    descricao: 'Crie planos mensais com créditos de serviço. Clientes assinam e consomem os créditos a cada atendimento.',
-    cor: 'text-teal-500',
-    fundo: 'bg-teal-50',
-  },
-  {
-    chave: 'galeriaAtivo',
-    icone: Images,
-    titulo: 'Galeria',
-    descricao: 'Adicione fotos dos trabalhos realizados para mostrar aos clientes.',
-    cor: 'text-pink-500',
-    fundo: 'bg-pink-50',
-  },
-  {
     chave: 'listaEsperaAtivo',
     icone: ClipboardList,
     titulo: 'Lista de espera',
-    descricao: 'Gerencie a fila de espera dos clientes que chegam sem agendamento.',
+    descricao: 'Fila para quando não houver horário; avisa o cliente (ou encaixa automaticamente, se a opção abaixo estiver ativa) quando alguém cancelar e abrir a vaga.',
     cor: 'text-indigo-500',
     fundo: 'bg-indigo-50',
+  },
+  {
+    chave: 'filaEncaixeAutomaticoAtivo',
+    icone: Zap,
+    titulo: 'Encaixe automático (fila)',
+    descricao: 'Se um horário abrir, o sistema reserva o cliente em primeiro lugar da fila e envia a confirmação no WhatsApp. Se desligar, só avisa a vaga e o cliente confirma antes de marcar.',
+    cor: 'text-violet-500',
+    fundo: 'bg-violet-50',
+    dependeDe: 'listaEsperaAtivo',
   },
   {
     chave: 'caixaAtivo',
@@ -142,7 +75,13 @@ const ConfigRecursos = () => {
       const t = res.dados || {}
       setPlanoAtual(t.planoContratado || 'SALAO')
       const estado = {}
-      recursos.forEach((r) => { estado[r.chave] = t[r.chave] ?? false })
+      recursos.forEach((r) => {
+        if (r.chave === 'filaEncaixeAutomaticoAtivo') {
+          estado[r.chave] = t.filaEncaixeAutomaticoAtivo !== false
+        } else {
+          estado[r.chave] = t[r.chave] ?? false
+        }
+      })
       setFlags(estado)
       setCarregando(false)
     }).catch(() => {
@@ -176,7 +115,11 @@ const ConfigRecursos = () => {
     )
   }
 
-  const recursosDisponiveis = recursos.filter((recurso) => !recurso.plano || recurso.plano === planoAtual)
+  const recursosDisponiveis = recursos.filter((recurso) => {
+    if (recurso.plano && recurso.plano !== planoAtual) return false
+    if (recurso.dependeDe && !flags[recurso.dependeDe]) return false
+    return true
+  })
   const recursosUpgrade = recursos.filter((recurso) => recurso.plano && recurso.plano !== planoAtual)
   const ativos = recursosDisponiveis.filter((recurso) => flags[recurso.chave]).length
 
@@ -189,7 +132,6 @@ const ConfigRecursos = () => {
         </p>
       </div>
 
-      {/* Resumo */}
       <div className="flex items-center gap-3 bg-primaria-clara rounded-2xl px-4 py-3 border border-primaria/20">
         <div className="w-9 h-9 rounded-xl bg-primaria flex items-center justify-center shrink-0">
           <span className="text-white text-sm font-bold">{ativos}</span>
@@ -200,7 +142,6 @@ const ConfigRecursos = () => {
         </div>
       </div>
 
-      {/* Lista de recursos incluídos no plano */}
       <div className="space-y-3">
         {recursosDisponiveis.map((r) => {
           const Icone = r.icone
@@ -237,7 +178,6 @@ const ConfigRecursos = () => {
         })}
       </div>
 
-      {/* Recursos disponíveis em plano superior */}
       {recursosUpgrade.length > 0 && (
         <div className="space-y-3">
           <div className="flex items-center gap-2 pt-2">
@@ -255,7 +195,7 @@ const ConfigRecursos = () => {
               >
                 <div className="flex items-start justify-between gap-4">
                   <div className="flex items-start gap-3 flex-1 min-w-0">
-                    <div className={`p-2.5 rounded-xl shrink-0 bg-gray-100`}>
+                    <div className="p-2.5 rounded-xl shrink-0 bg-gray-100">
                       <Icone size={18} className="text-texto-sec" />
                     </div>
                     <div className="flex-1 min-w-0">

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Crown, CheckCircle2, Users, Bot, Scissors, BarChart2, BadgeDollarSign, Gift, Package, Loader2, ExternalLink, ArrowUpRight, Star } from 'lucide-react'
+import { Crown, CheckCircle2, Users, Bot, Scissors, Loader2, ExternalLink, ArrowUpRight, ClipboardList } from 'lucide-react'
 import api from '../../servicos/api'
 import useAuth from '../../hooks/useAuth'
 import { useToast } from '../../contextos/ToastContexto'
@@ -8,16 +8,12 @@ const FEATURES_SOLO = [
   { icone: Scissors, label: 'Agenda completa', desc: '1 profissional' },
   { icone: Bot, label: 'Don IA (recepcionista)', desc: 'Agendamentos automáticos pelo WhatsApp' },
   { icone: Users, label: 'Clientes ilimitados', desc: 'Cadastro e histórico completo' },
-  { icone: BadgeDollarSign, label: 'Plano Mensal (memberships)', desc: 'Assinaturas recorrentes' },
 ]
 
 const FEATURES_SALAO = [
   ...FEATURES_SOLO,
   { icone: Users, label: 'Equipe ilimitada', desc: 'Múltiplos profissionais' },
-  { icone: BarChart2, label: 'Comissões por profissional', desc: 'Controle financeiro por barbeiro' },
-  { icone: Gift, label: 'Programa de Fidelidade', desc: 'Pontos, níveis e resgates' },
-  { icone: Package, label: 'Pacotes e Combos', desc: 'Serviços agrupados com desconto' },
-  { icone: Star, label: 'Relatórios avançados', desc: 'LTV, heatmap de ocupação, comparativos' },
+  { icone: ClipboardList, label: 'Lista de espera', desc: 'Fila quando não há horário livre' },
 ]
 
 const ConfigPlanoSalao = () => {
@@ -126,16 +122,10 @@ const ConfigPlanoSalao = () => {
           <h3 className="font-semibold text-texto mb-4">Módulos habilitados</h3>
           <div className="grid grid-cols-2 gap-2">
             {[
-              ['Memberships', tenant.membershipsAtivo],
-              ['Fidelidade', tenant.fidelidadeAtivo],
-              ['Aniversariante', tenant.aniversarianteAtivo],
-              ['Entregas', tenant.entregaAtivo],
-              ['Comissões', tenant.comissoesAtivo],
-              ['Estoque', tenant.estoqueAtivo],
-              ['Comanda Digital', tenant.comandaAtivo],
-              ['Pacotes e Combos', tenant.pacotesAtivo],
-              ['Galeria', tenant.galeriaAtivo],
-              ['Relatórios', tenant.relatoriosAtivo],
+              ['Avaliação (NPS)', tenant.npsAtivo],
+              ['Relatório diário (WhatsApp)', tenant.relatorioDiarioAtivo],
+              ['Lista de espera', tenant.listaEsperaAtivo],
+              ['Caixa', tenant.caixaAtivo],
             ].map(([nome, ativo]) => (
               <div key={nome} className={`flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-medium border ${ativo ? 'bg-green-50 border-green-200 text-green-700' : 'bg-gray-50 border-gray-200 text-gray-400'}`}>
                 <span className={`w-2 h-2 rounded-full ${ativo ? 'bg-green-500' : 'bg-gray-300'}`} />
@@ -157,7 +147,7 @@ const ConfigPlanoSalao = () => {
             <div className="flex-1">
               <h3 className="font-semibold text-texto">Quer expandir sua equipe?</h3>
               <p className="text-sm text-texto-sec mt-1">
-                O plano Salão inclui profissionais ilimitados, comissões, fidelidade e muito mais.
+                O plano Salão inclui profissionais ilimitados, lista de espera e visão de equipe.
               </p>
             </div>
           </div>

@@ -1,4 +1,5 @@
 require('dotenv').config()
+const crypto = require('crypto')
 
 // Em produção, JWT secrets são OBRIGATÓRIOS
 const isProduction = process.env.NODE_ENV === 'production'
@@ -10,9 +11,18 @@ if (isProduction && !process.env.JWT_REFRESH_SECRET) {
   throw new Error('❌ JWT_REFRESH_SECRET é obrigatório em produção. Configure no .env')
 }
 
+const gerarSegredoEphemero = (nomeVariavel) => {
+  const segredo = crypto.randomBytes(48).toString('hex')
+  console.warn(`[Auth] ${nomeVariavel} não configurado. Usando segredo efêmero apenas para desenvolvimento.`)
+  return segredo
+}
+
+const jwtSecret = process.env.JWT_SECRET || gerarSegredoEphemero('JWT_SECRET')
+const jwtRefreshSecret = process.env.JWT_REFRESH_SECRET || gerarSegredoEphemero('JWT_REFRESH_SECRET')
+
 module.exports = {
-  jwtSecret: process.env.JWT_SECRET || 'chave_secreta_desenvolvimento_NAO_USAR_EM_PROD',
-  jwtRefreshSecret: process.env.JWT_REFRESH_SECRET || 'chave_refresh_desenvolvimento_NAO_USAR_EM_PROD',
+  jwtSecret,
+  jwtRefreshSecret,
   jwtExpiresIn: process.env.JWT_EXPIRES_IN || '15m',
   jwtRefreshExpiresIn: process.env.JWT_REFRESH_EXPIRES_IN || '7d',
 

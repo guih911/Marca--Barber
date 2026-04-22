@@ -10,13 +10,20 @@ export default {
     },
     extend: {
       colors: {
+        neutral: {
+          950: '#0B0B0C',
+          900: '#111111',
+          800: '#1B1B1B',
+          100: '#F5F2EE',
+          0: '#FFFFFF',
+        },
         primaria: {
           DEFAULT: '#B8894D',
           escura: '#8C6239',
           clara: '#F3E4D2',
           brilho: '#D7B37C',
         },
-        fundo: '#F6F1EA',
+        fundo: '#F5F2EE',
         superficie: '#FFFFFF',
         sidebar: {
           DEFAULT: '#111111',
@@ -70,15 +77,18 @@ export default {
         '3xl': '1.25rem',
       },
       fontFamily: {
-        sans: ['Manrope', 'system-ui', 'sans-serif'],
+        sans: ['"Plus Jakarta Sans"', 'system-ui', 'sans-serif'],
         display: ['Bebas Neue', 'sans-serif'],
       },
       boxShadow: {
-        card: '0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04)',
-        'card-md': '0 4px 6px -1px rgba(0,0,0,0.07), 0 2px 4px -1px rgba(0,0,0,0.04)',
-        'card-lg': '0 10px 15px -3px rgba(0,0,0,0.08), 0 4px 6px -2px rgba(0,0,0,0.04)',
-        primaria: '0 8px 24px rgba(184,137,77,0.24)',
-        glow: '0 0 24px rgba(184,137,77,0.18)',
+        card: '0 1px 2px rgba(0,0,0,0.04), 0 2px 8px rgba(0,0,0,0.04)',
+        'card-md': '0 4px 6px -1px rgba(0,0,0,0.06), 0 2px 10px -2px rgba(0,0,0,0.05)',
+        'card-lg': '0 12px 32px -8px rgba(0,0,0,0.1), 0 4px 8px -2px rgba(0,0,0,0.04)',
+        primaria: '0 8px 28px rgba(184,137,77,0.28), 0 2px 8px rgba(184,137,77,0.12)',
+        glow: '0 0 32px rgba(184,137,77,0.2)',
+        nav: '0 -8px 32px rgba(0,0,0,0.08), 0 0 0 1px rgba(0,0,0,0.04)',
+        header: '0 1px 0 rgba(0,0,0,0.04), 0 8px 24px -6px rgba(0,0,0,0.06)',
+        sidebarActive: '0 2px 8px rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.08)',
       },
       keyframes: {
         'fade-in': {

@@ -1,4 +1,4 @@
-﻿// Definição de todas as tools para o OpenAI API (Function Calling)
+﻿// Definição das tools (Messages API / tool_use Anthropic)
 
 const ferramentas = [
   {
@@ -319,7 +319,7 @@ const ferramentas = [
     type: 'function',
     function: {
       name: 'entrarFilaEspera',
-      description: 'Coloca o cliente na fila de espera para um serviço quando não há horário disponível na data desejada. O cliente será notificado pelo WhatsApp assim que abrir um horário.',
+      description: 'Coloca o cliente na fila de espera para um serviço quando não há horário disponível na data desejada. Com encaixe automático (padrão), ao abrir vaga a agenda pode marcar o horário e avisar no WhatsApp; use aceitaEncaixeAutomatico false só se o cliente disser claramente que prefere ser avisado antes de confirmar.',
       parameters: {
         type: 'object',
         properties: {
@@ -327,6 +327,7 @@ const ferramentas = [
           servicoId: { type: 'string', description: 'ID do serviço desejado.' },
           profissionalId: { type: 'string', description: 'ID do profissional preferido (opcional). Se não informado, aceita qualquer profissional.' },
           dataDesejada: { type: 'string', description: 'Data desejada no formato YYYY-MM-DD.' },
+          aceitaEncaixeAutomatico: { type: 'boolean', description: 'Se true (padrão), o sistema pode agendar sozinho quando abrir vaga, desde que o salão tenha a opção ativa. Se o cliente quiser aprovar antes, envie false.' },
         },
         required: ['clienteId', 'servicoId', 'dataDesejada'],
       },

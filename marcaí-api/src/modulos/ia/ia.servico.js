@@ -9,15 +9,34 @@ const whatsappServico = require('./whatsapp.servico')
 const filaEsperaServico = require('../filaEspera/filaEspera.servico')
 const fidelidadeServico = require('../fidelidade/fidelidade.servico')
 const planosServico = require('../planos/planos.servico')
+const { aplicarPoliticaResposta } = require('../../ai-engine/response/responsePolicy')
 const { logClienteTrace, resumirCliente } = require('../../utils/clienteTrace')
 const { resumirHorarioFuncionamento } = require('../../utils/horarioFuncionamento')
 
 const anthropic = configIA.anthropicApiKey ? new Anthropic({ apiKey: configIA.anthropicApiKey }) : null
-const ferramentasClaude = ferramentas.map((t) => ({
+const ferramentasModelo = ferramentas.map((t) => ({
   name: t.function.name,
   description: t.function.description,
   input_schema: t.function.parameters,
 }))
+const clienteLLMDisponivel = anthropic
+
+const resolverModeloPrincipal = ({ complexo = false } = {}) => {
+  if (complexo) return configIA.modeloAnthropicComplexo || configIA.modeloAnthropic || configIA.modelo
+  return configIA.modeloAnthropic || configIA.modelo
+}
+
+const chamarLLMComFerramentas = async ({ systemPrompt, mensagensModelo, modelo }) => {
+  if (!clienteLLMDisponivel) throw new Error('Cliente LLM indisponível. Configure ANTHROPIC_API_KEY.')
+
+  return anthropic.messages.create({
+    model: modelo,
+    max_tokens: configIA.maxTokens,
+    system: systemPrompt,
+    tools: ferramentasModelo,
+    messages: mensagensModelo,
+  })
+}
 
 const NOME_IA_PADRAO = 'Don Barber'
 
@@ -374,13 +393,40 @@ const montarPerguntaDataNascimento = (nomeCliente = '', opcoes = {}) => {
   const primeiroNome = extrairPrimeiroNome(nomeCliente)
   const contexto = String(opcoes?.contexto || 'continuidade')
   const saudacao = String(opcoes?.saudacao || '').trim()
+  const tomDeVoz = String(opcoes?.tomDeVoz || 'DESCONTRALIDO').toUpperCase()
+  const perfil = obterPerfilAtendimentoIA(tomDeVoz)
+  const dicaFormato = 'Manda no formato dia/mês/ano (ex.: 10/05/1998).'
 
-  if (contexto === 'saudacao') {
-    const abertura = saudacao ? `${saudacao}, ${primeiroNome}.` : `Fala, ${primeiroNome}.`
-    return `${abertura} Antes de seguir, me passa sua data de nascimento no formato DD/MM/AAAA pra eu deixar seu aniversário salvo aqui.`
+  if (contexto === 'intencao_pendente') {
+    if (perfil.nome === 'CONCIERGE PREMIUM') {
+      return `Consigo sim, ${primeiroNome}. Para o benefício de aniversariante, qual sua data de nascimento? Use DD/MM/AAAA. Depois retomo seu pedido na hora.`
+    }
+    if (perfil.nome === 'CONSULTOR DE IMAGEM') {
+      return `Adorei — consigo ajudar sim, ${primeiroNome}. Pra eu alinhar teu benefício de aniversário, me conta sua data de nascimento? ${dicaFormato} Na sequência eu volto no que você pediu.`
+    }
+    return `Fechou, consigo sim. Só falta tua data de nascimento pro benefício de aniversário daqui, ${primeiroNome}. ${dicaFormato} Aí eu já retorno no teu pedido.`
   }
 
-  return `Perfeito, ${primeiroNome}. Me passa sua data de nascimento no formato DD/MM/AAAA pra eu deixar seu aniversário salvo aqui.`
+  if (contexto === 'saudacao') {
+    if (perfil.nome === 'CONCIERGE PREMIUM') {
+      const abertura = saudacao ? `${saudacao}, ${primeiroNome}.` : `Olá, ${primeiroNome}.`
+      return `${abertura} Qual sua data de nascimento? Preciso em dia/mês/ano para registrar o benefício de aniversariante.`
+    }
+    if (perfil.nome === 'CONSULTOR DE IMAGEM') {
+      const abertura = saudacao ? `${saudacao}, ${primeiroNome}!` : `Fala, ${primeiroNome}!`
+      return `${abertura} Quando é teu aniversário? ${dicaFormato} É pra gente deixar teu benefício daqui certinho.`
+    }
+    const abertura = saudacao ? `${saudacao}, ${primeiroNome}!` : `Fala, ${primeiroNome}.`
+    return `${abertura} Pra ativar o benefício de aniversário daqui, qual tua data de nascimento? ${dicaFormato}`
+  }
+
+  if (perfil.nome === 'CONCIERGE PREMIUM') {
+    return `${primeiroNome}, qual sua data de nascimento, por favor? No formato DD/MM/AAAA, para o benefício de aniversariante.`
+  }
+  if (perfil.nome === 'CONSULTOR DE IMAGEM') {
+    return `Que bom te receber, ${primeiroNome}. Me conta tua data de nascimento? ${dicaFormato} Assim a gente cuida do teu benefício de aniversário certinho.`
+  }
+  return `Boa, ${primeiroNome}. Última do cadastro: manda tua data de nascimento. ${dicaFormato} É pro benefício de aniversário da barbearia.`
 }
 
 const montarRespostaRapidaPreco = async (tenantId, mensagemNormalizada = '') => {
@@ -453,6 +499,19 @@ const clienteTemDataNascimentoConfiavel = (cliente) => {
   if (!cliente?.dataNascimento) return false
   const data = new Date(cliente.dataNascimento)
   return !Number.isNaN(data.getTime())
+}
+
+const pareceMensagemApenasDataNascimento = (texto = '') => {
+  const t = String(texto || '').trim()
+  if (!t || t.length < 8) return false
+  const semEspaco = t.replace(/\s/g, '')
+  if (!/^\d{1,2}[\/.-]\d{1,2}[\/.-](\d{2}|\d{4})$/i.test(semEspaco)) return false
+  return Boolean(extrairDataNascimentoDaMensagem(semEspaco))
+}
+
+const ultimaIAPediuDataNascimento = (ultimaIaNormalizada = '') => {
+  if (!ultimaIaNormalizada) return false
+  return /(data( de)? nascimento|dd\s*\/\s*mm|dd\/mm\/aaaa|\bnascimento\b|mes\/?ano|anivers(ario|o)\b|beneficio (de )?anivers|aniversariante|ultima do cadastro|completar( o)? cadastro|manda( tua| sua)?( data( de)? nascimento| nascimento| nasc)\b|teu nasc|sua nasc|qual( tua| sua| a)?\s*data( de)?\s*nasc)/.test(ultimaIaNormalizada)
 }
 
 const extrairDataNascimentoDaMensagem = (texto = '') => {
@@ -1500,11 +1559,11 @@ ${!nomeCliente ? `Sem nome salvo. Envie UMA resposta curta.
 → Se trouxe intenção objetiva${trouxeIntencaoObjetivaAgora ? ' (sim, trouxe)' : ''}: reconheça e peça o nome completo na mesma resposta. Ex.: "Consigo sim. Antes de fechar certinho, me passa seu nome completo?"
 → Se houver urgência ("hoje", "hj", "agora"): mencione urgência ANTES de pedir nome.
 → Quando o nome chegar: chame cadastrarCliente PRIMEIRO.
-→ Se faltar data de nascimento, peça a data no formato DD/MM/AAAA ANTES de retomar o pedido pendente.
-→ Se mandar so o nome sem pedido: "${montarPerguntaDataNascimento('Matheus')}"
+→ Se faltar data de nascimento, peça a data ANTES de retomar o pedido pendente (tom humano, benefício de aniversário — não pareça formulário de banco).
+→ Se mandar so o nome sem pedido: "${montarPerguntaDataNascimento('Carlos', { tomDeVoz: tenant.tomDeVoz })}"
 → NÃO mande link, NÃO mande apresentação longa antes de ter o nome.` : faltaDataNascimento ? `CLIENTE COM NOME, MAS SEM DATA DE NASCIMENTO.
 → O nome já está salvo (${nomeCliente}). Não peça o nome de novo.
-→ Peça a data de nascimento em 1 frase curta, no formato DD/MM/AAAA, dizendo que é para aniversário/benefício.
+→ Peça a data de nascimento em 1 frase curta: explique que é pro benefício de aniversário e dê exemplo de formato (dia/mês/ano). Evite "Perfeito" + jargão de sistema.
 → Quando a data chegar: chame cadastrarCliente com dataNascimento e retome o pedido pendente.
 → Se a mensagem for só saudação, peça a data e pare. Se vier intenção objetiva, reconheça a intenção e peça a data na mesma resposta.` : `CLIENTE CONHECIDO: ${nomeCliente}
 → Se trouxe intenção objetiva${trouxeIntencaoObjetivaAgora ? ' (sim)' : ''}: responda a intenção IMEDIATAMENTE. Sem "como posso ajudar?".
@@ -1651,8 +1710,8 @@ ${nomeCliente
 → Intencao objetiva ("tem horario?", "quero corte", "quanto custa?"): Reconheca a intencao PRIMEIRO, depois peca nome completo com leveza. Ex: "Tenho sim! Antes de fechar certinho, me passa seu nome completo?"
 → NUNCA ignore a intencao do cliente so pra pedir nome. Responda a pergunta + peca nome na mesma mensagem.
 → Nome chegou: cadastrarCliente PRIMEIRO.
-→ Se faltar data de nascimento, peca a data no formato DD/MM/AAAA antes de retomar o pedido.
-→ So o nome sem pedido: "${montarPerguntaDataNascimento('Matheus')}"`}
+→ Se faltar data de nascimento, peca com naturalidade (beneficio de aniversario) antes de retomar o pedido.
+→ So o nome sem pedido: "${montarPerguntaDataNascimento('Carlos', { tomDeVoz: tenant.tomDeVoz })}"`}
 
 == AGENDAMENTO ==
 ${assinaturaAtrasada ? `PLANO ATRASADO — BLOQUEADO. "O pagamento do plano esta em aberto. Precisa regularizar com a equipe."\n` : ''}
@@ -1696,7 +1755,7 @@ REGRAS DE APRESENTACAO DE HORARIO:
 - Rejeicao: "muito cedo" → hora maior | "muito tarde" → hora menor | "anoite" → busque horarios >= 18h
 - Se nao tem vaga no horario exato: ofereca O MAIS PROXIMO. NAO pule pra outro dia sem verificar todos os horarios do mesmo dia.
 - Se realmente nao tem vaga no dia inteiro: "Esse dia ta sem vaga. Quer que eu veja [proximo dia]?"
-- Se realmente nao houver vaga no dia e o cliente quiser insistir nessa data, ofereca entrarFilaEspera como ultimo recurso real.
+- Se realmente nao houver vaga no dia e o cliente quiser insistir nessa data, ofereca entrarFilaEspera como ultimo recurso real. Explique: quando abrir vaga, o Marcaí pode reservar o horario e avisar no WhatsApp (encaixe automático) — a menos que o cliente diga claramente que NAO quer ser marcado sem aprovar antes; nesse caso use entrarFilaEspera com aceitaEncaixeAutomatico false.
 
 PERGUNTAS FORA DO ESCOPO (sinuca, bar, cerveja, etc):
 - Responda brevemente e com simpatia
@@ -1753,7 +1812,7 @@ LINK: NAO mande link quando o cliente ja esta no meio de um fluxo (agendando, re
 - escalonarParaHumano: reclamacao, pedido humano, 2+ msgs sem entender
 - verificarSaldoFidelidade: ANTES de falar sobre pontos
 - enviarLinkPlano: quando quiser assinar (NUNCA ative direto)
-- entrarFilaEspera: ULTIMO recurso
+- entrarFilaEspera: ULTIMO recurso. Padrao aceitaEncaixeAutomatico true (o salão precisa ter lista de espera + encaixe ativos no painel)
 - coletarFeedback: NPS
 - encerrarConversa: "tchau", "vlw"
 
@@ -2338,16 +2397,16 @@ const gerarESalvarResumo = async (tenantId, clienteId, mensagensIA) => {
 
     if (!trocas || trocas.length < 30) return // conversa muito curta, não vale resumir
 
-    if (!anthropic) return
+    if (!clienteLLMDisponivel) return
 
     const res = await anthropic.messages.create({
-      model: configIA.modeloAnthropic || configIA.modelo,
+      model: resolverModeloPrincipal({ complexo: false }),
       max_tokens: 120,
       system: 'Gere um resumo de 1 a 2 frases sobre esta conversa de barbearia, incluindo: (1) o que o cliente queria, (2) o que foi resolvido ou ficou pendente. Foque em ações concretas (serviço, horário, profissional). Seja direto e objetivo.',
       messages: [{ role: 'user', content: trocas }],
     })
-
     const resumo = res.content?.find((bloco) => bloco.type === 'text')?.text?.trim()
+
     if (!resumo) return
 
     const cliente = await banco.cliente.findUnique({ where: { id: clienteId } })
@@ -2521,6 +2580,29 @@ const ehMensagemDeEncerramentoDireto = (textoNormalizado = '') => (
   || /^(vlw|valeu|obrigado|obrigada|tchau|flw|falou)$/.test(textoNormalizado)
 )
 
+const montarContextoCurtoEstruturado = ({ cliente, historico = [] }) => {
+  const memoriaCliente = String(cliente?.preferencias || '')
+    .trim()
+    .replace(/\s+/g, ' ')
+    .slice(0, 700)
+
+  const ultimasTrocas = historico
+    .filter((m) => ['cliente', 'ia'].includes(m.remetente))
+    .slice(-8)
+    .map((m) => {
+      const origem = m.remetente === 'cliente' ? 'CLIENTE' : 'IA'
+      const conteudo = String(m.conteudo || '').replace(/\s+/g, ' ').trim().slice(0, 180)
+      return `- ${origem}: ${conteudo}`
+    })
+    .join('\n')
+
+  return [
+    memoriaCliente ? `MEMORIA_CLIENTE:\n${memoriaCliente}` : 'MEMORIA_CLIENTE:\n(nenhuma)',
+    ultimasTrocas ? `ULTIMAS_TROCAS:\n${ultimasTrocas}` : 'ULTIMAS_TROCAS:\n(sem histórico recente)',
+    'REGRA: confirme contexto antes da resposta. Se houver conflito entre memória e dado real de ferramenta, prevalece dado real.',
+  ].join('\n\n')
+}
+
 const corrigirTextoPadraoPtBr = (texto = '') => {
   if (!texto) return texto
 
@@ -2574,7 +2656,7 @@ const ehRefinoDeHorarioSemConfirmacao = (textoNormalizado) => {
 }
 
 const responderSemFerramentas = async ({ mensagens, instrucoesAdicionais, systemPromptOverride, maxTokensOverride }) => {
-  if (!anthropic) return fallbackAleatorio()
+  if (!clienteLLMDisponivel) return fallbackAleatorio()
 
   const systemMsg = mensagens.find((m) => m.role === 'system')
   const system = systemPromptOverride || (instrucoesAdicionais ? `${systemMsg?.content || ''}\n\n${instrucoesAdicionais}` : systemMsg?.content || '')
@@ -2583,7 +2665,7 @@ const responderSemFerramentas = async ({ mensagens, instrucoesAdicionais, system
     .map((m) => ({ role: m.role === 'tool' ? 'user' : m.role, content: typeof m.content === 'string' ? m.content : JSON.stringify(m.content) }))
 
   const resposta = await anthropic.messages.create({
-    model: configIA.modeloAnthropic || configIA.modelo,
+    model: resolverModeloPrincipal({ complexo: false }),
     max_tokens: maxTokensOverride || configIA.maxTokens,
     system,
     messages: msgs.length > 0 ? msgs : [{ role: 'user', content: '.' }],
@@ -3451,7 +3533,7 @@ const processarMensagem = async (tenantId, clienteId, conversaId, mensagemClient
   const ultimaMensagemIANormalizada = normalizarTextoIntencao(ultimaMensagemIAVisivel?.conteudo || '')
   const ultimaMensagemClienteNormalizada = normalizarTextoIntencao(ultimaMensagemClienteVisivel?.conteudo || '')
   const iaPerguntouNomeNoTurnoAnterior = /como voce prefere ser chamado|qual o seu nome|como posso te chamar|com quem eu falo|nome completo/.test(ultimaMensagemIANormalizada)
-  const iaPerguntouDataNascimentoNoTurnoAnterior = /data de nascimento|dd\/mm\/aaaa|aniversario|aniversário/.test(ultimaMensagemIANormalizada)
+  const iaPerguntouDataNascimentoNoTurnoAnterior = ultimaIAPediuDataNascimento(ultimaMensagemIANormalizada)
   const contextoClienteAntesDoTurno = [
     ultimaMensagemClienteNormalizada,
     ...obterUltimosTextosClienteNormalizados(mensagens, 6),
@@ -3472,7 +3554,10 @@ const processarMensagem = async (tenantId, clienteId, conversaId, mensagemClient
   }
 
   const dataNascimentoDetectada = extrairDataNascimentoDaMensagem(mensagemCliente)
-  if (clienteSemDataNascimento && iaPerguntouDataNascimentoNoTurnoAnterior && dataNascimentoDetectada) {
+  const dataSozinhaEValida = Boolean(dataNascimentoDetectada) && pareceMensagemApenasDataNascimento(mensagemCliente)
+  const podeRegistrarDataNascimento = clienteSemDataNascimento && dataNascimentoDetectada
+    && (iaPerguntouDataNascimentoNoTurnoAnterior || dataSozinhaEValida)
+  if (podeRegistrarDataNascimento) {
     await clientesServico.atualizar(tenantId, clienteId, { dataNascimento: dataNascimentoDetectada }).catch(() => {})
     if (cliente) cliente.dataNascimento = dataNascimentoDetectada
     clienteSemDataNascimento = !clienteTemDataNascimentoConfiavel(cliente)
@@ -3525,6 +3610,8 @@ const processarMensagem = async (tenantId, clienteId, conversaId, mensagemClient
   // conversaEmAndamento = false quando é efetivamente o primeiro contato real com Don
   const systemPromptBase = await montarSystemPrompt(tenant, cliente, primeiroContato, mensagemCliente, mensagens.length > 0 && !soTemMsgInicialECard && !novaSessao)
   const systemPrompt = instrucaoEngine ? systemPromptBase + instrucaoEngine : systemPromptBase
+  const regraContextoObrigatorio = '\n\n[REGRA CRITICA DE CONTEXTO]\nAntes de responder, leia e use o bloco CONTEXTO_ESTRUTURADO_OBRIGATORIO enviado na mensagem do usuário. Nunca ignore esse bloco.'
+  const systemPromptEfetivo = `${systemPrompt}${regraContextoObrigatorio}`
 
   // Salva mensagem do cliente
   await banco.mensagem.create({
@@ -3541,20 +3628,30 @@ const processarMensagem = async (tenantId, clienteId, conversaId, mensagemClient
 
     if (clienteSemNomeConhecido) {
       const saudacaoApresentacao = obterSaudacaoPorHorario(mensagemAtualNormalizadaCadastro, tenant.timezone || 'America/Sao_Paulo')
+      const perguntasNomeSaudacao = [
+        `${saudacaoApresentacao}! Aqui é o ${NOME_IA}, da ${tenant.nome}. Como é teu nome?`,
+        `${saudacaoApresentacao}! ${NOME_IA} da ${tenant.nome} — com quem eu tô falando?`,
+        `${saudacaoApresentacao}! Sou o ${NOME_IA}, da ${tenant.nome}. Me diz como prefere ser chamado.`,
+      ]
+      const ixNome = new Date().getSeconds() % perguntasNomeSaudacao.length
       respostaCadastroObrigatorio = trouxeIntencaoObjetivaAgoraCadastro
-        ? `Consigo sim. Aqui é o ${NOME_IA}, da ${tenant.nome}. Antes de seguir, me passa seu nome completo pra eu deixar seu cadastro certinho.`
+        ? `Consigo sim. Aqui é o ${NOME_IA}, da ${tenant.nome}. Me passa teu nome completo pra eu cadastrar certinho e seguir.`
         : soCumprimentouAgoraCadastro
-          ? `${saudacaoApresentacao}! Aqui é o ${NOME_IA}, da ${tenant.nome}. Como posso te chamar por aí?`
-          : `Aqui é o ${NOME_IA}, da ${tenant.nome}. Antes de seguir, me passa seu nome completo pra eu deixar seu cadastro certinho.`
+          ? perguntasNomeSaudacao[ixNome]
+          : `Aqui é o ${NOME_IA}, da ${tenant.nome}. Me passa teu nome completo pra eu cadastrar e seguir.`
     } else if (clienteSemDataNascimento) {
       respostaCadastroObrigatorio = trouxeIntencaoObjetivaAgoraCadastro
-        ? 'Consigo sim. Antes de seguir, me passa sua data de nascimento no formato DD/MM/AAAA pra eu deixar seu aniversário salvo aqui.'
+        ? montarPerguntaDataNascimento(cliente?.nome || 'cliente', {
+            contexto: 'intencao_pendente',
+            tomDeVoz: tenant.tomDeVoz,
+          })
         : soCumprimentouAgoraCadastro
           ? montarPerguntaDataNascimento(cliente?.nome || 'cliente', {
               contexto: 'saudacao',
               saudacao: obterSaudacaoPorHorario(mensagemAtualNormalizadaCadastro, tenant.timezone || 'America/Sao_Paulo'),
+              tomDeVoz: tenant.tomDeVoz,
             })
-          : montarPerguntaDataNascimento(cliente?.nome || 'cliente')
+          : montarPerguntaDataNascimento(cliente?.nome || 'cliente', { tomDeVoz: tenant.tomDeVoz })
     }
 
     if (respostaCadastroObrigatorio) {
@@ -3786,11 +3883,15 @@ const processarMensagem = async (tenantId, clienteId, conversaId, mensagemClient
     ...mensagensContextoAnterior,
     ...mensagens,
   ]
+  const contextoEstruturado = montarContextoCurtoEstruturado({
+    cliente,
+    historico: historicoMensagens,
+  })
 
   // Normaliza mensagem antes de enviar ao LLM:
   // 1. CAPS LOCK → lowercase (evita confusão do modelo, preserva intenção)
   // 2. Abreviações BR comuns → forma completa (melhora reconhecimento de intenção)
-  const mensagemParaLLM = (() => {
+  const mensagemParaLLMBruta = (() => {
     let txt = mensagemCliente
     // CAPS: converte se > 60% dos chars alfabéticos são maiúsculos
     const letras = txt.replace(/[^a-zA-ZÀ-ú]/g, '')
@@ -3809,9 +3910,10 @@ const processarMensagem = async (tenantId, clienteId, conversaId, mensagemClient
       .replace(/\bq\b/gi, 'que')
     return txt
   })()
+  const mensagemParaLLM = `${mensagemParaLLMBruta}\n\n[CONTEXTO_ESTRUTURADO_OBRIGATORIO]\n${contextoEstruturado}\n[/CONTEXTO_ESTRUTURADO_OBRIGATORIO]`
 
   let mensagensIA = [
-    { role: 'system', content: systemPrompt },
+    { role: 'system', content: systemPromptEfetivo },
     ...historicoMensagens,
     { role: 'user', content: mensagemParaLLM },
   ]
@@ -3911,6 +4013,23 @@ const processarMensagem = async (tenantId, clienteId, conversaId, mensagemClient
       await banco.mensagem.create({ data: { conversaId, remetente: 'ia', conteudo: resgatePreLLM } })
       await banco.conversa.update({ where: { id: conversaId }, data: { atualizadoEm: new Date() } })
       return { resposta: resgatePreLLM, escalonado: false, encerrado: false }
+    }
+  }
+
+  // Mesmo resgate para frases naturais ("pode ser hoje", "amanhã cedo") após a IA pedir o dia — não depende de msg isolada
+  const iaPerguntouDia = /que dia|qual dia|em que dia|de que dia|dia em mente|tem (um|algum) dia|quando (voce|vc) (quer|pode) (vir|fazer|marcar)|vem (que|em que) dia|outro dia|qual (seria|e) o (dia|data)|prefere (um |outro )?dia|prefere hoje|dia (pra|para) (vir|fazer|marcar)/.test(ultimaMensagemIANormalizada)
+  if (!primeiroContato && iaPerguntouDia && obterDataDesejadaPeloContexto(mensagemNormalizada, mensagens, timeZone)) {
+    const resgateDiaColoquial = await montarRespostaResgateHorario({
+      tenant,
+      mensagens,
+      mensagemNormalizada,
+      clienteNome: extrairPrimeiroNome(cliente?.nome),
+      ultimaMensagemIANormalizada,
+    }).catch(() => null)
+    if (resgateDiaColoquial) {
+      await banco.mensagem.create({ data: { conversaId, remetente: 'ia', conteudo: resgateDiaColoquial } })
+      await banco.conversa.update({ where: { id: conversaId }, data: { atualizadoEm: new Date() } })
+      return { resposta: resgateDiaColoquial, escalonado: false, encerrado: false }
     }
   }
 
@@ -4014,10 +4133,10 @@ NUNCA corte a resposta no meio. Complete sempre a frase.`
     return { resposta: respostaFinal, escalonado: false, encerrado: false }
   }
 
-  if (!anthropic) {
+  if (!clienteLLMDisponivel) {
     respostaFinal = fallbackAleatorio()
     await banco.mensagem.create({
-      data: { conversaId, remetente: 'sistema', conteudo: 'IA indisponível: ANTHROPIC_API_KEY não configurada.' },
+      data: { conversaId, remetente: 'sistema', conteudo: 'IA indisponível: configure ANTHROPIC_API_KEY.' },
     }).catch(() => {})
     await banco.mensagem.create({
       data: { conversaId, remetente: 'ia', conteudo: respostaFinal },
@@ -4025,14 +4144,14 @@ NUNCA corte a resposta no meio. Complete sempre a frase.`
     return { resposta: respostaFinal, escalonado: false, encerrado: false }
   }
 
-  // Loop de tool_use (Anthropic Claude) — continua até o modelo retornar texto
+  // Loop de tool_use (Anthropic) — continua até o modelo retornar texto (teto evita laço infinito)
   let iteracoesTransicao = 0
-  const modeloEscolhido = usarModeloComplexo
-    ? (configIA.modeloAnthropicComplexo || configIA.modeloAnthropic || configIA.modelo)
-    : (configIA.modeloAnthropic || configIA.modelo)
+  let passosLoopFerramentas = 0
+  const LIMITE_PASSOS_LOOP_FERRAMENTAS = 12
+  const modeloEscolhido = resolverModeloPrincipal({ complexo: usarModeloComplexo })
 
   const todasMensagens = [...historicoMensagens]
-  const claudeMessagesRaw = []
+  const mensagensModeloRaw = []
 
   for (const m of todasMensagens) {
     if (m.remetente === 'sistema' || m.remetente.startsWith('nota_interna:')) continue
@@ -4063,7 +4182,7 @@ NUNCA corte a resposta no meio. Complete sempre a frase.`
           })
         }
 
-        if (content.length > 0) claudeMessagesRaw.push({ role: 'assistant', content })
+        if (content.length > 0) mensagensModeloRaw.push({ role: 'assistant', content })
       } catch {}
       continue
     }
@@ -4071,7 +4190,7 @@ NUNCA corte a resposta no meio. Complete sempre a frase.`
     if (m.remetente === 'tool_result') {
       try {
         const parsed = JSON.parse(m.conteudo)
-        claudeMessagesRaw.push({
+        mensagensModeloRaw.push({
           role: 'user',
           content: [{ type: 'tool_result', tool_use_id: parsed.tool_call_id, content: parsed.content }],
         })
@@ -4080,30 +4199,30 @@ NUNCA corte a resposta no meio. Complete sempre a frase.`
     }
 
     if (m.remetente === 'ia' || m.remetente.startsWith('humano:')) {
-      claudeMessagesRaw.push({ role: 'assistant', content: m.remetente.startsWith('humano:') ? `[Atendente]: ${m.conteudo}` : m.conteudo })
+      mensagensModeloRaw.push({ role: 'assistant', content: m.remetente.startsWith('humano:') ? `[Atendente]: ${m.conteudo}` : m.conteudo })
     } else {
-      claudeMessagesRaw.push({ role: 'user', content: m.conteudo })
+      mensagensModeloRaw.push({ role: 'user', content: m.conteudo })
     }
   }
 
-  const claudeMessagesLimpo = []
-  for (const m of claudeMessagesRaw) {
-    const ultimo = claudeMessagesLimpo[claudeMessagesLimpo.length - 1]
+  const mensagensModeloLimpas = []
+  for (const m of mensagensModeloRaw) {
+    const ultimo = mensagensModeloLimpas[mensagensModeloLimpas.length - 1]
     if (ultimo && ultimo.role === m.role && typeof ultimo.content === 'string' && typeof m.content === 'string') {
       ultimo.content += '\n' + m.content
     } else {
-      claudeMessagesLimpo.push({ ...m })
+      mensagensModeloLimpas.push({ ...m })
     }
   }
 
-  const ultimoRole = claudeMessagesLimpo.length > 0 ? claudeMessagesLimpo[claudeMessagesLimpo.length - 1].role : null
-  if (ultimoRole === 'user' && typeof claudeMessagesLimpo[claudeMessagesLimpo.length - 1].content === 'string') {
-    claudeMessagesLimpo[claudeMessagesLimpo.length - 1].content += '\n' + mensagemParaLLM
+  const ultimoRole = mensagensModeloLimpas.length > 0 ? mensagensModeloLimpas[mensagensModeloLimpas.length - 1].role : null
+  if (ultimoRole === 'user' && typeof mensagensModeloLimpas[mensagensModeloLimpas.length - 1].content === 'string') {
+    mensagensModeloLimpas[mensagensModeloLimpas.length - 1].content += '\n' + mensagemParaLLM
   } else {
-    claudeMessagesLimpo.push({ role: 'user', content: mensagemParaLLM })
+    mensagensModeloLimpas.push({ role: 'user', content: mensagemParaLLM })
   }
 
-  const validarHistoricoClaude = (msgs) => {
+  const validarHistoricoModelo = (msgs) => {
     let historicoValido = true
     const toolUseIds = new Set()
     const toolResultIds = new Set()
@@ -4144,7 +4263,7 @@ NUNCA corte a resposta no meio. Complete sempre a frase.`
 
     if (historicoValido && useOrfaos.length === 0 && resultOrfaos.length === 0) return msgs
 
-    console.warn(`[Claude] Histórico corrompido: ${useOrfaos.length} tool_use órfãos, ${resultOrfaos.length} tool_result órfãos. Usando histórico limpo.`)
+    console.warn(`[IA] Histórico corrompido: ${useOrfaos.length} tool_use órfãos, ${resultOrfaos.length} tool_result órfãos. Usando histórico limpo.`)
     return msgs
       .map((m) => {
         if (Array.isArray(m.content)) {
@@ -4159,15 +4278,18 @@ NUNCA corte a resposta no meio. Complete sempre a frase.`
       .filter(Boolean)
   }
 
-  let claudeMessages = validarHistoricoClaude(claudeMessagesLimpo)
+  let mensagensModelo = validarHistoricoModelo(mensagensModeloLimpas)
 
   while (true) {
-    const resposta = await anthropic.messages.create({
-      model: modeloEscolhido,
-      max_tokens: configIA.maxTokens,
-      system: systemPrompt,
-      tools: ferramentasClaude,
-      messages: claudeMessages,
+    if (passosLoopFerramentas >= LIMITE_PASSOS_LOOP_FERRAMENTAS) {
+      respostaFinal = 'Tive um atraso aqui para achar o melhor horário. Pode dizer o dia e se prefere manhã ou tarde?'
+      break
+    }
+    passosLoopFerramentas += 1
+    const resposta = await chamarLLMComFerramentas({
+      modelo: modeloEscolhido,
+      systemPrompt: systemPromptEfetivo,
+      mensagensModelo,
     })
 
     const toolUseBlocks = resposta.content.filter((bloco) => bloco.type === 'tool_use')
@@ -4175,7 +4297,7 @@ NUNCA corte a resposta no meio. Complete sempre a frase.`
     const textoRetornado = textBlocks.map((bloco) => bloco.text).join('\n').trim()
 
     if (toolUseBlocks.length > 0) {
-      claudeMessages.push({ role: 'assistant', content: resposta.content })
+      mensagensModelo.push({ role: 'assistant', content: resposta.content })
 
       for (const tu of toolUseBlocks) {
         await banco.mensagem.create({
@@ -4264,7 +4386,7 @@ NUNCA corte a resposta no meio. Complete sempre a frase.`
         }
       }
       if (respostaFinal) break
-      claudeMessages.push({ role: 'user', content: toolResults })
+      mensagensModelo.push({ role: 'user', content: toolResults })
       continue
     }
 
@@ -4273,8 +4395,8 @@ NUNCA corte a resposta no meio. Complete sempre a frase.`
 
     if (ehFraseTransicao && iteracoesTransicao < 2) {
       iteracoesTransicao++
-      claudeMessages.push({ role: 'assistant', content: textoRetornado })
-      claudeMessages.push({ role: 'user', content: '[Sistema: chame a ferramenta AGORA. NÃO escreva texto de transição.]' })
+      mensagensModelo.push({ role: 'assistant', content: textoRetornado })
+      mensagensModelo.push({ role: 'user', content: '[Sistema: chame a ferramenta AGORA. NÃO escreva texto de transição.]' })
       continue
     }
 
@@ -4294,13 +4416,24 @@ NUNCA corte a resposta no meio. Complete sempre a frase.`
     respostaFinal = 'Beleza! Qualquer coisa, só me chamar 👊'
   }
 
+  if (!String(respostaFinal || '').trim()) {
+    const resgateFim = await montarRespostaResgateHorario({
+      tenant,
+      mensagens,
+      mensagemNormalizada,
+      clienteNome: extrairPrimeiroNome(cliente?.nome),
+      ultimaMensagemIANormalizada,
+    }).catch(() => null)
+    respostaFinal = resgateFim || 'Tive um atraso aqui. Pode dizer de novo o dia e o que você quer fazer (corte, barba ou os dois)?'
+  }
+
   if (
     respostaFinal
     && ehRespostaCurtaComNome(mensagemCliente, iaPerguntouNomeNoTurnoAnterior)
   ) {
     const nomeCliente = cliente?.nome || mensagemCliente
     if (tenant.aniversarianteAtivo && !clienteTemDataNascimentoConfiavel(cliente)) {
-      respostaFinal = montarPerguntaDataNascimento(nomeCliente)
+      respostaFinal = montarPerguntaDataNascimento(nomeCliente, { tomDeVoz: tenant.tomDeVoz })
     } else {
       const respostaPosNome = haviaIntencaoObjetivaAntesDoNome
         ? await montarRespostaPosNomeComIntencaoPendente({
@@ -4314,10 +4447,7 @@ NUNCA corte a resposta no meio. Complete sempre a frase.`
     }
   }
 
-  if (
-    respostaFinal
-    && capturouDataNascimentoAgora
-  ) {
+  if (capturouDataNascimentoAgora) {
     const nomeClienteAtual = cliente?.nome || mensagemCliente
     const respostaPosCadastro = haviaIntencaoObjetivaAntesDoNome
       ? await montarRespostaPosNomeComIntencaoPendente({
@@ -4460,6 +4590,7 @@ NUNCA corte a resposta no meio. Complete sempre a frase.`
   }
 
   respostaFinal = corrigirTextoPadraoPtBr(respostaFinal)
+  respostaFinal = aplicarPoliticaResposta(respostaFinal, { maxLength: 420 })
 
   // Salva resposta final da IA (guarda nulo — evita crash quando LLM retorna vazio)
   if (respostaFinal != null) {
@@ -4488,10 +4619,10 @@ const simularConversa = async (tenantId, mensagem) => {
   const tenant = await banco.tenant.findUnique({ where: { id: tenantId } })
   const systemPrompt = await montarSystemPrompt(tenant, null, false, mensagem)
 
-  if (!anthropic) return { resposta: 'IA indisponível: ANTHROPIC_API_KEY não configurada.' }
+  if (!clienteLLMDisponivel) return { resposta: 'IA indisponível: configure ANTHROPIC_API_KEY.' }
 
   const resposta = await anthropic.messages.create({
-    model: configIA.modeloAnthropic || configIA.modelo,
+    model: resolverModeloPrincipal({ complexo: false }),
     max_tokens: 512,
     system: systemPrompt + '\n\nEsta é uma simulação de demonstração. Não execute ferramentas reais — apenas descreva o que faria em cada etapa.',
     messages: [{ role: 'user', content: mensagem }],

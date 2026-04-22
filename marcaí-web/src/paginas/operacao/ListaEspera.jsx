@@ -92,7 +92,7 @@ const ModalAdicionar = ({ onFechar, onSalvo }) => {
       <div className="bg-white rounded-2xl shadow-xl w-full max-w-md">
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-borda">
-          <h2 className="text-base font-semibold text-texto">Adicionar à Lista de Espera</h2>
+          <h2 className="text-base font-semibold text-texto">Adicionar à lista de espera</h2>
           <button
             onClick={onFechar}
             className="p-1.5 rounded-lg text-texto-sec hover:bg-fundo transition-colors"
@@ -265,7 +265,7 @@ const ListaEspera = () => {
             <Clock size={20} className="text-primaria" />
           </div>
           <div>
-            <h1 className="text-lg font-semibold text-texto">Lista de Espera</h1>
+            <h1 className="text-lg font-semibold text-texto">Lista de espera</h1>
             <p className="text-xs text-texto-sec">Clientes aguardando disponibilidade</p>
           </div>
         </div>

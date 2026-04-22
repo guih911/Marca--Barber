@@ -261,6 +261,7 @@ const PainelProfissional = ({ profissional, servicos, planoSolo = false, onFecha
               ))}
               <div>
                 <label className="block text-sm font-medium text-texto mb-1.5">Buffer entre atendimentos</label>
+                <p className="text-xs text-texto-sec mb-2">Folga para limpeza/organização entre um cliente e outro. Não é o mesmo que “adiar 30 min” no app: ali só muda aquele agendamento.</p>
                 <Select value={String(dados.bufferMinutos)} onValueChange={(v) => setDados((p) => ({ ...p, bufferMinutos: Number(v) }))}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>

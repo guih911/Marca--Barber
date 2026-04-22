@@ -9,6 +9,15 @@ const listar = async (req, res, next) => {
   }
 }
 
+const abrirPorCliente = async (req, res, next) => {
+  try {
+    const conversa = await conversasServico.abrirPorCliente(req.usuario.tenantId, req.params.clienteId)
+    res.json({ sucesso: true, dados: conversa })
+  } catch (erro) {
+    next(erro)
+  }
+}
+
 const buscarPorId = async (req, res, next) => {
   try {
     const conversa = await conversasServico.buscarPorId(req.usuario.tenantId, req.params.id)
@@ -82,4 +91,4 @@ const adicionarNota = async (req, res, next) => {
   }
 }
 
-module.exports = { listar, buscarPorId, enviarMensagem, assumir, devolver, encerrar, reabrir, adicionarNota }
+module.exports = { listar, abrirPorCliente, buscarPorId, enviarMensagem, assumir, devolver, encerrar, reabrir, adicionarNota }

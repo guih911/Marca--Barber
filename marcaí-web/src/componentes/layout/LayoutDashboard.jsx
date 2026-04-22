@@ -15,6 +15,7 @@ import {
 } from 'lucide-react'
 import Sidebar from './Sidebar'
 import api from '../../servicos/api'
+import useAuth from '../../hooks/useAuth'
 
 const titulos = {
   '/dashboard': 'Painel',
@@ -22,26 +23,15 @@ const titulos = {
   '/dashboard/mensagens': 'Mensagens',
   '/dashboard/agendamentos': 'Agendamentos',
   '/operacao/clientes': 'Clientes',
-  '/operacao/planos': 'Planos e Assinaturas',
-  '/operacao/fidelidade': 'Fidelidade',
-  '/operacao/estoque': 'Estoque',
-  '/operacao/comanda': 'Comanda Digital',
-  '/operacao/comissoes': 'Comissoes',
-  '/operacao/relatorios': 'Relatorios',
   '/config/profissionais': 'Profissionais',
   '/config/horarios': 'Horarios',
   '/config/negocio': 'Meu Negocio',
   '/config/servicos': 'Servicos',
-  '/config/pacotes': 'Pacotes e Combos',
   '/config/recursos': 'Recursos do Sistema',
   '/config/usuarios': 'Usuarios',
   '/config/integracoes': 'Integracoes',
-  '/config/ia': 'Configuracao da IA',
-  '/config/teste-ia': 'Teste da IA',
   '/operacao/caixa': 'Caixa',
-  '/operacao/entregas': 'Entregas',
-  '/operacao/lista-espera': 'Lista de Espera',
-  '/operacao/galeria': 'Galeria',
+  '/operacao/lista-espera': 'Lista de espera',
 }
 
 const subtitulos = {
@@ -50,26 +40,15 @@ const subtitulos = {
   '/dashboard/mensagens': 'Conversas dos clientes via WhatsApp',
   '/dashboard/agendamentos': 'Todos os agendamentos do seu negocio',
   '/operacao/clientes': 'Cadastro e historico dos seus clientes',
-  '/operacao/planos': 'Planos de assinatura e mensalidades',
-  '/operacao/fidelidade': 'Programa de pontos e recompensas',
-  '/operacao/estoque': 'Controle de produtos e insumos',
-  '/operacao/comanda': 'Adicione produtos e extras ao atendimento do dia',
-  '/operacao/comissoes': 'Comissoes e repasses dos profissionais',
-  '/operacao/relatorios': 'Analise financeira e de atendimentos',
   '/config/profissionais': 'Cadastro e gestao dos profissionais',
   '/config/horarios': 'Horarios de trabalho por profissional',
   '/config/servicos': 'Servicos avulsos e precos',
-  '/config/pacotes': 'Pacotes e combos de servicos',
   '/config/negocio': 'Dados e configuracoes da barbearia',
   '/config/recursos': 'Ative ou desative funcionalidades do sistema',
   '/config/usuarios': 'Usuarios com acesso ao painel',
   '/config/integracoes': 'Conecte o WhatsApp e outras integracoes',
-  '/config/ia': 'Configuracoes de comportamento e personalidade da IA',
-  '/config/teste-ia': 'Simule conversas para testar a IA',
   '/operacao/caixa': 'Controle de entradas e saidas financeiras',
-  '/operacao/entregas': 'Pedidos de produtos e acompanhamento das entregas',
-  '/operacao/lista-espera': 'Gerencie a fila de espera dos clientes',
-  '/operacao/galeria': 'Fotos dos trabalhos realizados',
+  '/operacao/lista-espera': 'Ordem de atendimento quando não há horário livre',
 }
 
 const itensNavegacaoMobile = [
@@ -148,6 +127,7 @@ const StatusWhatsApp = () => {
 }
 
 const LayoutDashboard = () => {
+  const { tenant } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
   const [compacto, setCompacto] = useState(() => {
@@ -176,7 +156,12 @@ const LayoutDashboard = () => {
   }, [])
 
   const titulo = titulos[location.pathname] || 'Marcai Barber'
-  const subtitulo = subtitulos[location.pathname] || ''
+  const planoSolo = tenant?.planoContratado === 'SOLO'
+  const baseSub = subtitulos[location.pathname] || ''
+  const subtitulo =
+    planoSolo && location.pathname === '/dashboard' && baseSub
+      ? `${baseSub} · Plano solo — foco no seu dia a dia`
+      : baseSub
 
   useEffect(() => {
     setMenuMobileAberto(false)
@@ -258,8 +243,11 @@ const LayoutDashboard = () => {
       </div>
 
       <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
-        <header ref={headerRef} className="safe-top shrink-0 border-b border-borda bg-white/95 backdrop-blur shadow-card">
-          <div className="flex items-center justify-between gap-3 px-3 py-3 md:px-6 md:py-3.5">
+        <header
+          ref={headerRef}
+          className="safe-top shrink-0 border-b border-black/[0.06] bg-white/85 backdrop-blur-xl shadow-header"
+        >
+          <div className="flex items-center justify-between gap-3 px-3 py-3.5 md:px-8 md:py-4 max-w-[1920px] mx-auto w-full">
             <div className="flex items-center gap-3 min-w-0">
               <button
                 onClick={() => setMenuMobileAberto(true)}
@@ -278,9 +266,15 @@ const LayoutDashboard = () => {
               </button>
 
               <div className="min-w-0 max-w-2xl">
-                <h1 className="text-[15px] font-semibold text-texto truncate">{titulo}</h1>
-                {subtitulo && <p className="text-[11px] text-texto-sec hidden md:block whitespace-nowrap">{subtitulo}</p>}
-                {subtituloCurto && <p className="text-[11px] text-texto-sec md:hidden truncate">{subtituloCurto}</p>}
+                <h1 className="text-[15px] md:text-base font-bold text-neutral-900 tracking-tight truncate">{titulo}</h1>
+                {subtitulo && (
+                  <p className="text-[11px] md:text-xs text-texto-sec font-medium hidden md:block whitespace-nowrap tracking-wide">
+                    {subtitulo}
+                  </p>
+                )}
+                {subtituloCurto && (
+                  <p className="text-[11px] text-texto-sec font-medium md:hidden truncate">{subtituloCurto}</p>
+                )}
               </div>
             </div>
 
@@ -301,38 +295,44 @@ const LayoutDashboard = () => {
         </header>
 
         <main className="flex-1 min-h-0 overflow-y-auto overscroll-contain">
-          <div className="px-3 pb-[calc(5.5rem+env(safe-area-inset-bottom))] pt-3 md:p-6 md:pb-6 animate-fade-in">
+          <div className="px-3 pb-[calc(6rem+env(safe-area-inset-bottom))] pt-4 md:px-8 md:py-8 md:pb-8 max-w-[1920px] mx-auto w-full animate-fade-in">
             <Outlet />
           </div>
         </main>
       </div>
 
-      <nav className="safe-bottom fixed inset-x-0 bottom-0 z-30 border-t border-borda bg-white/95 backdrop-blur md:hidden">
-        <div className="grid grid-cols-5 gap-1 px-2 py-2">
-          {itensNavegacaoMobile.map((item) => {
-            const ativo = rotaAtiva(item.rota)
-            const Icone = item.icone
-            return (
-              <button
-                key={item.rota}
-                onClick={() => navigate(item.rota)}
-                className={`flex flex-col items-center justify-center gap-1 rounded-2xl px-2 py-2.5 text-[11px] font-medium transition-colors ${
-                  ativo ? 'bg-primaria-clara text-primaria' : 'text-texto-sec hover:bg-fundo'
-                }`}
-              >
-                <Icone size={18} />
-                <span>{item.label}</span>
-              </button>
-            )
-          })}
+      <nav className="safe-bottom fixed inset-x-0 bottom-0 z-30 md:hidden pointer-events-none pb-[max(0.5rem,env(safe-area-inset-bottom))]">
+        <div className="pointer-events-auto mx-2.5 mb-1.5 rounded-[22px] border border-black/[0.06] bg-white/90 backdrop-blur-xl shadow-nav">
+          <div className="grid grid-cols-5 gap-0.5 px-1.5 py-2">
+            {itensNavegacaoMobile.map((item) => {
+              const ativo = rotaAtiva(item.rota)
+              const Icone = item.icone
+              return (
+                <button
+                  key={item.rota}
+                  onClick={() => navigate(item.rota)}
+                  type="button"
+                  className={`flex flex-col items-center justify-center gap-0.5 rounded-xl px-1.5 py-2 min-h-[52px] text-[10px] font-semibold transition-all active:scale-[0.98] ${
+                    ativo
+                      ? 'bg-gradient-to-b from-primaria-clara to-white text-primaria shadow-sm'
+                      : 'text-texto-sec hover:bg-fundo/80'
+                  }`}
+                >
+                  <Icone size={20} strokeWidth={ativo ? 2.25 : 2} />
+                  <span className="leading-tight">{item.label}</span>
+                </button>
+              )
+            })}
 
-          <button
-            onClick={() => setMenuMobileAberto(true)}
-            className="flex flex-col items-center justify-center gap-1 rounded-2xl px-2 py-2.5 text-[11px] font-medium text-texto-sec hover:bg-fundo transition-colors"
-          >
-            <Menu size={18} />
-            <span>Menu</span>
-          </button>
+            <button
+              type="button"
+              onClick={() => setMenuMobileAberto(true)}
+              className="flex flex-col items-center justify-center gap-0.5 rounded-xl px-1.5 py-2 min-h-[52px] text-[10px] font-semibold text-texto-sec hover:bg-fundo/80 transition-all active:scale-[0.98]"
+            >
+              <Menu size={20} strokeWidth={2} />
+              <span className="leading-tight">Menu</span>
+            </button>
+          </div>
         </div>
       </nav>
     </div>

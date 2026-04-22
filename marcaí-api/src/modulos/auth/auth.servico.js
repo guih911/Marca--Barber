@@ -78,6 +78,7 @@ const cadastrar = async ({ nome, email, senha }) => {
       tenantId: resultado.tenant.id,
       perfil: resultado.usuario.perfil,
       onboardingCompleto: resultado.tenant.onboardingCompleto,
+      planoContratado: resultado.tenant.planoContratado || 'SALAO',
     },
   }
 }
@@ -115,6 +116,7 @@ const login = async ({ email, senha }) => {
       tenantId: usuario.tenantId,
       perfil: usuario.perfil,
       onboardingCompleto: usuario.tenant.onboardingCompleto,
+      planoContratado: usuario.tenant.planoContratado || 'SALAO',
     },
   }
 }
@@ -192,6 +194,7 @@ const loginOuCadastrarGoogle = async ({ googleId, email, nome, avatarUrl }) => {
       tenantId: usuario.tenantId,
       perfil: usuario.perfil,
       onboardingCompleto: usuario.tenant.onboardingCompleto,
+      planoContratado: usuario.tenant.planoContratado || 'SALAO',
     },
   }
 }
@@ -245,6 +248,7 @@ const loginOuCadastrarFacebook = async ({ facebookId, email, nome, avatarUrl }) 
       tenantId: usuario.tenantId,
       perfil: usuario.perfil,
       onboardingCompleto: usuario.tenant.onboardingCompleto,
+      planoContratado: usuario.tenant.planoContratado || 'SALAO',
     },
   }
 }
@@ -325,6 +329,7 @@ const buscarMeuPerfil = async ({ usuarioId, tenantId }) => {
     tenantId: usuario.tenantId,
     perfil: usuario.perfil,
     onboardingCompleto: usuario.tenant.onboardingCompleto,
+    planoContratado: usuario.tenant.planoContratado || 'SALAO',
   }
 }
 

@@ -69,6 +69,7 @@ const atualizar = async (tenantId, dados) => {
   if (dados.membershipsAtivo !== undefined) campos.membershipsAtivo = Boolean(dados.membershipsAtivo)
   if (dados.galeriaAtivo !== undefined) campos.galeriaAtivo = Boolean(dados.galeriaAtivo)
   if (dados.listaEsperaAtivo !== undefined) campos.listaEsperaAtivo = Boolean(dados.listaEsperaAtivo)
+  if (dados.filaEncaixeAutomaticoAtivo !== undefined) campos.filaEncaixeAutomaticoAtivo = Boolean(dados.filaEncaixeAutomaticoAtivo)
   if (dados.caixaAtivo !== undefined) campos.caixaAtivo = Boolean(dados.caixaAtivo)
   if (dados.planoContratado !== undefined) campos.planoContratado = normalizarPlanoContratado(dados.planoContratado)
   if (dados.cicloCobranca !== undefined) campos.cicloCobranca = normalizarCicloCobranca(dados.cicloCobranca)

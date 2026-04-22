@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Manrope:wght@400;500;600;700;800&display=swap');
+/* Tipografia carregada no index.html (Plus Jakarta + Bebas) */
 
 @tailwind base;
 @tailwind components;
@@ -25,7 +25,7 @@
     --border: 28 26% 84%;
     --input: 28 26% 84%;
     --ring: 33 43% 51%;
-    --radius: 0.9rem;
+    --radius: 1rem;
   }
 
   * {
@@ -35,20 +35,20 @@
 
   html {
     height: 100%;
-    font-family: 'Manrope', system-ui, sans-serif;
+    font-family: 'Plus Jakarta Sans', system-ui, sans-serif;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     text-rendering: optimizeLegibility;
-    background: #f6f1ea;
+    background: #f3efe8;
   }
 
   body {
     min-height: 100%;
     @apply bg-fundo text-texto;
     background-image:
-      radial-gradient(circle at top left, rgba(184, 137, 77, 0.08), transparent 28%),
-      radial-gradient(circle at top right, rgba(17, 17, 17, 0.05), transparent 22%),
-      linear-gradient(180deg, #faf5ef 0%, #f6f1ea 100%);
+      radial-gradient(1200px 600px at 10% -10%, rgba(184, 137, 77, 0.1), transparent 55%),
+      radial-gradient(800px 400px at 100% 0%, rgba(17, 17, 17, 0.04), transparent 50%),
+      linear-gradient(180deg, #faf7f2 0%, #f4efe8 50%, #f0ebe3 100%);
     overscroll-behavior-y: none;
   }
 
@@ -85,7 +85,7 @@
 
 @layer components {
   .card {
-    @apply bg-white rounded-2xl border border-borda shadow-card;
+    @apply bg-white rounded-2xl border border-borda shadow-card-md;
   }
 
   .input-base {

@@ -65,12 +65,12 @@ export const formatarDuracao = (minutos) => {
 }
 
 export const statusAgendamento = {
-  AGENDADO:        { label: 'Pendente confirmação', cor: 'bg-blue-100 text-blue-800' },
-  CONFIRMADO:      { label: 'Confirmado',           cor: 'bg-yellow-100 text-yellow-800' },
-  CONCLUIDO:       { label: 'Concluído',            cor: 'bg-green-100 text-green-700' },
-  CANCELADO:       { label: 'Cancelado',            cor: 'bg-red-100 text-red-700' },
-  NAO_COMPARECEU:  { label: 'Não compareceu',       cor: 'bg-orange-100 text-orange-800' },
-  REMARCADO:       { label: 'Remarcado',            cor: 'bg-purple-100 text-purple-700' },
+  AGENDADO: { label: 'Pendente confirmação', cor: 'bg-info/15 text-info border border-info/30' },
+  CONFIRMADO: { label: 'Confirmado', cor: 'bg-alerta/15 text-alerta border border-alerta/30' },
+  CONCLUIDO: { label: 'Concluído', cor: 'bg-sucesso/15 text-sucesso border border-sucesso/30' },
+  CANCELADO: { label: 'Cancelado', cor: 'bg-perigo/15 text-perigo border border-perigo/30' },
+  NAO_COMPARECEU: { label: 'Não compareceu', cor: 'bg-[#B45309]/15 text-[#B45309] border border-[#B45309]/25' },
+  REMARCADO: { label: 'Remarcado', cor: 'bg-[#7E22CE]/15 text-[#7E22CE] border border-[#7E22CE]/25' },
 }
 
 export const segmentos = [

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { useLocation } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { Search, Send, UserCheck, Bot, Phone, Mail, Pin, StickyNote, Mic, Paperclip, MoreVertical, MessageSquare, X, RotateCcw, CheckCheck, Clock, Star, PanelRightOpen, PanelRightClose, ArrowLeft, Link2 } from 'lucide-react'
 import api from '../../servicos/api'
 import { formatarData, formatarHora, cn, obterIniciais, formatarTelefone, statusAgendamento, normalizarTextoCorrompido } from '../../lib/utils'
@@ -375,6 +375,7 @@ const PainelCliente = ({ conversa, className = '' }) => {
 const Mensagens = () => {
   const { tenant } = useAuth()
   const location = useLocation()
+  const navigate = useNavigate()
   const [conversas, setConversas] = useState([])
   const [conversaSelecionada, setConversaSelecionada] = useState(null)
   const [mensagens, setMensagens] = useState([])
@@ -417,16 +418,42 @@ const Mensagens = () => {
   }, [])
 
   useEffect(() => {
-    if (conversaSelecionada || conversas.length === 0 || location.state?.telefone) return
+    if (conversaSelecionada || conversas.length === 0 || location.state?.telefone || location.state?.clienteId) return
     if (typeof window !== 'undefined' && window.innerWidth >= 768) {
       selecionarConversa(conversas[0])
     }
   }, [conversas]) // eslint-disable-line
 
+  // Abre conversa do cliente (cria vazia se ainda não existir) vindo de cadastro de clientes, etc.
+  useEffect(() => {
+    const clienteId = location.state?.clienteId
+    if (!clienteId) return
+    let cancelado = false
+    ;(async () => {
+      try {
+        const res = await api.get(`/api/conversas/por-cliente/${clienteId}`)
+        if (cancelado || !res.dados?.id) return
+        await carregarConversas()
+        setConversaSelecionada(res.dados)
+        setMensagens(res.dados.mensagens || [])
+        navigate('/dashboard/mensagens', { replace: true, state: {} })
+      } catch (e) {
+        if (!cancelado) {
+          toast(e?.erro?.mensagem || e?.message || 'Não foi possível abrir a conversa com este cliente.', 'erro')
+        }
+        navigate('/dashboard/mensagens', { replace: true, state: {} })
+      }
+    })()
+    return () => {
+      cancelado = true
+    }
+  }, [location.state?.clienteId, navigate]) // eslint-disable-line react-hooks/exhaustive-deps
+
   // Auto-seleciona conversa ao navegar de outro módulo com telefone
   useEffect(() => {
     const telAlvo = location.state?.telefone
     if (!telAlvo || conversaSelecionada || conversas.length === 0) return
+    if (location.state?.clienteId) return
     const normalizar = (t) => (t || '').replace(/\D/g, '')
     const match = conversas.find((c) => normalizar(c.cliente?.telefone) === normalizar(telAlvo))
     if (match) {
@@ -779,6 +806,17 @@ const Mensagens = () => {
               )}
             </div>
           </div>
+
+          {!ehEncerrada && (
+            <div className="shrink-0 px-3 md:px-5 py-2.5 border-b border-amber-200/90 bg-gradient-to-r from-amber-50/95 to-amber-50/40">
+              <p className="text-[12px] text-texto leading-relaxed">
+                <span className="font-semibold text-amber-950">Sugestão: </span>
+                {ehEscalonada
+                  ? 'Responda o cliente abaixo. Se ele só quiser marcar, use Enviar link.'
+                  : 'A IA conduz a conversa. Use Assumir se precisar falar com ele agora.'}
+              </p>
+            </div>
+          )}
 
           {/* Mensagens */}
           <div ref={containerChat} className="flex-1 min-h-0 overflow-y-auto p-3 md:p-5 bg-fundo/60">

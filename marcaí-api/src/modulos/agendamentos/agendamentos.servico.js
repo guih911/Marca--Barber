@@ -236,7 +236,7 @@ const criar = async (tenantId, dados) => {
   const duracao = profServico?.duracaoCustom || servico.duracaoMinutos
   const inicioEm = new Date(dados.inicio)
   const fimEm = adicionarMinutos(inicioEm, duracao)
-  const toleranciaPassadoMs = dados.walkin ? 5 * 60 * 1000 : 0
+  const toleranciaPassadoMs = dados.walkin || dados.encaixeFila ? 5 * 60 * 1000 : 0
 
   // CRÍTICO: Não permite agendamento no passado
   if (inicioEm.getTime() < (Date.now() - toleranciaPassadoMs)) {
@@ -329,7 +329,7 @@ const criar = async (tenantId, dados) => {
       profissionalId: dados.profissionalId,
       duracaoMinutos: duracao,
       inicioEm,
-      ignorarAntecedenciaMinima: Boolean(dados.walkin),
+      ignorarAntecedenciaMinima: Boolean(dados.walkin || dados.encaixeFila),
     })
 
     // Walk-in também verifica conflito — cliente presencialmente não justifica dupla agenda
@@ -397,7 +397,9 @@ const criar = async (tenantId, dados) => {
     // - WHATSAPP: a IA já confirma diretamente na conversa
     // - LINK_PUBLICO: public.controlador.js envia a confirmação com formato próprio
     // - walkin: envia mensagem pós-visita (abaixo)
-    if (dados.origem !== 'WHATSAPP' && dados.origem !== 'LINK_PUBLICO' && !dados.walkin) {
+    if (dados.encaixeFila) {
+      notificarClienteConfirmacao(tenantId, ag)
+    } else if (dados.origem !== 'WHATSAPP' && dados.origem !== 'LINK_PUBLICO' && !dados.walkin) {
       notificarClienteConfirmacao(tenantId, ag)
     }
     // Walk-in: envia mensagem pós-visita com link de agendamento futuro

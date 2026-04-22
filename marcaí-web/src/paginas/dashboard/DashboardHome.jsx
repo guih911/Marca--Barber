@@ -1,15 +1,13 @@
 ﻿import { useEffect, useState } from 'react'
 import {
   Calendar, TrendingUp, CheckCircle2, Clock, ArrowRight, DollarSign, Star,
-  Users, Target, BadgeDollarSign, MessageSquare, Gift,
+  Users, Target, BadgeDollarSign, MessageSquare,
 } from 'lucide-react'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import { Link } from 'react-router-dom'
 import api from '../../servicos/api'
 import { formatarHora, statusAgendamento, formatarPercentual } from '../../lib/utils'
 import useAuth from '../../hooks/useAuth'
-import { useToast } from '../../contextos/ToastContexto'
-
 const formatarReais = (centavos) => {
   if (centavos == null) return '—'
   return (centavos / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
@@ -159,13 +157,12 @@ const BlocoBi = ({ titulo, subtitulo, oculto, children }) => {
 
 const DashboardHome = () => {
   const { tenant } = useAuth()
-  const toast = useToast()
+  const planoSolo = tenant?.planoContratado === 'SOLO'
   const [metricas, setMetricas] = useState(null)
   const [financeiro, setFinanceiro] = useState(null)
   const [operacional, setOperacional] = useState(null)
   const [grafico, setGrafico] = useState([])
   const [proximosAgendamentos, setProximosAgendamentos] = useState([])
-  const [aniversariantes, setAniversariantes] = useState([])
   const [ocupacao, setOcupacao] = useState({ carregando: true, disponivel: true, dados: null })
   const [retencao, setRetencao] = useState({ carregando: true, disponivel: true, dados: null })
   const [noShow, setNoShow] = useState({ carregando: true, disponivel: true, dados: null })
@@ -211,14 +208,12 @@ const DashboardHome = () => {
     carregarOpcional('/api/dashboard/ocupacao', setOcupacao)
     carregarOpcional('/api/dashboard/retencao', setRetencao)
     carregarOpcional('/api/dashboard/no-show-profissional', setNoShow)
-    api.get('/api/clientes/aniversariantes').then(res => setAniversariantes(res.dados || [])).catch(() => {})
 
     const intervalo = setInterval(() => {
       carregarDados()
       carregarOpcional('/api/dashboard/ocupacao', setOcupacao)
       carregarOpcional('/api/dashboard/retencao', setRetencao)
       carregarOpcional('/api/dashboard/no-show-profissional', setNoShow)
-      api.get('/api/clientes/aniversariantes').then(res => setAniversariantes(res.dados || [])).catch(() => {})
     }, 60000)
 
     return () => clearInterval(intervalo)
@@ -298,25 +293,7 @@ const DashboardHome = () => {
       icone: Users,
       cor: 'bg-teal-500',
     },
-    tenant?.membershipsAtivo
-      ? {
-          titulo: 'Plano mensal',
-          subtitulo: 'Cobranças, ativações e créditos',
-          rota: '/operacao/planos',
-          icone: BadgeDollarSign,
-          cor: 'bg-emerald-500',
-        }
-      : null,
-    (tenant?.fidelidadeAtivo || tenant?.aniversarianteAtivo)
-      ? {
-          titulo: tenant?.fidelidadeAtivo ? 'Fidelidade' : 'Aniversário',
-          subtitulo: tenant?.fidelidadeAtivo ? 'Resgates, retenção e benefício de aniversário' : 'Parabéns automático e benefício de aniversário',
-          rota: '/operacao/fidelidade',
-          icone: Gift,
-          cor: 'bg-orange-500',
-        }
-      : null,
-  ].filter(Boolean)
+  ]
 
   const cardsOperacionais = [
     {
@@ -370,84 +347,32 @@ const DashboardHome = () => {
         </div>
       ),
     },
-    operacional?.fidelidade?.disponivel
-      ? {
-          chave: 'fidelidade',
-          titulo: 'Resgates prontos',
-          subtitulo: 'Clientes que já podem usar o benefício',
-          total: operacional?.fidelidade?.total ?? 0,
-          rota: '/operacao/fidelidade',
-          cta: 'Abrir fidelidade',
-          icone: Gift,
-          cor: 'bg-orange-500',
-          itens: operacional?.fidelidade?.itens || [],
-          vazio: 'Ainda não há clientes aptos para resgate. Continue empurrando retorno e recorrência.',
-          renderItem: (item) => (
-            <div key={item.clienteId} className="rounded-2xl border border-borda px-4 py-3">
-              <div className="flex items-center justify-between gap-3">
-                <div className="min-w-0">
-                  <p className="text-sm font-semibold text-texto truncate">{nomeCliente(item.cliente)}</p>
-                  <p className="text-xs text-texto-sec truncate">
-                    Benefício: {operacional?.fidelidade?.config?.descricaoResgate || 'Resgate disponível'}
-                  </p>
-                </div>
-                <span className="text-xs font-semibold text-orange-600 shrink-0">{item.pontos} pts</span>
-              </div>
-            </div>
-          ),
-        }
-      : null,
-    operacional?.assinaturas?.disponivel
-      ? {
-          chave: 'assinaturas',
-          titulo: 'Planos para cobrar',
-          subtitulo: 'Assinaturas vencendo ou já atrasadas',
-          total: operacional?.assinaturas?.total ?? 0,
-          rota: '/operacao/planos',
-          cta: 'Abrir plano mensal',
-          icone: BadgeDollarSign,
-          cor: 'bg-emerald-500',
-          itens: operacional?.assinaturas?.itens || [],
-          vazio: 'Nenhuma cobrança urgente no plano mensal. Carteira saudável nesta janela.',
-          renderItem: (item) => (
-            <div key={item.id} className="rounded-2xl border border-borda px-4 py-3">
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <p className="text-sm font-semibold text-texto truncate">{nomeCliente(item.cliente)}</p>
-                  <p className="text-xs text-texto-sec truncate">{item.planoAssinatura?.nome || 'Plano mensal'}</p>
-                </div>
-                <div className="text-right shrink-0">
-                  <p className="text-xs font-semibold text-texto">{formatarDataCurta(item.proximaCobrancaEm)}</p>
-                  <p className="text-xs text-emerald-600">{item.situacaoPagamento?.descricao || 'Cobrança próxima'}</p>
-                </div>
-              </div>
-            </div>
-          ),
-        }
-      : null,
-  ].filter(Boolean)
+  ]
 
   return (
     <div className="space-y-4">
       {/* Card em destaque — Faturamento do dia (visível de longe) */}
-      <div className="bg-gradient-to-br from-emerald-500 to-emerald-600 rounded-3xl p-6 text-white shadow-lg">
+      <div className="bg-gradient-to-br from-sidebar to-primaria-escura rounded-3xl p-6 text-white shadow-lg">
         <div className="flex items-center justify-between">
           <div>
-            <p className="text-emerald-100 text-sm font-medium mb-1">Faturamento Hoje</p>
+            {planoSolo && (
+              <p className="text-white/80 text-xs font-semibold uppercase tracking-widest mb-1">Hoje</p>
+            )}
+            <p className="text-primaria-brilho/90 text-sm font-medium mb-1">Faturamento Hoje</p>
             <p className="text-4xl md:text-5xl font-bold tracking-tight">
               {formatarReais(financeiro?.receitaHojeCentavos)}
             </p>
-            <p className="text-emerald-100 text-sm mt-2">
+            <p className="text-white/80 text-sm mt-2">
               {financeiro?.atendimentosConcluidos ?? 0} atendimento{(financeiro?.atendimentosConcluidos ?? 0) !== 1 ? 's' : ''} · Ticket médio {formatarReais(financeiro?.ticketMedioCentavos)}
             </p>
           </div>
           <div className="hidden sm:flex flex-col items-end gap-1">
-            <div className="bg-white/20 rounded-xl px-4 py-2 text-center">
-              <p className="text-xs text-emerald-100">Hoje</p>
+            <div className="bg-white/15 rounded-xl px-4 py-2 text-center">
+              <p className="text-xs text-white/75">Hoje</p>
               <p className="text-lg font-bold">{metricas?.agendamentosHoje ?? 0}</p>
             </div>
-            <div className="bg-white/20 rounded-xl px-4 py-2 text-center">
-              <p className="text-xs text-emerald-100">Próximo</p>
+            <div className="bg-white/15 rounded-xl px-4 py-2 text-center">
+              <p className="text-xs text-white/75">Próximo</p>
               <p className="text-lg font-bold">{metricas?.proximoAgendamento ? formatarHora(metricas.proximoAgendamento.inicioEm) : '—'}</p>
             </div>
           </div>
@@ -487,8 +412,14 @@ const DashboardHome = () => {
         />
       </div>
 
-      {/* Linha 2 — Métricas secundárias (visão semanal) */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+      {/* Linha 2 — Métricas secundárias (visão semanal; no solo, menos cartões) */}
+      <div
+        className={
+          planoSolo
+            ? 'grid grid-cols-1 sm:grid-cols-2 gap-4'
+            : 'grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4'
+        }
+      >
         <CardMetricaCompacto
           titulo="Agendamentos na Semana"
           valor={metricas?.agendamentosSemana}
@@ -501,70 +432,41 @@ const DashboardHome = () => {
           icone={TrendingUp}
           cor="bg-teal-500"
         />
-        <CardMetricaCompacto
-          titulo="Receita Prevista"
-          valor={formatarReais(financeiro?.receitaAgendadaCentavos)}
-          icone={Calendar}
-          cor="bg-[#8c6239]"
-          subtitulo="Agendados/Confirmados"
-        />
-        <CardMetricaCompacto
-          titulo="Ticket Médio"
-          valor={formatarReais(financeiro?.ticketMedioCentavos)}
-          icone={Star}
-          cor="bg-orange-500"
-          subtitulo={`No-show: ${financeiro?.taxaNaoCompareceu ?? 0}%`}
-        />
+        {!planoSolo && (
+          <>
+            <CardMetricaCompacto
+              titulo="Receita Prevista"
+              valor={formatarReais(financeiro?.receitaAgendadaCentavos)}
+              icone={Calendar}
+              cor="bg-[#8c6239]"
+              subtitulo="Agendados/Confirmados"
+            />
+            <CardMetricaCompacto
+              titulo="Ticket Médio"
+              valor={formatarReais(financeiro?.ticketMedioCentavos)}
+              icone={Star}
+              cor="bg-orange-500"
+              subtitulo={`No-show: ${financeiro?.taxaNaoCompareceu ?? 0}%`}
+            />
+          </>
+        )}
       </div>
-
-      {aniversariantes.length > 0 && (
-        <div className="bg-gradient-to-r from-pink-50 to-rose-50 border border-pink-200 rounded-2xl p-4 shadow-sm">
-          <div className="flex items-center gap-2 mb-3">
-            <span className="text-xl">🎂</span>
-            <h3 className="font-semibold text-texto text-sm">Aniversariantes da semana</h3>
-            <span className="ml-auto text-xs text-pink-600 font-medium bg-pink-100 px-2 py-0.5 rounded-full">{aniversariantes.length}</span>
-          </div>
-          <div className="space-y-2">
-            {aniversariantes.map(c => {
-              const hoje = new Date()
-              const ehHoje = c.mes === (hoje.getMonth() + 1) && c.dia === hoje.getDate()
-              return (
-                <div key={c.id} className="flex items-center justify-between gap-2 bg-white rounded-xl px-3 py-2 border border-pink-100">
-                  <div>
-                    <p className="text-sm font-medium text-texto">{c.nome}</p>
-                    <p className="text-xs text-texto-sec">
-                      {ehHoje ? '🎉 Hoje!' : `${String(c.dia).padStart(2,'0')}/${String(c.mes).padStart(2,'0')}`}
-                    </p>
-                  </div>
-                  <button
-                    onClick={() => {
-                      const tel = (c.telefone || '').replace(/\D/g, '')
-                      if (tel) {
-                        window.open(`https://wa.me/${tel.startsWith('55') ? tel : '55' + tel}?text=${encodeURIComponent(`Feliz aniversário, ${c.nome.split(' ')[0]}! 🎉 A equipe da barbearia deseja um dia incrível! Que tal comemorar com um visual novo? 💈`)}`, '_blank')
-                      } else {
-                        toast('Cliente sem telefone cadastrado.', 'aviso')
-                      }
-                    }}
-                    className="text-xs px-3 py-1.5 bg-pink-500 hover:bg-pink-600 text-white rounded-lg font-medium transition-colors whitespace-nowrap"
-                  >
-                    🎁 Parabéns
-                  </button>
-                </div>
-              )
-            })}
-          </div>
-        </div>
-      )}
 
       <section className="bg-white rounded-3xl border border-borda p-5 shadow-sm">
         <div className="flex items-start justify-between gap-3 mb-4">
           <div>
-            <h2 className="text-base font-semibold text-texto">Ações rápidas do barbeiro</h2>
-            <p className="text-sm text-texto-sec">Entradas diretas para o que mais gira operação, venda e atendimento.</p>
+            <h2 className="text-base font-semibold text-texto">
+              {planoSolo ? 'Ações rápidas' : 'Ações rápidas do barbeiro'}
+            </h2>
+            <p className="text-sm text-texto-sec">
+              {planoSolo
+                ? 'Atalhos para o que você usa no dia a dia.'
+                : 'Entradas diretas para o que mais gira operação, venda e atendimento.'}
+            </p>
           </div>
           <BadgeDollarSign size={16} className="text-primaria" />
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-3 items-stretch">
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 items-stretch">
           {atalhosRapidos.map((atalho) => (
             <CardAtalho key={atalho.rota} {...atalho} />
           ))}
@@ -574,9 +476,11 @@ const DashboardHome = () => {
       <section className="space-y-3">
         <div className="flex items-start justify-between gap-3">
           <div>
-            <h2 className="text-base font-semibold text-texto">Central do Barbeiro</h2>
+            <h2 className="text-base font-semibold text-texto">{planoSolo ? 'Seu dia' : 'Central do Barbeiro'}</h2>
             <p className="text-sm text-texto-sec">
-              Prioridades do dia para atendimento, confirmação e recorrência.
+              {planoSolo
+                ? 'Confirmações, fila e o que precisa da sua mão agora.'
+                : 'Prioridades do dia para atendimento, confirmação e recorrência.'}
               {operacional?.resumo?.pendenciasCriticas
                 ? ` ${operacional.resumo.pendenciasCriticas} ponto(s) pedindo atenção agora.`
                 : ' Tudo sob controle neste momento.'}
@@ -593,7 +497,7 @@ const DashboardHome = () => {
         </div>
       </section>
 
-      {financeiro?.topProfissionais?.length > 0 && (
+      {financeiro?.topProfissionais?.length > 0 && !planoSolo && (
         <div className="bg-white rounded-2xl border border-borda p-5 shadow-sm">
           <h2 className="text-base font-semibold text-texto mb-4">Top Profissionais - Semana</h2>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -751,7 +655,7 @@ const DashboardHome = () => {
         <BlocoBi
           titulo="No-show por profissional"
           subtitulo="Mostra quem precisa de atenção comercial e operacional"
-          oculto={!bannerNoShow}
+          oculto={!bannerNoShow || planoSolo}
         >
           {noShow?.carregando ? (
             <div className="h-28 animate-pulse rounded-2xl bg-fundo" />

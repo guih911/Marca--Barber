@@ -59,7 +59,7 @@ const salvarMensagemNaConversa = async (tenantId, clienteId, mensagem) => {
     })
     if (!conversa) {
       conversa = await banco.conversa.findFirst({
-        where: { tenantId, clienteId, status: { not: 'CANCELADA' }, atualizadoEm: { gte: limite48h } },
+        where: { tenantId, clienteId, status: { not: 'ENCERRADA' }, atualizadoEm: { gte: limite48h } },
         orderBy: { atualizadoEm: 'desc' },
       })
     }

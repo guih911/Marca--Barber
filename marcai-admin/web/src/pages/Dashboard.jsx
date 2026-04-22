@@ -25,6 +25,17 @@ const Badge = ({ label, value, color }) => (
   </div>
 )
 
+const MODULOS_ADMIN = [
+  'Dashboard executivo',
+  'Agenda e capacidade',
+  'Clientes e recorrencia',
+  'Servicos e barbeiros',
+  'Planos mensais e combos',
+  'Lista de espera',
+  'Atendimentos da IA',
+  'Metricas operacionais',
+]
+
 export default function Dashboard() {
   const nav = useNavigate()
   const [d, setD] = useState(null)
@@ -39,8 +50,8 @@ export default function Dashboard() {
 
   return (
     <div>
-      <h1 className="text-xl font-bold text-slate-800 mb-1">Financeiro</h1>
-      <p className="text-sm text-slate-500 mb-6">Visao geral de receita e assinantes</p>
+      <h1 className="text-xl font-bold text-slate-800 mb-1">Dashboard administrativo</h1>
+      <p className="text-sm text-slate-500 mb-6">Visao consolidada de receita, assinantes e operacao</p>
 
       {/* Cards principais */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
@@ -111,6 +122,17 @@ export default function Dashboard() {
             ))}
           </tbody>
         </table>
+      </div>
+
+      <div className="mt-6 bg-white rounded-xl border border-slate-200 p-5">
+        <p className="text-xs text-slate-500 uppercase font-semibold tracking-wide mb-3">Escopo operacional do admin</p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-2">
+          {MODULOS_ADMIN.map((modulo) => (
+            <div key={modulo} className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+              {modulo}
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   )

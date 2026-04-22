@@ -9,8 +9,12 @@ const { execSync } = require('child_process')
 const db = new PrismaClient()
 const app = express()
 const PORT = process.env.PORT || 4000
-const JWT_SECRET = process.env.ADMIN_JWT_SECRET || 'marcai-admin-secret-change-me'
+const JWT_SECRET = process.env.ADMIN_JWT_SECRET
 const ALLOWED_ORIGINS = (process.env.ADMIN_CORS_ORIGINS || 'http://localhost:5174').split(',')
+
+if (!JWT_SECRET) {
+  throw new Error('[Admin API] ADMIN_JWT_SECRET é obrigatório.')
+}
 
 app.use(cors({ origin: ALLOWED_ORIGINS, credentials: true }))
 app.use(express.json())
@@ -357,16 +361,27 @@ app.post('/api/admin/impersonar/:tenantId', autenticar, async (req, res) => {
   }
 })
 
-// ─── Seed: cria primeiro superadmin se não existir ──────────────────────────
+// ─── Bootstrap seguro de acesso admin ───────────────────────────────────────
 const seed = async () => {
   const count = await db.superAdmin.count()
-  if (count === 0) {
-    const senhaHash = await bcrypt.hash('admin123', 10)
-    await db.superAdmin.create({
-      data: { nome: 'Super Admin', email: 'admin@marcai.com', senhaHash },
-    })
-    console.log('[Admin] Super admin criado: admin@marcai.com / admin123')
+  if (count > 0) return
+
+  const bootstrapEmail = process.env.ADMIN_BOOTSTRAP_EMAIL
+  const bootstrapPassword = process.env.ADMIN_BOOTSTRAP_PASSWORD
+  const bootstrapName = process.env.ADMIN_BOOTSTRAP_NAME || 'Super Admin'
+
+  if (!bootstrapEmail || !bootstrapPassword) {
+    console.warn('[Admin] Nenhum super admin existe e o bootstrap não foi configurado.')
+    console.warn('[Admin] Defina ADMIN_BOOTSTRAP_EMAIL e ADMIN_BOOTSTRAP_PASSWORD para criar o primeiro acesso.')
+    return
   }
+
+  const senhaHash = await bcrypt.hash(bootstrapPassword, 10)
+  await db.superAdmin.create({
+    data: { nome: bootstrapName, email: bootstrapEmail, senhaHash },
+  })
+
+  console.log(`[Admin] Super admin inicial criado para ${bootstrapEmail}.`)
 }
 
 // ─── Start ──────────────────────────────────────────────────────────────────

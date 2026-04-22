@@ -1,11 +1,12 @@
 import { cn } from '../../lib/utils'
 
 const variantes = {
-  default: 'bg-primaria text-white hover:bg-primaria-escura shadow-sm',
-  outline: 'border border-borda bg-white text-texto hover:bg-fundo hover:text-texto',
+  default:
+    'bg-primaria text-white hover:bg-primaria-escura shadow-primaria hover:shadow-glow active:scale-[0.98]',
+  outline: 'border border-borda bg-white text-texto hover:bg-fundo hover:border-borda',
   ghost: 'text-texto hover:bg-fundo hover:text-texto',
-  destructive: 'bg-perigo text-white hover:bg-red-600 shadow-sm',
-  secondary: 'bg-primaria-clara text-primaria hover:bg-primaria/20',
+  destructive: 'bg-perigo text-white hover:bg-perigo/90 shadow-sm active:scale-[0.98]',
+  secondary: 'bg-neutral-900 text-white hover:bg-neutral-800 shadow-md active:scale-[0.98]',
 }
 
 const tamanhos = {
@@ -18,7 +19,7 @@ const tamanhos = {
 const Button = ({ className, variante = 'default', tamanho = 'default', disabled, children, ...props }) => (
   <button
     className={cn(
-      'inline-flex items-center justify-center gap-2 rounded-lg font-medium transition-colors',
+      'inline-flex items-center justify-center gap-2 rounded-2xl font-semibold transition-all duration-200',
       'focus:outline-none focus:ring-2 focus:ring-primaria/30',
       'disabled:pointer-events-none disabled:opacity-50',
       variantes[variante] || variantes.default,
