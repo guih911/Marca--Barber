@@ -10,15 +10,33 @@ const router = Router()
 router.get('/meta/config', autenticar, iaControlador.obterConfiguracaoMeta)
 router.post('/meta/embedded-signup/complete', autenticar, iaControlador.concluirEmbeddedSignupMeta)
 router.post('/meta/desconectar', autenticar, iaControlador.desconectarMetaOficial)
-router.get('/sendzen/config', autenticar, iaControlador.obterConfiguracaoSendzen)
-router.post('/sendzen/conectar', autenticar, iaControlador.conectarSendzen)
-router.post('/sendzen/desconectar', autenticar, iaControlador.desconectarSendzen)
+router.post('/meta/reassinar-webhook', autenticar, iaControlador.reassinarWebhookMeta)
+router.post(
+  '/meta/teste-envio',
+  autenticar,
+  [
+    body('telefone').notEmpty().withMessage('Telefone é obrigatório.'),
+    body('mensagem').optional().isString(),
+  ],
+  validar,
+  iaControlador.enviarTesteMeta,
+)
+router.get('/meta/message-templates', autenticar, iaControlador.listarTemplatesMeta)
+router.post(
+  '/meta/message-templates/enviar-teste',
+  autenticar,
+  [
+    body('nomeTemplate').notEmpty().withMessage('nomeTemplate é obrigatório.'),
+    body('idioma').notEmpty().withMessage('idioma é obrigatório (ex: pt_BR).'),
+    body('telefone').notEmpty().withMessage('Telefone de teste é obrigatório.'),
+  ],
+  validar,
+  iaControlador.enviarTemplateTesteMeta,
+)
 router.get('/webhook/meta', iaControlador.verificarWebhookMeta)
 router.post('/webhook/meta', iaControlador.webhookMeta)
 router.get('/webhook/meta/:tenantId', iaControlador.verificarWebhookMeta)
 router.post('/webhook/meta/:tenantId', iaControlador.webhookMeta)
-router.post('/webhook/sendzen', iaControlador.webhookSendzen)
-router.post('/webhook/sendzen/:tenantId', iaControlador.webhookSendzen)
 
 // Webhook interno
 router.post(

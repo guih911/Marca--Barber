@@ -5,7 +5,7 @@ import Constants from 'expo-constants'
 const DEFAULT_PATH = '/logo.svg'
 const VITE_DEV_PORT = 5173
 
-const PROD_SVG = 'https://barber.xn--marca-3sa.com/logo.svg'
+const PROD_SVG = 'https://barber.marcaí.com/logo.svg'
 
 /**
  * URL do `logo.svg` (mesmo do web em `/logo.svg`).

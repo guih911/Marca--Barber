@@ -1,14 +1,13 @@
 /**
  * Serviço de lembretes automáticos de agendamento via WhatsApp.
  *
- * Fluxo:
- *   1. A cada 15 minutos, busca agendamentos AGENDADO/CONFIRMADO dentro da janela
- *      configurada por tenant (lembreteMinutosAntes) sem lembrete enviado
- *   2. Smart skip: ignora agendamento criado DEPOIS que a janela de lembrete começou
- *      (ex: cliente agendou faltando 5min com lembrete configurado para 1h → não faz sentido enviar)
- *   3. Gera mensagem PERSONALIZADA via IA com base no histórico do cliente
- *   4. Envia mensagem WhatsApp ao cliente pedindo confirmação
- *   5. Marca lembreteEnviadoEm no agendamento
+ * Fluxo (ciclo 1, lembretesMinutosAntes de Meu Negócio, pode haver vários):
+ *   1. A cada 1 min, busca janela conforme a maior antecedência configurada
+ *   2. Smart skip: ignora se o agendamento foi criado depois do início da janela
+ *   3. Envia o texto de Config. Don Barber (lembreteDiaAnterior se ≥24h, senão lembreteNoDia)
+ *   4. Marca lembretesConfiguradosEnviados por antecedência
+ *
+ * Ciclo 2: confirmação ~1h (template lembreteNoDia) só se o tenant NÃO tiver nenhum lembrete no painel.
  */
 
 const OpenAI = require('openai')
@@ -21,7 +20,16 @@ const {
   obterLembretesEnviados,
   estaNaJanelaDeLembrete,
 } = require('../../utils/lembretes')
+const {
+  montarMensagemLembreteDinamica,
+  montarMensagemConfirmacao1hDinamica,
+} = require('../../utils/mensagensDonTemplates')
 const { processarEvento } = require('./messageOrchestrator')
+
+const PAYLOADS_BOTOES_WHATSAPP = {
+  CONFIRMAR_AGENDAMENTO: 'CONFIRMAR_AGENDAMENTO',
+  REMARCAR_AGENDAMENTO: 'REMARCAR_AGENDAMENTO',
+}
 
 // Normaliza telefone para formato E.164 Brasil (ex: 11999999999 → 5511999999999)
 // Retorna null para telefones inválidos ou LIDs do WhatsApp (que não podem receber mensagens diretamente).
@@ -63,41 +71,11 @@ const formatarDataInteligente = (data, tz) => {
 }
 
 /**
- * Monta mensagem de lembrete com template fixo.
+ * Monta mensagem de lembrete (template editável em Config. Don Barber).
  * @param {boolean} maisde24h - true → lembrete antecipado (1 dia antes); false → lembrete no dia
  */
-const gerarMensagemLembrete = async (tenant, ag, _historicoMensagens, maisde24h = false) => {
-  const tz = tenant.timezone || 'America/Sao_Paulo'
-  const dt = new Date(ag.inicioEm)
-  const dataFmt = dt.toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long', timeZone: tz })
-  const horaFmt = dt.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: tz })
-  const primeiroNome = ag.cliente.nome?.split(' ')[0] || null
-  const saudacao = primeiroNome ? `Olá, ${primeiroNome}! 👋` : `Olá! 👋`
-
-  if (maisde24h) {
-    // Lembrete 1 dia antes
-    return (
-      `${saudacao}\n\n` +
-      `Aqui é o Don, assistente virtual da ${tenant.nome} 💈\n\n` +
-      `Passando para lembrar do seu horário agendado:\n\n` +
-      `📅 ${dataFmt}\n` +
-      `🕒 ${horaFmt}\n` +
-      `💇 ${ag.servico.nome}\n\n` +
-      `Caso precise reagendar, é só me avisar por aqui 👍\n\n` +
-      `Te esperamos!`
-    )
-  }
-
-  // Lembrete no dia (horas antes)
-  return (
-    `${saudacao}\n\n` +
-    `Seu atendimento na ${tenant.nome} 💈 está confirmado para hoje:\n\n` +
-    `🕒 ${horaFmt}\n` +
-    `💇 ${ag.servico.nome}\n\n` +
-    `Estamos te aguardando!\n\n` +
-    `Qualquer imprevisto, me avise por aqui.`
-  )
-}
+const gerarMensagemLembrete = async (tenant, ag, _historicoMensagens, maisde24h = false) =>
+  montarMensagemLembreteDinamica(tenant, ag, { maisde24h })
 
 /**
  * Gera mensagem de vencimento de plano mensal personalizada pela IA.
@@ -146,24 +124,23 @@ Regras:
 /**
  * Monta mensagem de confirmação de presença (1h antes) com template fixo.
  */
-const gerarMensagemConfirmacao1h = async (tenant, ag, _historicoMensagens) => {
-  const tz = tenant.timezone || 'America/Sao_Paulo'
-  const horaFmt = new Date(ag.inicioEm).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: tz })
-  const primeiroNome = ag.cliente.nome?.split(' ')[0] || null
-  const saudacao = primeiroNome ? `Olá, ${primeiroNome}! 👋` : `Olá! 👋`
+const gerarMensagemConfirmacao1h = async (tenant, ag, _historicoMensagens) =>
+  montarMensagemConfirmacao1hDinamica(tenant, ag)
 
-  return (
-    `${saudacao}\n\n` +
-    `Seu atendimento na ${tenant.nome} 💈 está confirmado para hoje:\n\n` +
-    `🕒 ${horaFmt}\n` +
-    `💇 ${ag.servico.nome}\n\n` +
-    `Estamos te aguardando!\n\n` +
-    `Qualquer imprevisto, me avise por aqui.`
-  )
-}
+const montarPayloadInterativoConfirmacao = (mensagem = '') => ({
+  type: 'button',
+  body: { text: String(mensagem || '').slice(0, 1024) },
+  action: {
+    buttons: [
+      { type: 'reply', reply: { id: PAYLOADS_BOTOES_WHATSAPP.CONFIRMAR_AGENDAMENTO, title: 'Confirmar' } },
+      { type: 'reply', reply: { id: PAYLOADS_BOTOES_WHATSAPP.REMARCAR_AGENDAMENTO, title: 'Remarcar' } },
+    ],
+  },
+})
 
 // ─── Helper: busca/cria conversa e envia mensagem com log ────────────────────
-const enviarMensagemComLog = async (tenant, ag, mensagem, campoMarca, labelLog) => {
+/** @param {object} [opcoes] opcoes.atualizarAgendamento=false — o chamador grava lembretesConfiguradosEnviados (lembretes múltiplos) */
+const enviarMensagemComLog = async (tenant, ag, mensagem, campoMarca, labelLog, opcoes = {}) => {
   const telefoneNorm = normalizarTelefone(ag.cliente?.telefone)
   if (!telefoneNorm) {
     console.warn(`[${labelLog}] Telefone inválido para cliente ${ag.clienteId} — pulando envio.`)
@@ -175,25 +152,39 @@ const enviarMensagemComLog = async (tenant, ag, mensagem, campoMarca, labelLog) 
     orderBy: { atualizadoEm: 'desc' },
   })
 
+  if (conversa?.status === 'ENCERRADA') {
+    console.log(`[${labelLog}] Conversa encerrada para cliente ${ag.clienteId} — envio suprimido.`)
+    return false
+  }
+
   if (!conversa) {
     conversa = await banco.conversa.create({
       data: { tenantId: tenant.id, clienteId: ag.clienteId, canal: 'WHATSAPP', status: 'ATIVA' },
     })
   }
 
-  const resultadoEnvio = await whatsappServico.enviarMensagem(
-    tenant.configWhatsApp,
-    telefoneNorm || ag.cliente?.telefone,
-    mensagem,
-    tenant.id
-  )
+  const resultadoEnvio = opcoes?.interativo
+    ? await whatsappServico.enviarMensagemInterativa(
+      tenant.configWhatsApp,
+      telefoneNorm || ag.cliente?.telefone,
+      opcoes.interativo,
+      tenant.id
+    )
+    : await whatsappServico.enviarMensagem(
+      tenant.configWhatsApp,
+      telefoneNorm || ag.cliente?.telefone,
+      mensagem,
+      tenant.id
+    )
 
   if (!resultadoEnvio) {
     console.warn(`[${labelLog}] Envio falhou para ${telefoneNorm} — WhatsApp possivelmente desconectado. NÃO marcado como enviado.`)
     return false
   }
 
-  await banco.agendamento.update({ where: { id: ag.id }, data: { [campoMarca]: new Date() } })
+  if (opcoes.atualizarAgendamento !== false) {
+    await banco.agendamento.update({ where: { id: ag.id }, data: { [campoMarca]: new Date() } })
+  }
 
   const tz = tenant.timezone || 'America/Sao_Paulo'
   const dataFmt = formatarDataInteligente(ag.inicioEm, tz)
@@ -228,7 +219,19 @@ const enviarLembretes = async () => {
     // Busca todos os tenants ativos com WhatsApp configurado
     const tenants = await banco.tenant.findMany({
       where: { ativo: true, configWhatsApp: { not: null } },
-      select: { id: true, nome: true, configWhatsApp: true, timezone: true, tomDeVoz: true, lembreteMinutosAntes: true, lembretesMinutosAntes: true, membershipsAtivo: true },
+      select: {
+        id: true,
+        nome: true,
+        configWhatsApp: true,
+        timezone: true,
+        tomDeVoz: true,
+        lembreteMinutosAntes: true,
+        lembretesMinutosAntes: true,
+        autoCancelarNaoConfirmados: true,
+        horasAutoCancelar: true,
+        membershipsAtivo: true,
+        configMensagensDon: true,
+      },
     })
 
     for (const tenant of tenants) {
@@ -266,30 +269,32 @@ const enviarLembretes = async () => {
                 continue
               }
 
-              const tz = tenant.timezone || 'America/Sao_Paulo'
-              const dataFmt = formatarDataInteligente(ag.inicioEm, tz)
               const maisde24h = minutosAntes >= 1440
-
+              const minutosConfirmacao = Number(tenant.horasAutoCancelar || 0) * 60
+              const lembreteEhPedidoConfirmacao =
+                Boolean(tenant.autoCancelarNaoConfirmados)
+                && minutosConfirmacao > 0
+                && minutosAntes === minutosConfirmacao
               try {
-                let conversa = await banco.conversa.findFirst({
-                  where: { tenantId: tenant.id, clienteId: ag.clienteId },
-                  orderBy: { atualizadoEm: 'desc' },
-                })
-                if (!conversa) {
-                  conversa = await banco.conversa.create({
-                    data: { tenantId: tenant.id, clienteId: ag.clienteId, canal: 'WHATSAPP', status: 'ATIVA' },
-                  })
+                const mensagemLembrete = lembreteEhPedidoConfirmacao
+                  ? await gerarMensagemConfirmacao1h(tenant, ag, null)
+                  : await gerarMensagemLembrete(tenant, ag, null, maisde24h)
+                if (!mensagemLembrete) {
+                  console.warn(`[Lembretes] Template vazio ag ${ag.id} — pulando.`)
+                  continue
                 }
-
-                const tempoAntecedencia = minutosAntes >= 1440 ? `${Math.round(minutosAntes / 1440)}d` : `${minutosAntes}min`
-                
-                await processarEvento({
-                  evento: 'LEMBRETE',
-                  agendamento: ag,
-                  tenantId: tenant.id,
-                  cliente: ag.cliente,
-                  extra: { tempoAntecedencia }
-                })
+                const enviou = await enviarMensagemComLog(
+                  tenant,
+                  ag,
+                  mensagemLembrete,
+                  'lembreteEnviadoEm',
+                  lembreteEhPedidoConfirmacao ? 'Confirmacao' : 'Lembrete',
+                  {
+                    atualizarAgendamento: false,
+                    interativo: lembreteEhPedidoConfirmacao ? montarPayloadInterativoConfirmacao(mensagemLembrete) : null,
+                  }
+                )
+                if (!enviou) continue
 
                 const enviadosAtualizados = [...lembretesEnviados, minutosAntes].sort((a, b) => b - a)
                 await banco.agendamento.update({
@@ -300,7 +305,8 @@ const enviarLembretes = async () => {
                   },
                 })
 
-                console.log(`[Lembretes] Orquestrado para ${telefoneNorm} — ${ag.servico.nome} (${tempoAntecedencia} antes)`)
+                const tempoAntecedencia = minutosAntes >= 1440 ? `${Math.round(minutosAntes / 1440)}d` : `${minutosAntes}min`
+                console.log(`[Lembretes] Enviado template (${tempoAntecedencia} antes) → ${telefoneNorm} — ${ag.servico.nome}`)
               } catch (errEnvio) {
                 console.error(`[Lembretes] Erro ao enviar para ${telefoneNorm}:`, errEnvio.message)
               }
@@ -318,57 +324,57 @@ const enviarLembretes = async () => {
         const lembretesConfiguradosTenant = obterLembretesConfigurados(tenant)
         if (lembretesConfiguradosTenant.length > 0) {
           console.log(`[Confirmacao1h] Tenant ${tenant.id} possui lembretes configurados (${lembretesConfiguradosTenant.join(', ')} min) — ciclo extra desativado.`)
-          continue
-        }
+        } else {
+          const fimJanela1h = new Date(agora.getTime() + JANELA_CONFIRMACAO_MS)
 
-        const fimJanela1h = new Date(agora.getTime() + JANELA_CONFIRMACAO_MS)
+          const agendamentosConfirmacao = await banco.agendamento.findMany({
+            where: {
+              tenantId: tenant.id,
+              status: { in: ['AGENDADO', 'CONFIRMADO'] },
+              inicioEm: { gte: agora, lte: fimJanela1h },
+              lembrete2hEnviadoEm: null,
+            },
+            include: { cliente: true, servico: true, profissional: true },
+          })
 
-        const agendamentosConfirmacao = await banco.agendamento.findMany({
-          where: {
-            tenantId: tenant.id,
-            status: { in: ['AGENDADO', 'CONFIRMADO'] },
-            inicioEm: { gte: agora, lte: fimJanela1h },
-            lembrete2hEnviadoEm: null,
-          },
-          include: { cliente: true, servico: true, profissional: true },
-        })
+          for (const ag of agendamentosConfirmacao) {
+            const telefoneNorm = normalizarTelefone(ag.cliente?.telefone)
+            if (!telefoneNorm) continue
 
-        for (const ag of agendamentosConfirmacao) {
-          const telefoneNorm = normalizarTelefone(ag.cliente?.telefone)
-          if (!telefoneNorm) continue
-
-          // Só envia se foi criado com mais de 2h de antecedência
-          const antecedenciaMs = ag.inicioEm.getTime() - ag.criadoEm.getTime()
-          if (antecedenciaMs <= ANTECEDENCIA_MINIMA_MS) {
-            console.log(`[Confirmacao1h] Agendamento ${ag.id} criado com menos de 2h de antecedência — pulando.`)
-            continue
-          }
-
-          try {
-            let conversa = await banco.conversa.findFirst({
-              where: { tenantId: tenant.id, clienteId: ag.clienteId },
-              orderBy: { atualizadoEm: 'desc' },
-            })
-            if (!conversa) {
-              conversa = await banco.conversa.create({
-                data: { tenantId: tenant.id, clienteId: ag.clienteId, canal: 'WHATSAPP', status: 'ATIVA' },
-              })
-            }
-            const historicoMensagens = await banco.mensagem.findMany({
-              where: { conversaId: conversa.id },
-              orderBy: { criadoEm: 'asc' },
-            })
-
-            // Gerado pela IA — sem texto fixo
-            const mensagem = await gerarMensagemConfirmacao1h(tenant, ag, historicoMensagens)
-            if (!mensagem) {
-              console.warn(`[Confirmacao1h] IA não gerou mensagem para ${ag.id} — será reprocessado.`)
+            // Só envia se foi criado com mais de 2h de antecedência
+            const antecedenciaMs = ag.inicioEm.getTime() - ag.criadoEm.getTime()
+            if (antecedenciaMs <= ANTECEDENCIA_MINIMA_MS) {
+              console.log(`[Confirmacao1h] Agendamento ${ag.id} criado com menos de 2h de antecedência — pulando.`)
               continue
             }
 
-            await enviarMensagemComLog(tenant, ag, mensagem, 'lembrete2hEnviadoEm', 'Confirmacao1h')
-          } catch (errEnvio) {
-            console.error(`[Confirmacao1h] Erro ao enviar para ${telefoneNorm}:`, errEnvio.message)
+            try {
+              let conversa = await banco.conversa.findFirst({
+                where: { tenantId: tenant.id, clienteId: ag.clienteId },
+                orderBy: { atualizadoEm: 'desc' },
+              })
+              if (!conversa) {
+                conversa = await banco.conversa.create({
+                  data: { tenantId: tenant.id, clienteId: ag.clienteId, canal: 'WHATSAPP', status: 'ATIVA' },
+                })
+              }
+              const historicoMensagens = await banco.mensagem.findMany({
+                where: { conversaId: conversa.id },
+                orderBy: { criadoEm: 'asc' },
+              })
+
+              const mensagem = await gerarMensagemConfirmacao1h(tenant, ag, historicoMensagens)
+              if (!mensagem) {
+                console.warn(`[Confirmacao1h] Template vazio ag ${ag.id} — reprocessa no próximo ciclo.`)
+                continue
+              }
+
+              await enviarMensagemComLog(tenant, ag, mensagem, 'lembrete2hEnviadoEm', 'Confirmacao1h', {
+                interativo: montarPayloadInterativoConfirmacao(mensagem),
+              })
+            } catch (errEnvio) {
+              console.error(`[Confirmacao1h] Erro ao enviar para ${telefoneNorm}:`, errEnvio.message)
+            }
           }
         }
 

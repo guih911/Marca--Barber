@@ -30,3 +30,48 @@ export const logout = () => {
 
 export const isLoggedIn = () => !!localStorage.getItem('admin_token')
 export const getUser = () => JSON.parse(localStorage.getItem('admin_user') || 'null')
+
+// === Clientes cross-tenant ===
+export const apiClientes = (params = {}) => {
+  const qs = new URLSearchParams(params)
+  return api(`/api/admin/clientes?${qs}`)
+}
+
+// === Tenants ===
+export const apiCriarTenant = (payload) =>
+  api('/api/admin/tenants', { method: 'POST', body: JSON.stringify(payload) })
+export const apiStatusPagamento = (id, adimplente) =>
+  api(`/api/admin/tenants/${id}/pagamento`, { method: 'PATCH', body: JSON.stringify({ adimplente }) })
+
+// === Relatórios ===
+export const apiRelatoriosAdmins = () => api('/api/admin/relatorios/admins')
+export const apiRelatoriosLeads = () => api('/api/admin/relatorios/leads')
+export const apiRelatoriosTenants = () => api('/api/admin/relatorios/tenants')
+export const apiRelatoriosFunil = () => api('/api/admin/relatorios/funil')
+
+// === SLA Tickets ===
+export const apiTicketsSla = (slaMinutos = 30) =>
+  api(`/api/admin/comercial/suporte/tickets?slaMinutos=${slaMinutos}`)
+
+// === Disparos em massa ===
+export const apiDisparosTenants = () => api('/api/admin/disparos/tenants')
+export const apiEnviarDisparo = (payload) =>
+  api('/api/admin/disparos', { method: 'POST', body: JSON.stringify(payload) })
+
+// === Config Meta Admin ===
+export const apiConfigMeta = () => api('/api/admin/config/meta')
+export const apiSalvarConfigMeta = (payload) =>
+  api('/api/admin/config/meta', { method: 'PUT', body: JSON.stringify(payload) })
+export const apiTestarMeta = () =>
+  api('/api/admin/config/meta/testar', { method: 'POST' })
+
+// === Templates ===
+export const apiTemplates = () => api('/api/admin/templates')
+export const apiCriarTemplate = (payload) =>
+  api('/api/admin/templates', { method: 'POST', body: JSON.stringify(payload) })
+export const apiExcluirTemplate = (id) =>
+  api(`/api/admin/templates/${id}`, { method: 'DELETE' })
+
+// === Disparo via admin Meta ===
+export const apiDisparar = (payload) =>
+  api('/api/admin/mensagens/disparar', { method: 'POST', body: JSON.stringify(payload) })

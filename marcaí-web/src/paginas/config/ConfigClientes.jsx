@@ -1,4 +1,4 @@
-﻿import { useState, useEffect } from 'react'
+﻿import { useState, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   Search,
@@ -18,12 +18,12 @@ import {
   AlertTriangle,
   Instagram,
   Heart,
-  RotateCcw,
   Link2,
   Send,
   Download,
   Upload,
   FileSpreadsheet,
+  Mic,
 } from 'lucide-react'
 import api from '../../servicos/api'
 import { formatarData, formatarTelefone } from '../../lib/utils'
@@ -296,6 +296,207 @@ const ModalImportacaoClientes = ({ arquivo, onFechar, onSelecionarArquivo, onImp
   )
 }
 
+const FRASE_SEGURANCA_MASSA = 'ENVIAR MENSAGEM EM MASSA'
+
+const ModalMensagemMassa = ({
+  clientesSelecionados,
+  onFechar,
+  onEnviar,
+  enviando,
+}) => {
+  const [tipo, setTipo] = useState('TEXTO')
+  const [mensagem, setMensagem] = useState('')
+  const [audioArquivo, setAudioArquivo] = useState(null)
+  const [etapa, setEtapa] = useState('edicao')
+  const [confirmouPreview, setConfirmouPreview] = useState(false)
+  const [confirmouImpacto, setConfirmouImpacto] = useState(false)
+  const [fraseConfirmacao, setFraseConfirmacao] = useState('')
+  const [erro, setErro] = useState('')
+
+  useEffect(() => {
+    const handler = (e) => { if (e.key === 'Escape') onFechar() }
+    document.addEventListener('keydown', handler)
+    return () => document.removeEventListener('keydown', handler)
+  }, [onFechar])
+
+  const total = clientesSelecionados.length
+  const podeAvancar = tipo === 'AUDIO' ? Boolean(audioArquivo) : mensagem.trim().length >= 5
+  const fraseOk = fraseConfirmacao.trim() === FRASE_SEGURANCA_MASSA
+  const podeEnviar = confirmouPreview && confirmouImpacto && fraseOk && !enviando
+
+  const confirmarPrevia = () => {
+    if (!podeAvancar) {
+      setErro('Escreva uma mensagem com pelo menos 5 caracteres.')
+      return
+    }
+    setErro('')
+    setEtapa('confirmacao')
+  }
+
+  const enviar = () => {
+    if (!podeEnviar) {
+      setErro('Conclua todos os gatilhos de segurança antes de enviar.')
+      return
+    }
+    setErro('')
+    onEnviar({
+      tipo,
+      mensagem: mensagem.trim(),
+      audioArquivo,
+      fraseConfirmacao: fraseConfirmacao.trim(),
+      confirmarEnvio: true,
+    })
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/40 z-[80] flex items-center justify-center p-4" onClick={onFechar}>
+      <div className="bg-white rounded-2xl border border-borda shadow-xl w-full max-w-2xl max-h-[calc(100vh-32px)] flex flex-col" onClick={(e) => e.stopPropagation()}>
+        <div className="px-6 pt-5 pb-4 border-b border-borda flex items-center justify-between">
+          <div>
+            <h3 className="text-lg font-semibold text-texto">Mensagem em massa</h3>
+            <p className="text-sm text-texto-sec mt-1">
+              {total} cliente(s) selecionado(s). Use com cuidado.
+            </p>
+          </div>
+          <button type="button" onClick={onFechar} className="text-texto-sec hover:text-texto transition-colors">
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="overflow-y-auto flex-1 px-6 py-4 space-y-4">
+          <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-amber-800 text-xs">
+            Anti-erro ativo: para enviar é obrigatório revisar a prévia, confirmar impacto e digitar a frase de segurança.
+          </div>
+
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              onClick={() => setTipo('TEXTO')}
+              className={`rounded-lg border px-3 py-2 text-sm font-medium ${tipo === 'TEXTO' ? 'bg-primaria text-white border-primaria' : 'border-borda text-texto'}`}
+            >
+              <MessageSquare size={14} className="inline mr-1" />
+              Texto
+            </button>
+            <button
+              type="button"
+              onClick={() => setTipo('AUDIO')}
+              className={`rounded-lg border px-3 py-2 text-sm font-medium ${tipo === 'AUDIO' ? 'bg-primaria text-white border-primaria' : 'border-borda text-texto'}`}
+            >
+              <Mic size={14} className="inline mr-1" />
+              Áudio
+            </button>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-texto mb-1.5">
+              {tipo === 'AUDIO' ? 'Áudio para envio' : 'Conteúdo da mensagem'}
+            </label>
+            {tipo === 'AUDIO' ? (
+              <label className="block rounded-xl border border-dashed border-borda px-4 py-4 cursor-pointer hover:border-primaria/40">
+                <input
+                  type="file"
+                  accept="audio/*"
+                  className="hidden"
+                  onChange={(e) => {
+                    const arquivo = e.target.files?.[0] || null
+                    setAudioArquivo(arquivo)
+                    if (arquivo) setErro('')
+                  }}
+                />
+                <p className="text-sm font-medium text-texto">
+                  {audioArquivo ? audioArquivo.name : 'Selecionar arquivo de áudio'}
+                </p>
+                <p className="text-xs text-texto-sec mt-1">
+                  Formatos comuns aceitos: mp3, ogg, m4a, wav.
+                </p>
+              </label>
+            ) : (
+              <textarea
+                value={mensagem}
+                onChange={(e) => setMensagem(e.target.value)}
+                rows={5}
+                placeholder="Escreva a mensagem para os clientes..."
+                className="w-full px-4 py-2.5 rounded-lg border border-borda text-sm focus:outline-none focus:ring-2 focus:ring-primaria/30 resize-none"
+              />
+            )}
+          </div>
+
+          <div className="rounded-xl border border-borda bg-fundo/40 p-3">
+            <p className="text-xs text-texto-sec mb-2">Prévia</p>
+            <p className="text-sm text-texto font-medium mb-2">
+              Destinatários: {clientesSelecionados.slice(0, 3).map((c) => c.nome).join(', ')}
+              {total > 3 ? ` +${total - 3} cliente(s)` : ''}
+            </p>
+            {tipo === 'AUDIO' ? (
+              <p className="text-sm text-texto-sec">
+                Arquivo de áudio selecionado:
+                <span className="block mt-1 text-texto">{audioArquivo?.name || 'Nenhum arquivo selecionado'}</span>
+              </p>
+            ) : (
+              <p className="text-sm text-texto">
+                {mensagem.trim() || '—'}
+              </p>
+            )}
+          </div>
+
+          {etapa === 'confirmacao' && (
+            <div className="space-y-3 rounded-xl border border-red-200 bg-red-50 p-4">
+              <label className="flex items-start gap-2 text-sm text-texto">
+                <input type="checkbox" checked={confirmouPreview} onChange={(e) => setConfirmouPreview(e.target.checked)} className="mt-0.5" />
+                Eu revisei a prévia e o conteúdo está correto.
+              </label>
+              <label className="flex items-start gap-2 text-sm text-texto">
+                <input type="checkbox" checked={confirmouImpacto} onChange={(e) => setConfirmouImpacto(e.target.checked)} className="mt-0.5" />
+                Confirmo o envio para {total} cliente(s) e entendo que o disparo é real.
+              </label>
+              <div>
+                <label className="block text-xs font-medium text-texto mb-1">
+                  Digite a frase de segurança exatamente:
+                </label>
+                <p className="text-xs text-red-700 font-semibold mb-1">{FRASE_SEGURANCA_MASSA}</p>
+                <input
+                  value={fraseConfirmacao}
+                  onChange={(e) => setFraseConfirmacao(e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg border border-borda text-sm focus:outline-none focus:ring-2 focus:ring-primaria/30"
+                  placeholder="Digite a frase aqui"
+                />
+              </div>
+            </div>
+          )}
+
+          {erro && <p className="text-xs text-perigo">{erro}</p>}
+        </div>
+
+        <div className="px-6 py-4 border-t border-borda flex gap-3">
+          <button type="button" onClick={onFechar} className="flex-1 border border-borda text-texto-sec rounded-lg py-2.5 text-sm">
+            Cancelar
+          </button>
+          {etapa === 'edicao' ? (
+            <button
+              type="button"
+              onClick={confirmarPrevia}
+              disabled={!podeAvancar}
+              className="flex-1 bg-primaria hover:bg-primaria-escura disabled:opacity-50 text-white rounded-lg py-2.5 text-sm font-medium"
+            >
+              Avançar para confirmação
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={enviar}
+              disabled={!podeEnviar}
+              className="flex-1 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white rounded-lg py-2.5 text-sm font-medium inline-flex items-center justify-center gap-2"
+            >
+              {enviando ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
+              Enviar em massa
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 const DrawerCliente = ({ clienteId, onFechar, onEditar, onExcluir, onVerConversa, onDesativar, onReativar }) => {
   const { tenant } = useAuth()
   const toast = useToast()
@@ -311,7 +512,6 @@ const DrawerCliente = ({ clienteId, onFechar, onEditar, onExcluir, onVerConversa
   const [enviandoLink, setEnviandoLink] = useState(false)
   const [instagramTexto, setInstagramTexto] = useState('')
   const [alergiasTexto, setAlergiasTexto] = useState('')
-  const [frequenciaRetorno, setFrequenciaRetorno] = useState('')
   const [erro, setErro] = useState('')
 
   const gerarLinkAgendamento = () => {
@@ -351,7 +551,6 @@ const DrawerCliente = ({ clienteId, onFechar, onEditar, onExcluir, onVerConversa
     setPreferenciasTexto(r.dados.preferencias || '')
     setInstagramTexto(r.dados.instagram || '')
     setAlergiasTexto(r.dados.alergias || '')
-    setFrequenciaRetorno(r.dados.frequenciaRetornoIdealDias ? String(r.dados.frequenciaRetornoIdealDias) : '')
     if (r.dados.dataNascimento) {
       setDataNascimento(new Date(r.dados.dataNascimento).toISOString().split('T')[0])
     }
@@ -638,24 +837,6 @@ const DrawerCliente = ({ clienteId, onFechar, onEditar, onExcluir, onVerConversa
           </div>
 
           <div>
-            <p className="text-sm font-medium text-texto mb-2 flex items-center gap-1.5"><RotateCcw size={14} /> Frequência de retorno ideal</p>
-            <div className="flex gap-2">
-              {[['7', '1 sem'], ['14', '2 sem'], ['21', '3 sem'], ['28', '4 sem'], ['45', '45 dias']].map(([val, label]) => (
-                <button
-                  key={val}
-                  onClick={() => {
-                    setFrequenciaRetorno(val)
-                    api.patch(`/api/clientes/${cliente.id}`, { frequenciaRetornoIdealDias: parseInt(val) })
-                  }}
-                  className={`flex-1 py-2 rounded-lg text-xs font-medium border transition-colors ${frequenciaRetorno === val ? 'bg-primaria text-white border-primaria' : 'border-borda text-texto-sec hover:border-primaria/50'}`}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div>
             <p className="text-sm font-medium text-texto mb-2">Notas</p>
             <textarea
               defaultValue={cliente.notas || ''}
@@ -689,6 +870,11 @@ const ConfigClientes = () => {
   const [arquivoImportacao, setArquivoImportacao] = useState(null)
   const [importandoPlanilha, setImportandoPlanilha] = useState(false)
   const [resultadoImportacao, setResultadoImportacao] = useState(null)
+  const [clientesSelecionadosIds, setClientesSelecionadosIds] = useState([])
+  const [clientesSelecionadosCache, setClientesSelecionadosCache] = useState({})
+  const [modalMensagemMassaAberto, setModalMensagemMassaAberto] = useState(false)
+  const [enviandoMensagemMassa, setEnviandoMensagemMassa] = useState(false)
+  const [selecionandoTodosResultados, setSelecionandoTodosResultados] = useState(false)
 
   const buscaDebounced = useDebounce(busca)
   const limite = 20
@@ -699,14 +885,31 @@ const ConfigClientes = () => {
       .map((c) => (c.nome || '').toLowerCase().trim())
       .filter((nome, idx, arr) => nome && !pareceTelefone(nome) && arr.indexOf(nome) !== idx)
   )
+  const clientesSelecionados = useMemo(
+    () => clientesSelecionadosIds
+      .map((id) => clientesSelecionadosCache[id])
+      .filter(Boolean),
+    [clientesSelecionadosIds, clientesSelecionadosCache]
+  )
+  const todosDaPaginaSelecionados = clientes.length > 0 && clientes.every((cliente) => clientesSelecionadosIds.includes(cliente.id))
 
   const carregar = async () => {
     setCarregando(true)
     setErro('')
     try {
       const res = await api.get(`/api/clientes?pagina=${pagina}&limite=${limite}&busca=${encodeURIComponent(buscaDebounced)}&ativo=${filtroAtivo}`)
-      setClientes(res.clientes || res.dados || [])
+      const lista = res.clientes || res.dados || []
+      setClientes(lista)
       setTotal(res.meta?.total || 0)
+      setClientesSelecionadosCache((anterior) => {
+        const atualizados = { ...anterior }
+        for (const cliente of lista) {
+          if (clientesSelecionadosIds.includes(cliente.id)) {
+            atualizados[cliente.id] = cliente
+          }
+        }
+        return atualizados
+      })
     } catch (e) {
       setErro(e?.erro?.mensagem || 'Falha ao carregar clientes.')
     } finally {
@@ -858,6 +1061,124 @@ const ConfigClientes = () => {
     }
   }
 
+  const alternarSelecaoCliente = (cliente) => {
+    if (!cliente?.id) return
+    const clienteId = cliente.id
+    setClientesSelecionadosIds((anteriores) => (
+      anteriores.includes(clienteId)
+        ? anteriores.filter((id) => id !== clienteId)
+        : [...anteriores, clienteId]
+    ))
+    setClientesSelecionadosCache((anterior) => {
+      const proximo = { ...anterior }
+      if (clientesSelecionadosIds.includes(clienteId)) {
+        delete proximo[clienteId]
+      } else {
+        proximo[clienteId] = cliente
+      }
+      return proximo
+    })
+  }
+
+  const alternarSelecaoPagina = () => {
+    const idsPagina = clientes.map((cliente) => cliente.id)
+    if (todosDaPaginaSelecionados) {
+      const idsPaginaSet = new Set(idsPagina)
+      setClientesSelecionadosIds((anteriores) => anteriores.filter((id) => !idsPaginaSet.has(id)))
+      setClientesSelecionadosCache((anterior) => {
+        const proximo = { ...anterior }
+        idsPagina.forEach((id) => delete proximo[id])
+        return proximo
+      })
+      return
+    }
+    setClientesSelecionadosIds((anteriores) => {
+      const unicos = new Set(anteriores)
+      idsPagina.forEach((id) => unicos.add(id))
+      return [...unicos]
+    })
+    setClientesSelecionadosCache((anterior) => {
+      const proximo = { ...anterior }
+      clientes.forEach((cliente) => {
+        proximo[cliente.id] = cliente
+      })
+      return proximo
+    })
+  }
+
+  const selecionarTodosResultados = async () => {
+    if (total <= 0) return
+    setSelecionandoTodosResultados(true)
+    try {
+      const limiteBusca = 200
+      const paginas = Math.max(1, Math.ceil(total / limiteBusca))
+      const todosIds = []
+      const todosCache = {}
+
+      for (let paginaAtual = 1; paginaAtual <= paginas; paginaAtual += 1) {
+        const res = await api.get(`/api/clientes?pagina=${paginaAtual}&limite=${limiteBusca}&busca=${encodeURIComponent(buscaDebounced)}&ativo=${filtroAtivo}`)
+        const lista = res.clientes || res.dados || []
+        lista.forEach((cliente) => {
+          todosIds.push(cliente.id)
+          todosCache[cliente.id] = cliente
+        })
+        if (lista.length < limiteBusca) break
+      }
+
+      setClientesSelecionadosIds([...new Set(todosIds)])
+      setClientesSelecionadosCache(todosCache)
+      toast(`Selecionados ${Object.keys(todosCache).length} cliente(s) de todos os resultados.`, 'sucesso')
+    } catch (e) {
+      toast(e?.erro?.mensagem || 'Não foi possível selecionar todos os resultados.', 'erro')
+    } finally {
+      setSelecionandoTodosResultados(false)
+    }
+  }
+
+  const limparSelecao = () => {
+    setClientesSelecionadosIds([])
+    setClientesSelecionadosCache({})
+  }
+
+  const abrirMensagemMassa = () => {
+    if (clientesSelecionadosIds.length === 0) {
+      toast('Selecione pelo menos 1 cliente para envio em massa.', 'erro')
+      return
+    }
+    setModalMensagemMassaAberto(true)
+  }
+
+  const enviarMensagemMassa = async ({ tipo, mensagem, audioArquivo, fraseConfirmacao, confirmarEnvio }) => {
+    setEnviandoMensagemMassa(true)
+    try {
+      const res = tipo === 'AUDIO'
+        ? await (() => {
+          const formData = new FormData()
+          formData.append('clienteIds', JSON.stringify(clientesSelecionadosIds))
+          formData.append('tipo', tipo)
+          formData.append('fraseConfirmacao', fraseConfirmacao)
+          formData.append('confirmarEnvio', String(confirmarEnvio))
+          if (audioArquivo) formData.append('audio', audioArquivo)
+          return api.upload('/api/clientes/mensagem-massa', formData)
+        })()
+        : await api.post('/api/clientes/mensagem-massa', {
+          clienteIds: clientesSelecionadosIds,
+          tipo,
+          mensagem,
+          fraseConfirmacao,
+          confirmarEnvio,
+        })
+      const dados = res?.dados || {}
+      toast(`Disparo concluído: ${dados.enviadosComSucesso || 0} envio(s) com sucesso e ${dados.falhas || 0} falha(s).`, 'sucesso')
+      setModalMensagemMassaAberto(false)
+      limparSelecao()
+    } catch (e) {
+      toast(e?.erro?.mensagem || 'Falha ao enviar mensagem em massa.', 'erro')
+    } finally {
+      setEnviandoMensagemMassa(false)
+    }
+  }
+
   return (
     <div className="max-w-6xl space-y-5">
       <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
@@ -865,25 +1186,65 @@ const ConfigClientes = () => {
           <h1 className="text-2xl font-semibold text-texto">Clientes</h1>
           <p className="text-texto-sec text-sm mt-1">{total} clientes cadastrados • você pode adicionar, editar e excluir</p>
         </div>
-        <div className="flex flex-wrap gap-2">
-          <button
-            onClick={baixarPlanilhaModelo}
-            className="border border-borda bg-white hover:bg-fundo text-texto rounded-lg px-4 py-2.5 text-sm font-medium inline-flex items-center gap-2"
-          >
-            <Download size={15} /> Planilha de importação
-          </button>
-          <button
-            onClick={abrirImportacao}
-            className="border border-borda bg-white hover:bg-fundo text-texto rounded-lg px-4 py-2.5 text-sm font-medium inline-flex items-center gap-2"
-          >
-            <Upload size={15} /> Upload de planilha
-          </button>
-          <button
-            onClick={abrirNovo}
-            className="bg-primaria hover:bg-primaria-escura text-white rounded-lg px-4 py-2.5 text-sm font-medium inline-flex items-center gap-2"
-          >
-            <Plus size={15} /> Novo cliente
-          </button>
+        <div className="w-full md:w-auto">
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              onClick={abrirMensagemMassa}
+              className="w-full border border-borda bg-white hover:bg-fundo text-texto rounded-lg px-4 py-2.5 text-sm font-medium inline-flex items-center justify-center gap-2"
+            >
+              <Send size={15} /> Mensagem em massa ({clientesSelecionadosIds.length})
+            </button>
+            <button
+              onClick={baixarPlanilhaModelo}
+              className="w-full border border-borda bg-white hover:bg-fundo text-texto rounded-lg px-4 py-2.5 text-sm font-medium inline-flex items-center justify-center gap-2"
+            >
+              <Download size={15} /> Planilha de importação
+            </button>
+            <button
+              onClick={abrirImportacao}
+              className="w-full border border-borda bg-white hover:bg-fundo text-texto rounded-lg px-4 py-2.5 text-sm font-medium inline-flex items-center justify-center gap-2"
+            >
+              <Upload size={15} /> Upload de planilha
+            </button>
+            <button
+              onClick={abrirNovo}
+              className="w-full bg-primaria hover:bg-primaria-escura text-white rounded-lg px-4 py-2.5 text-sm font-medium inline-flex items-center justify-center gap-2"
+            >
+              <Plus size={15} /> Novo cliente
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div className="rounded-xl border border-borda bg-white px-4 py-3 flex flex-wrap items-center justify-between gap-2">
+        <p className="text-sm text-texto">
+          Selecionados para disparo: <span className="font-semibold">{clientesSelecionadosIds.length}</span>
+        </p>
+        <div className="w-full sm:w-auto">
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              onClick={alternarSelecaoPagina}
+              className="text-xs border border-borda rounded-lg px-3 py-1.5 hover:bg-fundo"
+            >
+              {todosDaPaginaSelecionados ? 'Desmarcar página' : 'Selecionar página'}
+            </button>
+            <button
+              onClick={selecionarTodosResultados}
+              disabled={selecionandoTodosResultados || total === 0}
+              className="text-xs border border-borda rounded-lg px-3 py-1.5 hover:bg-fundo disabled:opacity-60 inline-flex items-center gap-1.5"
+            >
+              {selecionandoTodosResultados ? <Loader2 size={12} className="animate-spin" /> : null}
+              Selecionar todos os resultados
+            </button>
+            {clientesSelecionadosIds.length > 0 && (
+              <button
+                onClick={limparSelecao}
+                className="text-xs border border-borda rounded-lg px-3 py-1.5 hover:bg-fundo"
+              >
+                Limpar seleção
+              </button>
+            )}
+          </div>
         </div>
       </div>
 
@@ -922,6 +1283,7 @@ const ConfigClientes = () => {
         <table className="w-full">
           <thead>
             <tr className="border-b border-borda bg-fundo">
+              <th className="px-5 py-3 text-left text-xs font-semibold text-texto-sec uppercase">Selecionar</th>
               <th className="px-5 py-3 text-left text-xs font-semibold text-texto-sec uppercase">Nome</th>
               <th className="px-5 py-3 text-left text-xs font-semibold text-texto-sec uppercase">Telefone</th>
               <th className="px-5 py-3 text-left text-xs font-semibold text-texto-sec uppercase">Visitas</th>
@@ -933,14 +1295,21 @@ const ConfigClientes = () => {
             {carregando ? (
               Array.from({ length: 5 }).map((_, i) => (
                 <tr key={i} className="border-b border-borda animate-pulse">
-                  {[1, 2, 3, 4, 5].map((j) => <td key={j} className="px-5 py-4"><div className="h-4 bg-borda rounded" /></td>)}
+                  {[1, 2, 3, 4, 5, 6].map((j) => <td key={j} className="px-5 py-4"><div className="h-4 bg-borda rounded" /></td>)}
                 </tr>
               ))
             ) : clientes.length === 0 ? (
-              <tr><td colSpan={5} className="px-5 py-12 text-center text-texto-sec text-sm">Nenhum cliente encontrado</td></tr>
+              <tr><td colSpan={6} className="px-5 py-12 text-center text-texto-sec text-sm">Nenhum cliente encontrado</td></tr>
             ) : (
               clientes.map((c) => (
                 <tr key={c.id} className={`border-b border-borda last:border-0 hover:bg-fundo transition-colors ${c.ativo === false ? 'opacity-60' : ''}`}>
+                  <td className="px-5 py-4">
+                    <input
+                      type="checkbox"
+                      checked={clientesSelecionadosIds.includes(c.id)}
+                      onChange={() => alternarSelecaoCliente(c)}
+                    />
+                  </td>
                   <td className="px-5 py-4 cursor-pointer group" onClick={() => setClienteSelecionado(c.id)}>
                     <div className="flex items-center gap-2">
                       <AvatarPessoa pessoa={c} tamanho="sm" />
@@ -1008,6 +1377,16 @@ const ConfigClientes = () => {
         ) : (
           clientes.map((c) => (
             <div key={c.id} className={`bg-white rounded-2xl border border-borda shadow-sm p-4 ${c.ativo === false ? 'opacity-70' : ''}`}>
+              <div className="mb-2">
+                <label className="inline-flex items-center gap-2 text-xs text-texto-sec">
+                  <input
+                    type="checkbox"
+                    checked={clientesSelecionadosIds.includes(c.id)}
+                    onChange={() => alternarSelecaoCliente(c)}
+                  />
+                  Selecionar para envio em massa
+                </label>
+              </div>
               <div className="flex items-center gap-3 mb-3" onClick={() => setClienteSelecionado(c.id)}>
                 <AvatarPessoa pessoa={c} tamanho="sm" />
                 <div className="min-w-0 flex-1">
@@ -1092,6 +1471,18 @@ const ConfigClientes = () => {
           onImportar={importarPlanilha}
           importando={importandoPlanilha}
           resultado={resultadoImportacao}
+        />
+      )}
+
+      {modalMensagemMassaAberto && (
+        <ModalMensagemMassa
+          clientesSelecionados={clientesSelecionados}
+          onFechar={() => {
+            if (enviandoMensagemMassa) return
+            setModalMensagemMassaAberto(false)
+          }}
+          onEnviar={enviarMensagemMassa}
+          enviando={enviandoMensagemMassa}
         />
       )}
 

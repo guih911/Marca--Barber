@@ -1,6 +1,7 @@
 ﻿require('dotenv').config()
 const fs = require('fs')
 const path = require('path')
+const { domainToASCII } = require('url')
 const express = require('express')
 const cors = require('cors')
 const passport = require('passport')
@@ -29,10 +30,16 @@ const galeriaRotas = require('./modulos/galeria/galeria.rotas')
 const filaEsperaRotas = require('./modulos/fila-espera/fila-espera.rotas')
 const pagamentosRotas = require('./modulos/pagamentos/pagamentos.rotas')
 const entregasRotas = require('./modulos/entregas/entregas.rotas')
-const { iniciarCronLembretes } = require('./modulos/ia/ia.controlador')
+const {
+  iniciarCronLembretes,
+  garantirInscricaoWebhookMetaParaTodos,
+} = require('./modulos/ia/ia.controlador')
 const { iniciarCronAutomacoes } = require('./modulos/ia/automacoes.servico')
 
 const app = express()
+if (process.env.TRUST_PROXY === '1' || process.env.NODE_ENV === 'production') {
+  app.set('trust proxy', 1)
+}
 const uploadsDir = path.join(__dirname, '../uploads')
 
 for (const pasta of ['avatares', 'galeria', 'logos']) {
@@ -62,16 +69,33 @@ setInterval(() => {
   }
 }, 5 * 60 * 1000)
 
+// Mesma origem em IDN vs punycode (ex.: marcaí.com vs xn--marca-3sa.com) — o browser pode enviar qualquer forma.
+const normalizarOrigemCors = (origem) => {
+  if (!origem || typeof origem !== 'string') return ''
+  try {
+    const u = new URL(origem)
+    const host = domainToASCII(u.hostname)
+    return `${u.protocol}//${host}${u.port ? `:${u.port}` : ''}`
+  } catch {
+    return origem.trim()
+  }
+}
+
 // Middlewares globais
 const origemPermitida = (origin, callback) => {
-  // Em desenvolvimento, aceita qualquer origem localhost
-  if (!origin || /^http:\/\/localhost(:\d+)?$/.test(origin)) {
+  // Em desenvolvimento, aceita qualquer origem localhost / 127.0.0.1
+  if (!origin || /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) {
     return callback(null, true)
   }
-  const permitidas = (process.env.FRONTEND_URL || '').split(',').map(s => s.trim())
-  // Aceita também a versão punycode do domínio
-  permitidas.push('https://barber.xn--marca-3sa.com')
-  if (permitidas.includes(origin)) return callback(null, true)
+  const candidatas = (process.env.FRONTEND_URL || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)
+  // Origens padrão (app + site institucional, IDN)
+  candidatas.push('https://app.barbermark.com.br', 'https://barbermark.com.br', 'https://www.barbermark.com.br', 'https://barber.marcaí.com', 'https://marcaí.com', 'https://www.marcaí.com')
+  const nOrig = normalizarOrigemCors(origin)
+  const ok = candidatas.some((c) => c && (c === origin || normalizarOrigemCors(c) === nOrig))
+  if (ok) return callback(null, true)
   callback(new Error(`Origem não permitida pelo CORS: ${origin}`))
 }
 
@@ -120,7 +144,8 @@ app.get('/health', async (req, res) => {
 })
 
 // Rotas da API
-app.use('/api/auth', rateLimit(5, 60 * 1000), authRotas)
+// Antes: 5 req/min em TODA /api/auth bloqueava login + refresh + /me no mesmo minuto. Subir o teto; bruteforce continua mitigado pelo limite.
+app.use('/api/auth', rateLimit(40, 60 * 1000), authRotas)
 app.use('/api/tenants', tenantRotas)
 app.use('/api/servicos', servicosRotas)
 app.use('/api/profissionais', profissionaisRotas)
@@ -130,7 +155,13 @@ app.use('/api/disponibilidade', agendamentosRotas) // rota de disponibilidade in
 app.use('/api/conversas', conversasRotas)
 app.use('/api/dashboard', dashboardRotas)
 app.use('/api/planos', planosRotas)
-app.use('/api/ia', rateLimit(60, 60 * 1000), iaRotas)
+// Webhook da Meta: não limitar (IPs da Meta; burst de eventos; mesma chave = /api/ia)
+app.use('/api/ia', (req, res, next) => {
+  if (String(req.path || '').includes('webhook/meta') || String(req.originalUrl || '').includes('webhook/meta')) {
+    return next()
+  }
+  return rateLimit(60, 60 * 1000)(req, res, next)
+}, iaRotas)
 app.use('/api/fidelidade', fidelidadeRotas)
 app.use('/api/estoque', estoqueRotas)
 app.use('/api/comanda', comandaRotas)
@@ -178,6 +209,14 @@ if (require.main === module) {
       // Inicia automacoes enterprise (2h, auto-cancel, retorno, reativacao, parabens, fila)
       iniciarCronAutomacoes()
       console.log('[Cron] Automações iniciadas')
+
+      // Auto-corrige tenants conectados na Meta com webhookAssinado=false (em background, não bloqueia).
+      // Atalho para não exigir reconexão manual depois de a barbearia já ter conectado uma vez.
+      setTimeout(() => {
+        garantirInscricaoWebhookMetaParaTodos().catch((e) =>
+          console.warn('[Webhook Meta auto-fix] erro:', e?.message || e),
+        )
+      }, 5000)
     } else {
       console.log('[Cron] Crons já iniciados, ignorando duplicação')
     }

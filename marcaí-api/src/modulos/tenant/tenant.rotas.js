@@ -5,6 +5,7 @@ const { body } = require('express-validator')
 const multer = require('multer')
 const { autenticar } = require('../../middlewares/autenticacao')
 const { validar } = require('../../middlewares/validacao')
+const { CAMPOS_PERMITIDOS } = require('../../utils/gerarSugestaoConfigDon')
 const tenantControlador = require('./tenant.controlador')
 
 const router = Router()
@@ -45,6 +46,8 @@ router.patch(
     body('timezone').optional().notEmpty(),
     body('autoCancelarNaoConfirmados').optional().isBoolean(),
     body('horasAutoCancelar').optional().isInt({ min: 1, max: 48 }),
+    body('minutosMargemAutoCancelamento').optional().isInt({ min: 0, max: 180 }),
+    body('filaReengajamentoHorario').optional().matches(/^([01]\d|2[0-3]):([0-5]\d)$/),
     body('exigirConfirmacaoPresenca').optional().isBoolean(),
   ],
   validar,
@@ -60,9 +63,21 @@ router.patch(
   [
     body('tomDeVoz').optional().isIn(['FORMAL', 'DESCONTRALIDO', 'ACOLHEDOR']),
     body('antecedenciaCancelar').optional().isInt({ min: 0 }),
+    body('iaIncluirLinkAgendamento').optional().isBoolean(),
+    body('apresentacaoSalaoAtivo').optional().isBoolean(),
+    body('configMensagensDon').optional({ nullable: true }),
   ],
   validar,
   tenantControlador.atualizarConfiguracaoIA
+)
+
+// POST /api/tenants/meu/sugerir-mensagem-don
+router.post(
+  '/meu/sugerir-mensagem-don',
+  autenticar,
+  [body('campo').isIn(CAMPOS_PERMITIDOS).withMessage('Campo inválido')],
+  validar,
+  tenantControlador.sugerirMensagemConfigDon
 )
 
 module.exports = router

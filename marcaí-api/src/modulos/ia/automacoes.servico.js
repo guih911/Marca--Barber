@@ -15,7 +15,7 @@ const banco = require('../../config/banco')
 const whatsappServico = require('./whatsapp.servico')
 const filaEsperaServico = require('../filaEspera/filaEspera.servico')
 const fidelidadeServico = require('../fidelidade/fidelidade.servico')
-const { obterLembretesConfigurados } = require('../../utils/lembretes')
+const { obterLembretesConfigurados, obterLembretesEnviados } = require('../../utils/lembretes')
 const { processarEvento } = require('./messageOrchestrator')
 
 const openai = new OpenAI({ apiKey: configIA.apiKey, baseURL: configIA.baseURL })
@@ -43,6 +43,9 @@ const formatarDataInteligente = (data, tz) => {
   if (diaAlvo === diaAmanha) return `amanhã às ${hora}`
   return formatarData(data, tz)
 }
+
+const chaveDiaLocal = (data, tz) =>
+  new Date(data).toLocaleDateString('en-CA', { timeZone: tz || 'America/Sao_Paulo' })
 
 // Salva mensagem enviada na conversa do cliente (para manter contexto)
 // Usa mesma lógica de prioridade do buscarOuCriarConversa:
@@ -197,17 +200,25 @@ const enviarLembretes2h = async () => {
 const autoCancelarNaoConfirmados = async () => {
   try {
     const agora = new Date()
+    // Evita cancelar no mesmo instante em que o lembrete de confirmação é disparado.
+    const MARGEM_RESPOSTA_MS = 15 * 60 * 1000
 
     const tenants = await banco.tenant.findMany({
       where: { ativo: true, autoCancelarNaoConfirmados: true, configWhatsApp: { not: null } },
       select: {
         id: true, nome: true, configWhatsApp: true,
-        timezone: true, horasAutoCancelar: true,
+        timezone: true, horasAutoCancelar: true, minutosMargemAutoCancelamento: true,
       },
     })
 
     for (const tenant of tenants) {
-      const limite = new Date(agora.getTime() + tenant.horasAutoCancelar * 60 * 60 * 1000)
+      const minutosPrazoConfirmacao = Number(tenant.horasAutoCancelar || 0) * 60
+      const margemTenant = Number.isFinite(Number(tenant.minutosMargemAutoCancelamento))
+        ? Math.max(0, Number(tenant.minutosMargemAutoCancelamento))
+        : (MARGEM_RESPOSTA_MS / (60 * 1000))
+      const limite = new Date(
+        agora.getTime() + tenant.horasAutoCancelar * 60 * 60 * 1000 - margemTenant * 60 * 1000
+      )
       // Nunca cancela agendamentos com menos de 30 min de antecedência — o cliente pode estar a caminho
       const limite30min = new Date(agora.getTime() + 30 * 60 * 1000)
 
@@ -222,6 +233,16 @@ const autoCancelarNaoConfirmados = async () => {
 
       for (const ag of agendamentos) {
         try {
+          const lembretesEnviados = obterLembretesEnviados(ag)
+          const recebeuLembreteDoPrazo =
+            (minutosPrazoConfirmacao > 0 && lembretesEnviados.has(minutosPrazoConfirmacao))
+            || Boolean(ag.lembrete2hEnviadoEm)
+
+          // Só cancela se o cliente já foi lembrado para confirmar.
+          if (!recebeuLembreteDoPrazo) {
+            continue
+          }
+
           await banco.agendamento.update({
             where: { id: ag.id },
             data: {
@@ -511,7 +532,7 @@ const enviarNpsPosAtendimento = async () => {
 
     const tenants = await banco.tenant.findMany({
       where: { ativo: true, npsAtivo: true, configWhatsApp: { not: null } },
-      select: { id: true, nome: true, configWhatsApp: true },
+      select: { id: true, nome: true, configWhatsApp: true, timezone: true },
     })
 
     for (const tenant of tenants) {
@@ -531,23 +552,44 @@ const enviarNpsPosAtendimento = async () => {
         include: { cliente: true, profissional: { select: { nome: true } }, servico: { select: { nome: true } } },
       })
 
+      const gruposPorClienteDia = new Map()
       for (const ag of agendamentos) {
         if (!ag.cliente?.telefone) continue
+        const dataReferencia = ag.concluidoEm || ag.fimEm || ag.atualizadoEm || new Date()
+        const chave = `${ag.clienteId}:${chaveDiaLocal(dataReferencia, tenant.timezone)}`
+        if (!gruposPorClienteDia.has(chave)) gruposPorClienteDia.set(chave, [])
+        gruposPorClienteDia.get(chave).push(ag)
+      }
+
+      for (const grupo of gruposPorClienteDia.values()) {
+        const ordenados = [...grupo].sort((a, b) => {
+          const ta = new Date(a.concluidoEm || a.fimEm || a.atualizadoEm || 0).getTime()
+          const tb = new Date(b.concluidoEm || b.fimEm || b.atualizadoEm || 0).getTime()
+          return tb - ta
+        })
+        const agBase = ordenados[0]
+        if (!agBase?.cliente?.telefone) continue
+
         try {
-          processarEvento({
+          const resultadoEnvio = await processarEvento({
             evento: 'NPS',
-            agendamento: ag,
+            agendamento: agBase,
             tenantId: tenant.id,
-            cliente: ag.cliente
+            cliente: agBase.cliente
           })
 
-          await banco.agendamento.update({
-            where: { id: ag.id },
+          if (resultadoEnvio?.suprimido) {
+            console.log(`[Automações] NPS suprimido (${resultadoEnvio.motivo || 'SEM_MOTIVO'}) → ${agBase.cliente.telefone}`)
+            continue
+          }
+
+          await banco.agendamento.updateMany({
+            where: { id: { in: ordenados.map((ag) => ag.id) } },
             data: { npsEnviadoEm: new Date() },
           })
-          console.log(`[Automações] NPS orquestrado → ${ag.cliente.telefone}`)
+          console.log(`[Automações] NPS orquestrado (grupo ${ordenados.length}) → ${agBase.cliente.telefone}`)
         } catch (err) {
-          console.error(`[NPS] Erro ao enviar para ${ag.cliente?.telefone}:`, err.message)
+          console.error(`[NPS] Erro ao enviar para ${agBase.cliente?.telefone}:`, err.message)
         }
       }
     }
@@ -634,6 +676,80 @@ const enviarRelatorioDiario = async () => {
   }
 }
 
+// ─── H. Reengajamento da fila no fim do dia ───────────────────────────────────
+const reengajarFilaFimDoDia = async () => {
+  try {
+    const agora = new Date()
+    const tenants = await banco.tenant.findMany({
+      where: {
+        ativo: true,
+        listaEsperaAtivo: true,
+        configWhatsApp: { not: null },
+      },
+      select: { id: true, nome: true, timezone: true, filaReengajamentoHorario: true },
+    })
+
+    for (const tenant of tenants) {
+      const tz = tenant.timezone || 'America/Sao_Paulo'
+      const horarioConfig = /^([01]\d|2[0-3]):([0-5]\d)$/.test(String(tenant.filaReengajamentoHorario || ''))
+        ? String(tenant.filaReengajamentoHorario)
+        : '20:30'
+      const [horaAlvo, minutoAlvo] = horarioConfig.split(':').map(Number)
+      const horaAtual = Number(agora.toLocaleTimeString('en-GB', { hour: '2-digit', hour12: false, timeZone: tz }))
+      const minutoAtual = Number(agora.toLocaleTimeString('en-GB', { minute: '2-digit', hour12: false, timeZone: tz }))
+
+      if (horaAtual !== horaAlvo || minutoAtual !== minutoAlvo) continue
+
+      const diaHoje = agora.toLocaleDateString('en-CA', { timeZone: tz })
+      const inicioHoje = new Date(`${diaHoje}T00:00:00.000Z`)
+      const fimHoje = new Date(`${diaHoje}T23:59:59.999Z`)
+
+      const entradas = await banco.filaEspera.findMany({
+        where: {
+          tenantId: tenant.id,
+          status: 'AGUARDANDO',
+          dataDesejada: { gte: inicioHoje, lte: fimHoje },
+        },
+        include: {
+          cliente: true,
+          servico: true,
+          profissional: true,
+        },
+      })
+
+      for (const entrada of entradas) {
+        if (!entrada?.cliente?.telefone) continue
+        try {
+          await processarEvento({
+            evento: 'FILA_ESPERA_FIM_DIA',
+            tenantId: tenant.id,
+            cliente: entrada.cliente,
+            agendamento: {
+              inicioEm: entrada.dataDesejada,
+              servico: entrada.servico,
+              profissional: entrada.profissional,
+            },
+            extra: {
+              servicoNome: entrada?.servico?.nome || 'o atendimento',
+            },
+          })
+
+          // Encerra a entrada do dia para evitar recontato duplicado.
+          await banco.filaEspera.update({
+            where: { id: entrada.id },
+            data: { status: 'EXPIRADO' },
+          })
+          console.log(`[FilaEsperaFimDia] Reengajado e expirado: ${entrada.cliente.telefone} (${tenant.nome})`)
+        } catch (err) {
+          console.error(`[FilaEsperaFimDia] Falha tenant ${tenant.id}, entrada ${entrada.id}:`, err.message)
+        }
+      }
+    }
+  } catch (err) {
+    console.error('[FilaEsperaFimDia] Erro geral:', err.message)
+  }
+}
+
 // ─── Agendamento dos crons ────────────────────────────────────────────────────
 
 /**
@@ -682,7 +798,15 @@ const iniciarCronAutomacoes = () => {
     setInterval(enviarNpsPosAtendimento, TRINTA_MIN)
   }, 3 * 60 * 1000) // inicia 3min após startup
 
-  console.log('[Automações] Crons enterprise iniciados (2h, auto-cancel, retorno, reativação, parabéns, fila, NPS, relatório)')
+  // Reengajamento da fila: checagem por tenant a cada minuto.
+  // Cada tenant dispara no seu próprio horário local (campo filaReengajamentoHorario).
+  const UM_MIN = 60 * 1000
+  setTimeout(() => {
+    reengajarFilaFimDoDia()
+    setInterval(reengajarFilaFimDoDia, UM_MIN)
+  }, 4 * 60 * 1000)
+
+  console.log('[Automações] Crons enterprise iniciados (2h, auto-cancel, retorno, reativação, parabéns, fila, fila-fim-dia, NPS, relatório)')
 }
 
 module.exports = {
@@ -694,4 +818,5 @@ module.exports = {
   enviarParabens,
   enviarNpsPosAtendimento,
   enviarRelatorioDiario,
+  reengajarFilaFimDoDia,
 }

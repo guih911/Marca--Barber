@@ -157,12 +157,6 @@ const Login = () => {
         </a>
       </form>
 
-      <p className="text-center text-sm text-texto-sec mt-8">
-        Não tem uma conta?{' '}
-        <Link to="/cadastro" className="text-primaria font-medium hover:text-primaria-escura transition-colors">
-          Criar conta
-        </Link>
-      </p>
     </LayoutAuth>
   )
 }

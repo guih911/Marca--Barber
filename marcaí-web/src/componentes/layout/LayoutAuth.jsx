@@ -1,11 +1,13 @@
+import BrandLogo from './BrandLogo'
+
 // Layout split-screen para telas de autenticação
 // Lado esquerdo: gradiente + ilustração SVG
 // Lado direito: fundo branco + formulário
 const LayoutAuth = ({ children }) => {
   return (
-    <div className="min-h-screen flex">
+    <div className="h-[100dvh] w-full flex overflow-hidden">
       {/* Lado esquerdo - gradiente + ilustração */}
-      <div className="hidden lg:flex lg:w-1/2 bg-gradient-to-br from-[#111111] via-[#1b1714] to-[#2a2018] flex-col items-center justify-center p-12 relative overflow-hidden">
+      <div className="hidden lg:flex lg:w-1/2 h-full bg-gradient-to-br from-[#111111] via-[#1b1714] to-[#2a2018] flex-col items-center justify-center p-12 relative overflow-hidden">
         {/* Círculos decorativos */}
         <div className="absolute top-0 left-0 w-64 h-64 bg-white/5 rounded-full -translate-x-1/2 -translate-y-1/2" />
         <div className="absolute bottom-0 right-0 w-96 h-96 bg-white/5 rounded-full translate-x-1/3 translate-y-1/3" />
@@ -64,11 +66,16 @@ const LayoutAuth = ({ children }) => {
         </div>
 
         <div className="relative z-10 text-center">
-          <h2 className="text-white text-3xl font-bold mb-3">Escala sua barbearia</h2>
-          <h2 className="text-white/90 text-3xl font-bold mb-4">com o Don IA</h2>
-          <p className="text-white/70 text-base max-w-xs">
-            Don responde clientes, agenda e reativa sua base para você focar no atendimento premium.
-          </p>
+          <p className="text-primaria text-sm font-semibold uppercase tracking-[0.2em] mb-3">BarberMark</p>
+          <h2 className="text-white text-3xl font-bold mb-3">Tudo que sua</h2>
+          <h2 className="text-white/90 text-3xl font-bold mb-6">barbearia precisa</h2>
+          <ul className="text-white/70 text-sm space-y-3 text-left max-w-xs">
+            <li className="flex items-start gap-2"><span className="text-primaria mt-0.5">✓</span> Agenda online e confirmação automática</li>
+            <li className="flex items-start gap-2"><span className="text-primaria mt-0.5">✓</span> IA no WhatsApp respondendo clientes 24h</li>
+            <li className="flex items-start gap-2"><span className="text-primaria mt-0.5">✓</span> Lembretes que reduzem faltas e encaixes</li>
+            <li className="flex items-start gap-2"><span className="text-primaria mt-0.5">✓</span> Controle de caixa e faturamento do dia</li>
+            <li className="flex items-start gap-2"><span className="text-primaria mt-0.5">✓</span> Gestão de profissionais e serviços</li>
+          </ul>
         </div>
 
         {/* Pontos decorativos */}
@@ -80,21 +87,11 @@ const LayoutAuth = ({ children }) => {
       </div>
 
       {/* Lado direito - formulário */}
-      <div className="w-full lg:w-1/2 flex items-center justify-center p-8 bg-white">
-        <div className="w-full max-w-md">
+      <div className="w-full lg:w-1/2 h-full overflow-y-auto bg-white flex">
+        <div className="w-full max-w-md m-auto p-8">
           {/* Logo */}
-          <div className="mb-8" style={{ width: 260, maxWidth: '100%', height: 110, overflow: 'hidden' }}>
-            <img
-              src="/logo-light.jpeg"
-              alt="Marcaí Barber"
-              style={{
-                width: '100%',
-                height: '100%',
-                objectFit: 'cover',
-                objectPosition: 'center 44%',
-                display: 'block',
-              }}
-            />
+          <div className="mb-6 flex justify-center">
+            <BrandLogo variant="auth" className="max-w-full" />
           </div>
 
           {children}

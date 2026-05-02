@@ -44,8 +44,11 @@ const STATUS_META = {
 }
 
 const apiFetch = async (path) => {
-  const response = await fetch(`${API_URL}${path}`, {
+  const separador = path.includes('?') ? '&' : '?'
+  const pathComCacheBust = `${path}${separador}_ts=${Date.now()}`
+  const response = await fetch(`${API_URL}${pathComCacheBust}`, {
     headers: { 'Content-Type': 'application/json' },
+    cache: 'no-store',
   })
   const data = await response.json()
   if (!data.sucesso) throw new Error(data.erro?.mensagem || 'Erro ao carregar painel')
@@ -132,7 +135,7 @@ const LinhaAgenda = ({ agendamento, agora }) => {
       </div>
 
       <div className="min-w-0">
-        <p className="text-[11px] uppercase tracking-[0.2em] text-[#bfa57f]">Servico</p>
+        <p className="text-[11px] uppercase tracking-[0.2em] text-[#bfa57f]">Serviço</p>
         <p className="mt-2 truncate text-base text-[#f5ecdd] sm:text-lg">{agendamento.servicoNome}</p>
       </div>
 
@@ -242,7 +245,7 @@ const PainelTvPublico = () => {
     return (
       <div className="flex min-h-screen items-center justify-center bg-[#090805] text-white">
         <div className="text-center">
-          <img src={MARCAI_LOGO} alt="Marcai Barber" className="mx-auto mb-6 h-16 w-auto sm:mb-8 sm:h-20" />
+          <img src={MARCAI_LOGO} alt="BarberMark" className="mx-auto mb-6 h-16 w-auto sm:mb-8 sm:h-20" />
           <Loader2 className="mx-auto h-10 w-10 animate-spin text-[#d39b59]" />
           <p className="mt-4 text-sm uppercase tracking-[0.22em] text-[#b99d74]">Preparando painel da agenda</p>
         </div>
@@ -315,7 +318,7 @@ const PainelTvPublico = () => {
 
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
                 <div className="rounded-[20px] border border-[#4e3820] bg-[#120f0c] px-4 py-3 sm:rounded-[24px] sm:px-5">
-                  <p className="text-[11px] uppercase tracking-[0.22em] text-[#bfa57f]">Horario local</p>
+                  <p className="text-[11px] uppercase tracking-[0.22em] text-[#bfa57f]">Horário local</p>
                   <p className="mt-2 text-2xl font-semibold text-white sm:text-3xl">{relogio}</p>
                 </div>
 
@@ -361,7 +364,7 @@ const PainelTvPublico = () => {
           <div className="mt-6">
             <CardSecao
               titulo="Agenda do dia"
-              subtitulo="Visao limpa da ordem dos atendimentos para acompanhar no monitor."
+              subtitulo="Visão limpa da ordem dos atendimentos para acompanhar no monitor."
               acao={
                 <div className="flex flex-col items-stretch gap-2 sm:flex-row sm:items-center">
                   <span className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 text-center text-xs uppercase tracking-[0.18em] text-[#c8b08b]">

@@ -27,7 +27,7 @@ import ConfigProfissionais from './paginas/config/ConfigProfissionais'
 import ConfigHorarios from './paginas/config/ConfigHorarios'
 import ConfigClientes from './paginas/config/ConfigClientes'
 import ConfigUsuarios from './paginas/config/ConfigUsuarios'
-import ConfigIntegracoes from './paginas/config/ConfigIntegracoes'
+import ConfigIntegracoesWhatsappMeta from './paginas/config/ConfigIntegracoesWhatsappMeta'
 import ConfigRecursos from './paginas/config/ConfigRecursos'
 import ConfigPlanoSalao from './paginas/config/ConfigPlanoSalao'
 // Public
@@ -256,8 +256,10 @@ const App = () => {
         <Route path="config/servicos" element={<ConfigServicos />} />
         <Route path="config/pacotes" element={<Navigate to="/dashboard" replace />} />
         <Route path="config/recursos" element={<ConfigRecursos />} />
+        <Route path="config/don-barber" element={<Navigate to="/dashboard" replace />} />
         <Route path="config/usuarios" element={<GuardaPlano planoPermitido="SALAO" nome="Usuários"><ConfigUsuarios /></GuardaPlano>} />
-        <Route path="config/integracoes" element={<ConfigIntegracoes />} />
+        <Route path="config/integracoes" element={<Navigate to="/dashboard" replace />} />
+        <Route path="config/integracoes/guia-whatsapp" element={<ConfigIntegracoesWhatsappMeta />} />
 
         <Route path="config/plano" element={<ConfigPlanoSalao />} />
       </Route>

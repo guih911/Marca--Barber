@@ -19,12 +19,22 @@ const upload = multer({
     else cb(new Error('Envie uma planilha CSV (.csv)'))
   },
 })
+const uploadAudioMassa = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 16 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    if (String(file.mimetype || '').startsWith('audio/')) cb(null, true)
+    else cb(new Error('Envie um arquivo de áudio válido.'))
+  },
+})
 
 router.use(autenticar)
 
 router.get('/', clientesControlador.listar)
+router.get('/buscar-por-telefone', clientesControlador.buscarPorTelefone)
 router.get('/aniversariantes', clientesControlador.aniversariantes)
 router.post('/importar', upload.single('arquivo'), clientesControlador.importar)
+router.post('/mensagem-massa', uploadAudioMassa.single('audio'), clientesControlador.enviarMensagemMassa)
 router.get('/:id', clientesControlador.buscarPorId)
 
 router.post(

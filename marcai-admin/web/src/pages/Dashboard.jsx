@@ -1,40 +1,55 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../api'
-import { DollarSign, TrendingUp, Building2, UserPlus, Clock, Scissors, Users, CalendarClock } from 'lucide-react'
+import {
+  DollarSign, TrendingUp, Building2, UserPlus,
+  Activity, Users, AlertTriangle, CheckCircle2,
+  ArrowUpRight, Zap
+} from 'lucide-react'
 
-const fmt = (v) => `R$ ${v.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`
+const fmt = (v) => `R$ ${Number(v || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`
+const fmtNum = (v) => Number(v || 0).toLocaleString('pt-BR')
 
-const Card = ({ icon: Icon, label, value, sub, color = 'bg-primaria' }) => (
-  <div className="bg-white rounded-xl border border-slate-200 p-5">
-    <div className="flex items-center gap-3 mb-3">
-      <div className={`w-10 h-10 ${color} rounded-xl flex items-center justify-center shrink-0`}>
-        <Icon size={18} className="text-white" />
+function KpiCard({ icon: Icon, label, value, sub, colorClass = 'bg-primaria', trend }) {
+  return (
+    <div className="kpi-card animate-fade-in">
+      <div className="flex items-start justify-between mb-4">
+        <div className={`w-10 h-10 ${colorClass} rounded-xl flex items-center justify-center shadow-sm`}>
+          <Icon size={18} className="text-white" />
+        </div>
+        {trend !== undefined && (
+          <span className={`flex items-center gap-0.5 text-xs font-semibold ${trend >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
+            <ArrowUpRight size={12} className={trend < 0 ? 'rotate-180' : ''} />
+            {Math.abs(trend)}%
+          </span>
+        )}
       </div>
-      <p className="text-xs text-slate-500 uppercase font-semibold tracking-wide">{label}</p>
+      <p className="text-2xl font-bold text-slate-800 mb-1">{value}</p>
+      <p className="text-xs text-slate-500 font-semibold uppercase tracking-wide">{label}</p>
+      {sub && <p className="text-xs text-slate-400 mt-1">{sub}</p>}
     </div>
-    <p className="text-2xl font-bold text-slate-800">{value}</p>
-    {sub && <p className="text-xs text-slate-400 mt-1">{sub}</p>}
-  </div>
-)
+  )
+}
 
-const Badge = ({ label, value, color }) => (
-  <div className="flex items-center justify-between py-2">
-    <span className="text-sm text-slate-600">{label}</span>
-    <span className={`px-2.5 py-1 rounded-full text-xs font-bold ${color}`}>{value}</span>
-  </div>
-)
-
-const MODULOS_ADMIN = [
-  'Dashboard executivo',
-  'Agenda e capacidade',
-  'Clientes e recorrencia',
-  'Servicos e barbeiros',
-  'Planos mensais e combos',
-  'Lista de espera',
-  'Atendimentos da IA',
-  'Metricas operacionais',
-]
+function BarChart({ items, colorClass = 'bg-primaria' }) {
+  const max = Math.max(...items.map(i => i.value), 1)
+  return (
+    <div className="space-y-3">
+      {items.map((item) => (
+        <div key={item.label} className="flex items-center gap-3">
+          <span className="text-xs text-slate-500 w-24 shrink-0 truncate">{item.label}</span>
+          <div className="flex-1 bg-slate-100 rounded-full h-2 overflow-hidden">
+            <div
+              className={`h-full ${colorClass} rounded-full transition-all duration-700`}
+              style={{ width: `${(item.value / max) * 100}%` }}
+            />
+          </div>
+          <span className="text-xs font-semibold text-slate-700 w-8 text-right shrink-0">{item.value}</span>
+        </div>
+      ))}
+    </div>
+  )
+}
 
 export default function Dashboard() {
   const nav = useNavigate()
@@ -42,97 +57,196 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    api('/api/admin/dashboard').then(setD).catch(console.error).finally(() => setLoading(false))
+    api('/api/admin/dashboard')
+      .then(setD)
+      .catch(console.error)
+      .finally(() => setLoading(false))
   }, [])
 
-  if (loading) return <div className="flex items-center justify-center h-64 text-slate-400">Carregando...</div>
-  if (!d) return <div className="text-red-500 p-4">Erro ao carregar dashboard</div>
+  if (loading) return (
+    <div className="flex items-center justify-center h-64">
+      <div className="flex flex-col items-center gap-3 text-slate-400">
+        <div className="w-8 h-8 border-2 border-slate-300 border-t-primaria rounded-full animate-spin" />
+        <span className="text-sm">Carregando dashboard...</span>
+      </div>
+    </div>
+  )
+
+  if (!d) return (
+    <div className="flex items-center justify-center h-64">
+      <div className="flex flex-col items-center gap-2 text-red-500">
+        <AlertTriangle size={24} />
+        <span className="text-sm">Erro ao carregar dashboard</span>
+      </div>
+    </div>
+  )
+
+  const planoChartData = [
+    { label: 'Plano Solo', value: d.planos.solo },
+    { label: 'Plano Salão', value: d.planos.salao },
+    { label: 'Sem plano', value: Math.max(0, d.tenantsAtivos - d.planos.solo - d.planos.salao) },
+  ]
+
+  const cicloChartData = [
+    { label: 'Mensal', value: d.ciclos.mensal },
+    { label: 'Semestral', value: d.ciclos.semestral },
+    { label: 'Anual', value: d.ciclos.anual },
+  ]
+
+  const statusOk = d.tenantsAtivos > 0 && d.onboardingPendente === 0
 
   return (
-    <div>
-      <h1 className="text-xl font-bold text-slate-800 mb-1">Dashboard administrativo</h1>
-      <p className="text-sm text-slate-500 mb-6">Visao consolidada de receita, assinantes e operacao</p>
-
-      {/* Cards principais */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-        <Card icon={DollarSign} label="MRR" value={fmt(d.mrr)} sub="Receita mensal recorrente" color="bg-emerald-600" />
-        <Card icon={TrendingUp} label="ARR" value={fmt(d.arr)} sub="Projecao anual" color="bg-green-600" />
-        <Card icon={Building2} label="Assinantes" value={d.tenantsAtivos} sub={`${d.totalTenants} cadastrados total`} color="bg-primaria" />
-        <Card icon={UserPlus} label="Novos (30d)" value={d.novos30d} sub={`${d.novos7d} nos ultimos 7 dias`} color="bg-blue-500" />
+    <div className="space-y-6 animate-fade-in">
+      {/* Header */}
+      <div className="flex items-start justify-between">
+        <div>
+          <h1 className="text-xl font-bold text-slate-800">Dashboard executivo</h1>
+          <p className="text-sm text-slate-500 mt-0.5">Visão consolidada · atualizado agora</p>
+        </div>
+        <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold ${statusOk ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-amber-50 text-amber-700 border border-amber-200'}`}>
+          {statusOk ? <CheckCircle2 size={12} /> : <AlertTriangle size={12} />}
+          {statusOk ? 'Operação normal' : `${d.onboardingPendente} pendências`}
+        </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
-        {/* Distribuicao por plano */}
-        <div className="bg-white rounded-xl border border-slate-200 p-5">
-          <p className="text-xs text-slate-500 uppercase font-semibold tracking-wide mb-4">Por Plano</p>
-          <Badge label="Solo (R$ 55,90)" value={d.planos.solo} color="bg-blue-100 text-blue-700" />
-          <Badge label="Salao (R$ 139,90)" value={d.planos.salao} color="bg-emerald-100 text-emerald-700" />
-          <div className="border-t border-slate-100 mt-2 pt-2">
-            <Badge label="Sem plano / free" value={d.tenantsAtivos - d.planos.solo - d.planos.salao} color="bg-slate-100 text-slate-500" />
+      {/* KPI row */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <KpiCard
+          icon={DollarSign}
+          label="MRR"
+          value={fmt(d.mrr)}
+          sub="Receita mensal recorrente"
+          colorClass="bg-emerald-500"
+        />
+        <KpiCard
+          icon={TrendingUp}
+          label="ARR"
+          value={fmt(d.arr)}
+          sub="Projeção anual"
+          colorClass="bg-green-600"
+        />
+        <KpiCard
+          icon={Building2}
+          label="Assinantes ativos"
+          value={fmtNum(d.tenantsAtivos)}
+          sub={`${fmtNum(d.totalTenants)} cadastrados total`}
+          colorClass="bg-primaria"
+        />
+        <KpiCard
+          icon={UserPlus}
+          label="Novos (30d)"
+          value={fmtNum(d.novos30d)}
+          sub={`${fmtNum(d.novos7d)} nos últimos 7 dias`}
+          colorClass="bg-blue-500"
+        />
+      </div>
+
+      {/* Charts + Status row */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        {/* Por Plano */}
+        <div className="card p-5">
+          <p className="section-title mb-4">Distribuição por plano</p>
+          <BarChart items={planoChartData} colorClass="bg-primaria" />
+          <div className="mt-4 pt-4 border-t border-slate-100 grid grid-cols-2 gap-2">
+            <div>
+              <p className="text-lg font-bold text-slate-800">{d.planos.solo}</p>
+              <p className="text-xs text-slate-500">Solo · R$ 55,90</p>
+            </div>
+            <div>
+              <p className="text-lg font-bold text-slate-800">{d.planos.salao}</p>
+              <p className="text-xs text-slate-500">Salão · R$ 139,90</p>
+            </div>
           </div>
         </div>
 
-        {/* Distribuicao por ciclo */}
-        <div className="bg-white rounded-xl border border-slate-200 p-5">
-          <p className="text-xs text-slate-500 uppercase font-semibold tracking-wide mb-4">Por Ciclo</p>
-          <Badge label="Mensal" value={d.ciclos.mensal} color="bg-slate-100 text-slate-600" />
-          <Badge label="Semestral (10% off)" value={d.ciclos.semestral} color="bg-amber-100 text-amber-700" />
-          <Badge label="Anual (20% off)" value={d.ciclos.anual} color="bg-emerald-100 text-emerald-700" />
+        {/* Por Ciclo */}
+        <div className="card p-5">
+          <p className="section-title mb-4">Distribuição por ciclo</p>
+          <BarChart items={cicloChartData} colorClass="bg-amber-500" />
+          <div className="mt-4 pt-4 border-t border-slate-100">
+            <p className="text-xs text-slate-500">Clientes anuais recebem 20% de desconto</p>
+          </div>
         </div>
 
         {/* Status */}
-        <div className="bg-white rounded-xl border border-slate-200 p-5">
-          <p className="text-xs text-slate-500 uppercase font-semibold tracking-wide mb-4">Status</p>
-          <Badge label="Ativos" value={d.tenantsAtivos} color="bg-emerald-100 text-emerald-700" />
-          <Badge label="Onboarding pendente" value={d.onboardingPendente} color="bg-amber-100 text-amber-700" />
-          <Badge label="Inativos" value={d.totalTenants - d.tenantsAtivos} color="bg-red-100 text-red-600" />
+        <div className="card p-5">
+          <p className="section-title mb-4">Status da base</p>
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
+                <span className="text-sm text-slate-700">Ativos</span>
+              </div>
+              <span className="text-sm font-bold text-slate-800">{d.tenantsAtivos}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="w-2.5 h-2.5 rounded-full bg-amber-500" />
+                <span className="text-sm text-slate-700">Onboarding pendente</span>
+              </div>
+              <span className={`text-sm font-bold ${d.onboardingPendente > 0 ? 'text-amber-600' : 'text-slate-800'}`}>
+                {d.onboardingPendente}
+              </span>
+            </div>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="w-2.5 h-2.5 rounded-full bg-red-400" />
+                <span className="text-sm text-slate-700">Inativos</span>
+              </div>
+              <span className="text-sm font-bold text-slate-800">{d.totalTenants - d.tenantsAtivos}</span>
+            </div>
+            <div className="mt-2 pt-3 border-t border-slate-100">
+              <div className="flex items-center gap-2 text-xs text-slate-500">
+                <Activity size={12} />
+                Taxa de ativação: {d.totalTenants > 0 ? Math.round((d.tenantsAtivos / d.totalTenants) * 100) : 0}%
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 
-      {/* Ultimos cadastros */}
-      <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
-        <div className="px-5 py-4 border-b border-slate-100">
-          <p className="text-xs text-slate-500 uppercase font-semibold tracking-wide">Ultimos cadastros</p>
+      {/* Últimos cadastros */}
+      <div className="card">
+        <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
+          <p className="section-title">Últimos cadastros</p>
+          <button
+            onClick={() => nav('/tenants')}
+            className="text-xs text-primaria hover:text-primaria-escura font-semibold flex items-center gap-1"
+          >
+            Ver todos <ArrowUpRight size={12} />
+          </button>
         </div>
-        <table className="w-full text-sm">
+        <table className="data-table">
           <thead>
-            <tr className="bg-slate-50 text-slate-500 text-xs uppercase">
-              <th className="text-left px-5 py-2.5">Nome</th>
-              <th className="text-left px-5 py-2.5">Plano</th>
-              <th className="text-left px-5 py-2.5">Ciclo</th>
-              <th className="text-center px-5 py-2.5">Status</th>
-              <th className="text-left px-5 py-2.5">Data</th>
+            <tr>
+              <th>Nome</th>
+              <th>Plano</th>
+              <th>Ciclo</th>
+              <th className="text-center">Status</th>
+              <th>Data</th>
             </tr>
           </thead>
           <tbody>
             {d.ultimosTenants.map(t => (
-              <tr key={t.id} onClick={() => nav(`/tenants/${t.id}`)} className="border-t border-slate-100 hover:bg-slate-50 cursor-pointer transition-colors">
-                <td className="px-5 py-3 font-medium text-slate-800">{t.nome}</td>
-                <td className="px-5 py-3">
-                  <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
-                    t.plano === 'SALAO' ? 'bg-emerald-100 text-emerald-700' : 'bg-blue-100 text-blue-700'
-                  }`}>{t.plano || '—'}</span>
+              <tr key={t.id} onClick={() => nav(`/tenants/${t.id}`)} className="cursor-pointer">
+                <td className="font-medium text-slate-800">{t.nome}</td>
+                <td>
+                  <span className={`badge ${t.plano === 'SALAO' ? 'badge-emerald' : t.plano === 'SOLO' ? 'badge-blue' : 'badge-slate'}`}>
+                    {t.plano || '—'}
+                  </span>
                 </td>
-                <td className="px-5 py-3 text-slate-500 text-xs">{t.ciclo || 'Mensal'}</td>
-                <td className="px-5 py-3 text-center">
-                  <span className={`inline-block w-2 h-2 rounded-full ${t.ativo ? 'bg-emerald-500' : 'bg-red-400'}`} />
+                <td className="text-slate-500">{t.ciclo || 'Mensal'}</td>
+                <td className="text-center">
+                  <span className={`inline-flex items-center gap-1 text-xs font-medium ${t.ativo ? 'text-emerald-600' : 'text-red-500'}`}>
+                    <span className={`w-1.5 h-1.5 rounded-full ${t.ativo ? 'bg-emerald-500' : 'bg-red-400'}`} />
+                    {t.ativo ? 'Ativo' : 'Inativo'}
+                  </span>
                 </td>
-                <td className="px-5 py-3 text-slate-400 text-xs">{new Date(t.criadoEm).toLocaleDateString('pt-BR')}</td>
+                <td className="text-slate-400 text-xs">{new Date(t.criadoEm).toLocaleDateString('pt-BR')}</td>
               </tr>
             ))}
           </tbody>
         </table>
-      </div>
-
-      <div className="mt-6 bg-white rounded-xl border border-slate-200 p-5">
-        <p className="text-xs text-slate-500 uppercase font-semibold tracking-wide mb-3">Escopo operacional do admin</p>
-        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-2">
-          {MODULOS_ADMIN.map((modulo) => (
-            <div key={modulo} className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
-              {modulo}
-            </div>
-          ))}
-        </div>
       </div>
     </div>
   )

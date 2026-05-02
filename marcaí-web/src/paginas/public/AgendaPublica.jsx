@@ -33,6 +33,7 @@ import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '.
 
 const API_URL = import.meta.env.VITE_API_URL ?? ''
 const MARCAI_LOGO = '/logo.svg'
+const EXIBIR_PRODUTOS_PUBLICOS = false
 
 const apiFetch = async (path, opts = {}) => {
   const res = await fetch(`${API_URL}${path}`, {
@@ -40,7 +41,12 @@ const apiFetch = async (path, opts = {}) => {
     ...opts,
   })
   const data = await res.json()
-  if (!data.sucesso) throw new Error(data.erro?.mensagem || 'Erro')
+  if (!data.sucesso) {
+    const erro = new Error(data.erro?.mensagem || 'Erro')
+    erro.code = data.erro?.codigo || ''
+    erro.status = res.status
+    throw erro
+  }
   return data.dados
 }
 
@@ -213,7 +219,7 @@ const limparDadosLocais = (slug) => {
 }
 
 // ─── Tela de Login OTP ──────────────────────────────────────────────────────
-const TelaLoginOTP = ({ slug, onLogin, tenant, compacta = false }) => {
+const TelaLoginOTP = ({ slug, onLogin, onClienteNaoCadastrado, tenant, compacta = false }) => {
   const [telefone, setTelefone] = useState('')
   const [codigo, setCodigo] = useState('')
   const [etapaOTP, setEtapaOTP] = useState('inicio') // inicio | codigo
@@ -233,6 +239,10 @@ const TelaLoginOTP = ({ slug, onLogin, tenant, compacta = false }) => {
       if (!tel) setTelefone(digitos)
       setEtapaOTP('codigo')
     } catch (e) {
+      if (e?.code === 'CLIENTE_NAO_CADASTRADO') {
+        onClienteNaoCadastrado?.(digitos)
+        return
+      }
       setErro(e.message || 'Erro ao enviar código')
     } finally {
       setEnviando(false)
@@ -337,7 +347,7 @@ const TelaLoginOTP = ({ slug, onLogin, tenant, compacta = false }) => {
               </button>
 
               <p style={{ color: C.textDim, fontSize: 11, textAlign: 'center', marginTop: 12 }}>
-                Primeiro acesso? Sem problema! Vamos criar sua conta automaticamente.
+                Primeiro acesso? Faça seu primeiro agendamento para criar seu cadastro.
               </p>
             </>
           ) : (
@@ -530,7 +540,7 @@ const AgendaPublica = () => {
 
   useEffect(() => {
     if (location.pathname.endsWith('/details')) setAbaAtiva('detalhes')
-    else if (location.pathname.endsWith('/produtos')) setAbaAtiva('produtos')
+    else if (location.pathname.endsWith('/produtos')) setAbaAtiva(EXIBIR_PRODUTOS_PUBLICOS ? 'produtos' : 'detalhes')
     else if (location.pathname.endsWith('/profissionais')) setAbaAtiva('profissionais')
     else if (location.pathname.endsWith('/agendar')) setAbaAtiva('agendar')
     else if (location.pathname.endsWith('/conta')) setAbaAtiva('conta')
@@ -570,7 +580,7 @@ const AgendaPublica = () => {
   }, [dadosSalvos, slug])
 
   useEffect(() => {
-    if (!tenant?.entregaAtivo || !slug) return
+    if (!EXIBIR_PRODUTOS_PUBLICOS || !tenant?.entregaAtivo || !slug) return
     apiFetch(`/api/public/${slug}/produtos`)
       .then((dados) => {
         setProdutosVenda(Array.isArray(dados?.produtos) ? dados.produtos : [])
@@ -583,7 +593,7 @@ const AgendaPublica = () => {
   }, [tenant?.entregaAtivo, slug])
 
   useEffect(() => {
-    if (!tenant?.entregaAtivo || !telClienteLimpo || !slug) return
+    if (!EXIBIR_PRODUTOS_PUBLICOS || !tenant?.entregaAtivo || !telClienteLimpo || !slug) return
     apiFetch(`/api/public/${slug}/meus-pedidos?tel=${telClienteLimpo}`)
       .then((dados) => setMeusPedidos(Array.isArray(dados) ? dados : []))
       .catch(() => setMeusPedidos([]))
@@ -1351,7 +1361,7 @@ const AgendaPublica = () => {
           <div className="public-brand-block">
             <img
               src={tenant?.logoUrl ? resolverMediaUrl(tenant.logoUrl) : MARCAI_LOGO}
-              alt={tenant?.nome || 'Marcaí Barber'}
+              alt={tenant?.nome || 'BarberMark'}
               className="public-brand-logo"
             />
             <div className="public-brand-copy">
@@ -1400,7 +1410,7 @@ const AgendaPublica = () => {
         <div className="public-content-shell public-tabs-shell">
           {[
             { id: 'detalhes', label: 'Detalhes' },
-            ...(tenant?.entregaAtivo ? [{ id: 'produtos', label: 'Produtos' }] : []),
+            ...(EXIBIR_PRODUTOS_PUBLICOS && tenant?.entregaAtivo ? [{ id: 'produtos', label: 'Produtos' }] : []),
             { id: 'conta', label: 'Minha conta' },
           ].map((aba) => {
             const ativa = abaAtiva === aba.id
@@ -1931,7 +1941,7 @@ const AgendaPublica = () => {
               )}
             </div>
 
-            {Array.isArray(galeria) && galeria.length > 0 && (
+            {(tenant?.galeriaAtivo || (Array.isArray(galeria) && galeria.length > 0)) && (
               <div style={{ background: 'linear-gradient(180deg, rgba(22,22,22,0.98), rgba(16,16,16,0.98))', border: `1px solid ${C.border}`, borderRadius: 20, padding: 18 }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 14 }}>
                   <div>
@@ -1940,34 +1950,40 @@ const AgendaPublica = () => {
                   </div>
                   <div style={{ color: C.textDim, fontSize: 12 }}>{galeria.length} fotos</div>
                 </div>
-                <div className="details-gallery-grid">
-                  {galeria.map((foto, index) => (
-                    <button
-                      key={foto.id}
-                      type="button"
-                      className={`details-gallery-button ${index === 0 ? 'details-gallery-card-feature' : ''}`}
-                      onClick={() => setFotoAmpliada(foto)}
-                      style={{
-                        borderRadius: 18,
-                        overflow: 'hidden',
-                        background: C.bg,
-                        border: `1px solid ${C.border}`,
-                      }}
-                    >
-                      <div className={index === 0 ? 'details-gallery-media-feature' : 'details-gallery-media'} style={{ background: '#0f0f0f' }}>
-                        <img src={resolverMediaUrl(foto.fotoUrl)} alt={foto.titulo || foto.servicoNome || 'Foto da galeria'} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                      </div>
-                      {(foto.titulo || foto.servicoNome || foto.profissional) && (
-                        <div style={{ padding: 12 }}>
-                          <p style={{ color: C.textPrimary, fontSize: 13, fontWeight: 700, margin: 0 }}>{foto.titulo || foto.servicoNome || 'Trabalho recente'}</p>
-                          {(foto.profissional || foto.servicoNome) && (
-                            <p style={{ color: C.textDim, fontSize: 11, margin: '5px 0 0' }}>{[foto.profissional, foto.servicoNome].filter(Boolean).join(' • ')}</p>
-                          )}
+                {Array.isArray(galeria) && galeria.length > 0 ? (
+                  <div className="details-gallery-grid">
+                    {galeria.map((foto, index) => (
+                      <button
+                        key={foto.id}
+                        type="button"
+                        className={`details-gallery-button ${index === 0 ? 'details-gallery-card-feature' : ''}`}
+                        onClick={() => setFotoAmpliada(foto)}
+                        style={{
+                          borderRadius: 18,
+                          overflow: 'hidden',
+                          background: C.bg,
+                          border: `1px solid ${C.border}`,
+                        }}
+                      >
+                        <div className={index === 0 ? 'details-gallery-media-feature' : 'details-gallery-media'} style={{ background: '#0f0f0f' }}>
+                          <img src={resolverMediaUrl(foto.fotoUrl)} alt={foto.titulo || foto.servicoNome || 'Foto da galeria'} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                         </div>
-                      )}
-                    </button>
-                  ))}
-                </div>
+                        {(foto.titulo || foto.servicoNome || foto.profissional) && (
+                          <div style={{ padding: 12 }}>
+                            <p style={{ color: C.textPrimary, fontSize: 13, fontWeight: 700, margin: 0 }}>{foto.titulo || foto.servicoNome || 'Trabalho recente'}</p>
+                            {(foto.profissional || foto.servicoNome) && (
+                              <p style={{ color: C.textDim, fontSize: 11, margin: '5px 0 0' }}>{[foto.profissional, foto.servicoNome].filter(Boolean).join(' • ')}</p>
+                            )}
+                          </div>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <div style={{ color: C.textDim, fontSize: 13, border: `1px dashed ${C.border}`, borderRadius: 14, padding: 12 }}>
+                    A galeria está habilitada, mas ainda não há fotos publicadas.
+                  </div>
+                )}
               </div>
             )}
 
@@ -2002,7 +2018,7 @@ const AgendaPublica = () => {
           </div>
         )}
 
-        {abaAtiva === 'produtos' && (
+        {EXIBIR_PRODUTOS_PUBLICOS && abaAtiva === 'produtos' && (
           <div className="fade-in" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
             <div
               style={{
@@ -2454,6 +2470,15 @@ const AgendaPublica = () => {
               slug={slug}
               tenant={tenant}
               compacta
+              onClienteNaoCadastrado={(telefoneNovo) => {
+                setDadosSalvos(null)
+                setNomeCliente('')
+                setClienteConsultado(null)
+                setTelefoneCliente(mascaraTelefone(telefoneNovo))
+                setErroCliente('Número novo detectado. Faça seu primeiro agendamento para concluir o cadastro.')
+                setEtapa(1)
+                setAbaAtiva('agendar')
+              }}
               onLogin={(dados) => {
                 setDadosSalvos(dados)
                 setTelefoneCliente(formatarTelefoneExibicao(dados.telefone || ''))

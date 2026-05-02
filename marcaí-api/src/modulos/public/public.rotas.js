@@ -20,6 +20,7 @@ const validarHash = (req, res, next) => {
 }
 
 router.get('/check-in', publicControlador.checkIn)
+router.patch('/check-in/confirmar', publicControlador.confirmarCheckIn)
 router.get('/painel/:slug/:hash', validarSlug, validarHash, publicControlador.painelTv)
 router.get('/:slug/info', validarSlug, publicControlador.info)
 router.get('/:slug/produtos', validarSlug, publicControlador.produtos)

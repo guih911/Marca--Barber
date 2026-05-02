@@ -28,6 +28,15 @@ const atualizarConfiguracaoIA = async (req, res, next) => {
   }
 }
 
+const sugerirMensagemConfigDon = async (req, res, next) => {
+  try {
+    const resultado = await tenantServico.sugerirMensagemConfigDon(req.usuario.tenantId, req.body.campo)
+    res.json({ sucesso: true, dados: resultado })
+  } catch (erro) {
+    next(erro)
+  }
+}
+
 const uploadLogo = async (req, res, next) => {
   try {
     if (!req.file) throw { status: 400, mensagem: 'Nenhum arquivo enviado', codigo: 'SEM_ARQUIVO' }
@@ -53,4 +62,4 @@ const listarUsuarios = async (req, res, next) => {
   }
 }
 
-module.exports = { buscarMeu, atualizar, atualizarConfiguracaoIA, uploadLogo, listarUsuarios }
+module.exports = { buscarMeu, atualizar, atualizarConfiguracaoIA, sugerirMensagemConfigDon, uploadLogo, listarUsuarios }

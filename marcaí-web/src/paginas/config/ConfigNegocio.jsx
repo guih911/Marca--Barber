@@ -1,5 +1,5 @@
-import { useState, useEffect, useRef } from 'react'
-import { Loader2, Save, CheckCircle2, Bell, CreditCard, Baby, MapPin, Phone, Star, MonitorPlay, Copy, ExternalLink, ShieldCheck, Camera, Plus, Trash2 } from 'lucide-react'
+import { useState, useEffect, useRef, useMemo } from 'react'
+import { Loader2, Save, CheckCircle2, Bell, CreditCard, Baby, MapPin, Phone, Star, MonitorPlay, Copy, ExternalLink, ShieldCheck, Camera, Plus, Trash2, FileText, RefreshCw, Send } from 'lucide-react'
 import api from '../../servicos/api'
 import { segmentos } from '../../lib/utils'
 import { useToast } from '../../contextos/ToastContexto'
@@ -7,6 +7,8 @@ import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '.
 import useAuth from '../../hooks/useAuth'
 
 const API_URL = import.meta.env.VITE_API_URL ?? ''
+const EXIBIR_RECURSOS_PRODUTOS = false
+const EXIBIR_TEMPLATES_META = false
 
 const TIPOS_PAGAMENTO = [
   { valor: 'PIX', label: 'PIX' },
@@ -25,7 +27,6 @@ const DIFERENCIAIS_OPCOES = [
   { valor: 'cerveja', label: '🍺 Cerveja/drinks' },
   { valor: 'ar_condicionado', label: '❄️ Ar-condicionado' },
   { valor: 'musica_ao_vivo', label: '🎸 Música ao vivo' },
-  { valor: 'venda_produtos', label: '🛍️ Venda de produtos' },
 ]
 
 const LEMBRETES_OPCOES = [
@@ -48,6 +49,22 @@ const HORARIOS_ENTREGA_OPCOES = Array.from({ length: 48 }, (_, indice) => {
   const valor = `${hora}:${minuto}`
   return { valor, label: valor }
 })
+
+const HORAS_CONFIRMACAO_OPCOES = [
+  { valor: 1, label: '1 hora antes' },
+  { valor: 2, label: '2 horas antes' },
+  { valor: 4, label: '4 horas antes (recomendado)' },
+  { valor: 6, label: '6 horas antes' },
+  { valor: 12, label: '12 horas antes' },
+  { valor: 24, label: '24 horas antes' },
+]
+
+const MARGEM_AUTO_CANCELAMENTO_OPCOES = [
+  { valor: 0, label: 'Sem margem extra (cancela no limite)' },
+  { valor: 15, label: '15 minutos de tolerância (recomendado)' },
+  { valor: 30, label: '30 minutos de tolerância' },
+  { valor: 60, label: '60 minutos de tolerância' },
+]
 
 const parseJanelasEntregaTexto = (texto = '') => (
   String(texto)
@@ -78,6 +95,10 @@ const ConfigNegocio = () => {
     facebookUrl: '',
     tiktokUrl: '',
     timezone: 'America/Sao_Paulo',
+    autoCancelarNaoConfirmados: true,
+    horasAutoCancelar: 4,
+    minutosMargemAutoCancelamento: 15,
+    filaReengajamentoHorario: '20:30',
     lembreteMinutosAntes: 60,
     lembretesMinutosAntes: [60],
     exigirConfirmacaoPresenca: false,
@@ -107,6 +128,13 @@ const ConfigNegocio = () => {
   const [novaJanelaEntregaFim, setNovaJanelaEntregaFim] = useState('19:00')
   const inputLogoRef = useRef(null)
 
+  const [metaConectado, setMetaConectado] = useState(false)
+  const [templatesMeta, setTemplatesMeta] = useState([])
+  const [carregandoTemplates, setCarregandoTemplates] = useState(false)
+  const [templateChave, setTemplateChave] = useState('')
+  const [templateEnvio, setTemplateEnvio] = useState({ telefone: '', paramsLinha: '' })
+  const [enviandoTemplate, setEnviandoTemplate] = useState(false)
+
   useEffect(() => {
     api.get('/api/tenants/meu').then((res) => {
       const t = res.dados || {}
@@ -128,6 +156,14 @@ const ConfigNegocio = () => {
         facebookUrl: t.facebookUrl || '',
         tiktokUrl: t.tiktokUrl || '',
         timezone: t.timezone || 'America/Sao_Paulo',
+        autoCancelarNaoConfirmados: t.autoCancelarNaoConfirmados !== false,
+        horasAutoCancelar: Number(t.horasAutoCancelar) > 0 ? Number(t.horasAutoCancelar) : 4,
+        minutosMargemAutoCancelamento: Number.isFinite(Number(t.minutosMargemAutoCancelamento))
+          ? Math.max(0, Number(t.minutosMargemAutoCancelamento))
+          : 15,
+        filaReengajamentoHorario: /^([01]\d|2[0-3]):([0-5]\d)$/.test(String(t.filaReengajamentoHorario || ''))
+          ? String(t.filaReengajamentoHorario)
+          : '20:30',
         lembreteMinutosAntes: t.lembreteMinutosAntes ?? 60,
         lembretesMinutosAntes: Array.isArray(t.lembretesMinutosAntes) && t.lembretesMinutosAntes.length > 0
           ? t.lembretesMinutosAntes.map(Number).filter(Number.isFinite).sort((a, b) => b - a)
@@ -150,7 +186,103 @@ const ConfigNegocio = () => {
       })
       setCarregando(false)
     })
+    api.get('/api/ia/meta/config')
+      .then((r) => setMetaConectado(!!r.dados?.status?.conectado))
+      .catch(() => setMetaConectado(false))
   }, [])
+
+  const recarregarTemplatesMeta = () => {
+    if (!metaConectado) return
+    setCarregandoTemplates(true)
+    api
+      .get('/api/ia/meta/message-templates')
+      .then((r) => {
+        setTemplatesMeta(r.dados?.templates || [])
+        toast('Templates atualizados.', 'sucesso')
+      })
+      .catch((err) => {
+        setTemplatesMeta([])
+        toast(err?.erro?.mensagem || 'Não foi possível listar os templates oficiais.', 'erro')
+      })
+      .finally(() => setCarregandoTemplates(false))
+  }
+
+  useEffect(() => {
+    if (!metaConectado) {
+      setTemplatesMeta([])
+      setTemplateChave('')
+      return
+    }
+    setCarregandoTemplates(true)
+    let cancel = false
+    api
+      .get('/api/ia/meta/message-templates')
+      .then((r) => {
+        if (!cancel) setTemplatesMeta(r.dados?.templates || [])
+      })
+      .catch(() => {
+        if (!cancel) setTemplatesMeta([])
+      })
+      .finally(() => {
+        if (!cancel) setCarregandoTemplates(false)
+      })
+    return () => {
+      cancel = true
+    }
+  }, [metaConectado])
+
+  const opcoesTemplate = useMemo(
+    () =>
+      templatesMeta.map((t) => ({
+        chave: `${t.name}|||${t.language}`,
+        ...t,
+      })),
+    [templatesMeta],
+  )
+
+  const templateAtual = useMemo(
+    () => opcoesTemplate.find((t) => t.chave === templateChave) || null,
+    [opcoesTemplate, templateChave],
+  )
+
+  const enviarTemplateTeste = async (e) => {
+    e?.preventDefault?.()
+    if (!templateAtual) {
+      toast('Selecione um template da lista.', 'aviso')
+      return
+    }
+    const telefoneLimpo = limparTelefone(templateEnvio.telefone)
+    if (!telefoneLimpo || telefoneLimpo.length < 8) {
+      toast('Informe o celular de teste (com DDD).', 'aviso')
+      return
+    }
+    setEnviandoTemplate(true)
+    try {
+      const parametrosCorpo = String(templateEnvio.paramsLinha || '')
+        .split(/[,;|\n]/)
+        .map((s) => s.trim())
+        .filter(Boolean)
+      const res = await api.post('/api/ia/meta/message-templates/enviar-teste', {
+        nomeTemplate: templateAtual.name,
+        idioma: templateAtual.language,
+        telefone: telefoneLimpo,
+        ...(parametrosCorpo.length ? { parametrosCorpo } : {}),
+      })
+      const w = res.dados?.wamid
+      toast(
+        w
+          ? `Template enviado. ID: ${w}. Confira o WhatsApp do destino.`
+          : (res.dados?.lembrete || 'Envio solicitado. Confira o aparelho.'),
+        'sucesso',
+      )
+    } catch (err) {
+      const msg = err?.erro?.mensagem || 'Falha ao enviar template.'
+      const dica = err?.erro?.dica
+      toast(dica ? `${msg} — ${dica}` : msg, 'erro')
+    } finally {
+      setEnviandoTemplate(false)
+    }
+  }
 
   const atualizar = (campo) => (e) => setForm((p) => ({ ...p, [campo]: e.target.value }))
 
@@ -281,6 +413,12 @@ const ConfigNegocio = () => {
         facebookUrl: form.facebookUrl,
         tiktokUrl: form.tiktokUrl,
         timezone: form.timezone,
+        autoCancelarNaoConfirmados: Boolean(form.autoCancelarNaoConfirmados),
+        horasAutoCancelar: Number(form.horasAutoCancelar) || 4,
+        minutosMargemAutoCancelamento: Math.max(0, Number(form.minutosMargemAutoCancelamento) || 0),
+        filaReengajamentoHorario: /^([01]\d|2[0-3]):([0-5]\d)$/.test(String(form.filaReengajamentoHorario || ''))
+          ? String(form.filaReengajamentoHorario)
+          : '20:30',
         lembreteMinutosAntes: normalizarLembretes(form.lembretesMinutosAntes).at(-1) ?? 0,
         lembretesMinutosAntes: normalizarLembretes(form.lembretesMinutosAntes),
         exigirConfirmacaoPresenca: Boolean(form.exigirConfirmacaoPresenca),
@@ -431,7 +569,8 @@ const ConfigNegocio = () => {
       <form onSubmit={salvar} className="space-y-5">
 
         {/* ── Informações Básicas ── */}
-        <div className="bg-white rounded-2xl border border-borda p-6 shadow-sm space-y-5">
+        {EXIBIR_RECURSOS_PRODUTOS && (
+          <div className="bg-white rounded-2xl border border-borda p-6 shadow-sm space-y-5">
           <h2 className="text-base font-semibold text-texto">Informações básicas</h2>
 
           <div>
@@ -513,7 +652,8 @@ const ConfigNegocio = () => {
               </SelectContent>
             </Select>
           </div>
-        </div>
+          </div>
+        )}
 
         <div className="rounded-2xl border border-[#d8c2a2] bg-[linear-gradient(135deg,#fff9f2,#f6ede2)] p-6 shadow-sm space-y-4">
           <div className="rounded-2xl border border-white bg-white/80 p-4 shadow-sm">
@@ -608,6 +748,7 @@ const ConfigNegocio = () => {
         </div>
 
         {/* ── Pagamento e Atendimento ── */}
+        {EXIBIR_RECURSOS_PRODUTOS && (
         <div className="bg-white rounded-2xl border border-borda p-6 shadow-sm space-y-5">
           <div className="flex items-center gap-2">
             <CreditCard size={16} className="text-primaria" />
@@ -669,6 +810,7 @@ const ConfigNegocio = () => {
             )}
           </div>
         </div>
+        )}
 
         {/* ── Diferenciais do Salão ── */}
         <div className="bg-white rounded-2xl border border-borda p-6 shadow-sm space-y-5">
@@ -690,112 +832,6 @@ const ConfigNegocio = () => {
                 <span className="text-sm text-texto">{d.label}</span>
               </label>
             ))}
-          </div>
-        </div>
-
-        <div className="bg-white rounded-2xl border border-borda p-6 shadow-sm space-y-5">
-          <div className="flex items-center gap-2">
-            <MapPin size={16} className="text-primaria" />
-            <h2 className="text-base font-semibold text-texto">Entrega de produtos</h2>
-          </div>
-          <p className="text-xs text-texto-sec -mt-3">Configure taxa, pedido mínimo e os horários em que você realmente faz delivery. O cliente vê isso no link público antes de fechar o pedido.</p>
-
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            <div>
-              <label className="block text-sm font-medium text-texto mb-1.5">Taxa de entrega (R$)</label>
-              <input
-                type="number"
-                min="0"
-                step="0.01"
-                value={form.taxaEntrega}
-                onChange={atualizar('taxaEntrega')}
-                className="w-full px-4 py-2.5 rounded-lg border border-borda focus:outline-none focus:ring-2 focus:ring-primaria/30 focus:border-primaria text-sm"
-                placeholder="0,00"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-texto mb-1.5">Pedido mínimo (R$)</label>
-              <input
-                type="number"
-                min="0"
-                step="0.01"
-                value={form.valorMinimoEntrega}
-                onChange={atualizar('valorMinimoEntrega')}
-                className="w-full px-4 py-2.5 rounded-lg border border-borda focus:outline-none focus:ring-2 focus:ring-primaria/30 focus:border-primaria text-sm"
-                placeholder="0,00"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-texto mb-1.5">Tempo médio de entrega (min)</label>
-              <input
-                type="number"
-                min="5"
-                step="5"
-                value={form.tempoMedioEntregaMin}
-                onChange={atualizar('tempoMedioEntregaMin')}
-                className="w-full px-4 py-2.5 rounded-lg border border-borda focus:outline-none focus:ring-2 focus:ring-primaria/30 focus:border-primaria text-sm"
-              />
-            </div>
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-texto mb-1.5">Horários de entrega</label>
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-[1fr_1fr_auto]">
-              <div>
-                <label className="block text-xs font-medium text-texto-sec mb-1.5">Entrega começa às</label>
-                <Select value={novaJanelaEntregaInicio} onValueChange={setNovaJanelaEntregaInicio}>
-                  <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
-                  <SelectContent>
-                    {HORARIOS_ENTREGA_OPCOES.map((item) => <SelectItem key={item.valor} value={item.valor}>{item.label}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-texto-sec mb-1.5">Entrega termina às</label>
-                <Select value={novaJanelaEntregaFim} onValueChange={setNovaJanelaEntregaFim}>
-                  <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
-                  <SelectContent>
-                    {HORARIOS_ENTREGA_OPCOES.map((item) => <SelectItem key={item.valor} value={item.valor}>{item.label}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="flex items-end">
-                <button
-                  type="button"
-                  onClick={adicionarJanelaEntrega}
-                  className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-lg bg-primaria px-4 text-sm font-medium text-white transition-colors hover:bg-primaria/90 md:w-auto"
-                >
-                  <Plus size={14} />
-                  Adicionar
-                </button>
-              </div>
-            </div>
-
-            {janelasEntregaConfiguradas.length > 0 ? (
-              <div className="mt-3 space-y-2">
-                {janelasEntregaConfiguradas.map((item, indice) => (
-                  <div key={`${item.inicio}-${item.fim}-${indice}`} className="flex items-center justify-between gap-3 rounded-xl border border-borda bg-slate-50 px-4 py-3">
-                    <div>
-                      <p className="text-sm font-medium text-texto">{item.label}</p>
-                      <p className="text-xs text-texto-sec">Esse horário aparece no link público para o cliente.</p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => removerJanelaEntrega(indice)}
-                      className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-borda text-texto-sec transition-colors hover:border-red-200 hover:bg-red-50 hover:text-red-600"
-                    >
-                      <Trash2 size={14} />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="mt-3 rounded-xl border border-dashed border-borda px-4 py-3 text-sm text-texto-sec">
-                Nenhum horário de delivery configurado ainda.
-              </div>
-            )}
-
-            <p className="text-xs text-texto-sec mt-2">Exemplo prático: se você atende no salão até 18:00 e entrega depois disso, cadastre janelas como 18:30 às 19:30 e 19:30 às 20:30.</p>
           </div>
         </div>
 
@@ -862,6 +898,146 @@ const ConfigNegocio = () => {
             </div>
             <p className="text-xs text-texto-sec mt-1">Número que recebe alertas e notificações do sistema.</p>
           </div>
+
+          {EXIBIR_TEMPLATES_META && (
+          <div className="border-t border-borda pt-4 space-y-4">
+            <div className="flex items-start gap-2">
+              <FileText size={16} className="text-primaria mt-0.5 shrink-0" />
+              <div>
+                <h3 className="text-sm font-semibold text-texto">Templates oficiais (Meta / WhatsApp Cloud)</h3>
+                <p className="text-xs text-texto-sec mt-0.5">
+                  Modelos aprovados na sua conta (WABA) para envio fora da janela de 24h e para a análise de permissão{' '}
+                  <code className="text-xs bg-slate-100 px-1 rounded">whatsapp_business_management</code>.
+                  Crie edite aprovação no{' '}
+                  <a
+                    className="text-primaria underline"
+                    href="https://business.facebook.com/wa/manage/message-templates"
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    Gerenciador do WhatsApp
+                  </a>
+                  ; aqui você só lista o que já existe e pode disparar um teste.
+                </p>
+              </div>
+            </div>
+
+            {!metaConectado ? (
+              <p className="text-sm text-texto-sec rounded-xl border border-dashed border-borda bg-slate-50/80 px-4 py-3">
+                Use o botão <span className="font-medium text-texto">Conectar WhatsApp</span> no canto superior do painel para
+                conectar. Depois volte aqui para listar e testar os templates oficiais.
+              </p>
+            ) : (
+              <>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={recarregarTemplatesMeta}
+                    disabled={carregandoTemplates}
+                    className="inline-flex items-center gap-2 rounded-lg border border-borda bg-white px-3 py-2 text-sm font-medium text-texto hover:bg-fundo disabled:opacity-50"
+                  >
+                    {carregandoTemplates ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                    Atualizar lista
+                  </button>
+                </div>
+
+                {carregandoTemplates && templatesMeta.length === 0 ? (
+                  <div className="flex items-center gap-2 text-sm text-texto-sec">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Carregando templates…
+                  </div>
+                ) : templatesMeta.length === 0 ? (
+                  <p className="text-sm text-texto-sec">
+                    Nenhum template encontrado ainda. Crie e obtenha aprovação no Gerenciador do WhatsApp, depois clique em
+                    &quot;Atualizar lista&quot;.
+                  </p>
+                ) : (
+                  <div className="overflow-x-auto rounded-xl border border-borda max-h-48 overflow-y-auto text-sm">
+                    <table className="w-full min-w-[520px] text-left">
+                      <thead>
+                        <tr className="bg-slate-50 text-xs text-texto-sec border-b border-borda">
+                          <th className="p-2 font-medium">Nome</th>
+                          <th className="p-2 font-medium">Idioma</th>
+                          <th className="p-2 font-medium">Status</th>
+                          <th className="p-2 font-medium">Categoria</th>
+                          <th className="p-2 font-medium">Params</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {opcoesTemplate.map((row) => (
+                          <tr key={row.chave} className="border-b border-borda/80 last:border-0">
+                            <td className="p-2 font-medium text-texto">{row.name}</td>
+                            <td className="p-2 text-texto-sec">{row.language}</td>
+                            <td className="p-2">{row.status}</td>
+                            <td className="p-2 text-texto-sec">{row.category || '—'}</td>
+                            <td className="p-2 text-texto-sec">{row.qtdParametrosCorpo ?? 0}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+
+                <form onSubmit={enviarTemplateTeste} className="space-y-3 rounded-xl border border-borda bg-slate-50/50 p-4">
+                  <p className="text-xs font-medium text-texto">Teste de envio (template)</p>
+                  <div>
+                    <label className="block text-xs text-texto-sec mb-1">Template</label>
+                    <select
+                      value={templateChave}
+                      onChange={(e) => setTemplateChave(e.target.value)}
+                      className="w-full rounded-lg border border-borda bg-white px-3 py-2.5 text-sm"
+                    >
+                      <option value="">Selecione…</option>
+                      {opcoesTemplate.map((row) => (
+                        <option key={row.chave} value={row.chave}>
+                          {row.name} — {row.language} ({row.status})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  {templateAtual?.textoCorpoResumo && (
+                    <p className="text-xs text-texto-sec break-words">
+                      <span className="font-medium text-texto">Prévia do corpo: </span>
+                      {templateAtual.textoCorpoResumo}
+                    </p>
+                  )}
+                  <div>
+                    <label className="block text-xs text-texto-sec mb-1">Celular de teste (destino)</label>
+                    <input
+                      type="tel"
+                      value={templateEnvio.telefone}
+                      onChange={(e) => setTemplateEnvio((p) => ({ ...p, telefone: aplicarMascaraTelefone(e.target.value) }))}
+                      placeholder="(62) 99300-0000"
+                      className="w-full rounded-lg border border-borda bg-white px-3 py-2.5 text-sm"
+                    />
+                  </div>
+                  {templateAtual && templateAtual.qtdParametrosCorpo > 0 && (
+                    <div>
+                      <label className="block text-xs text-texto-sec mb-1">
+                        Parâmetros do corpo ({templateAtual.qtdParametrosCorpo}) — um por linha ou separados por vírgula
+                      </label>
+                      <textarea
+                        value={templateEnvio.paramsLinha}
+                        onChange={(e) => setTemplateEnvio((p) => ({ ...p, paramsLinha: e.target.value }))}
+                        rows={3}
+                        placeholder="ex.: João&#10;Pedido #1234"
+                        className="w-full rounded-lg border border-borda bg-white px-3 py-2 text-sm font-mono"
+                      />
+                    </div>
+                  )}
+                  <button
+                    type="submit"
+                    disabled={enviandoTemplate || !templateChave}
+                    className="inline-flex w-full sm:w-auto items-center justify-center gap-2 rounded-lg bg-primaria px-4 py-2.5 text-sm font-medium text-white hover:bg-primaria/90 disabled:opacity-50"
+                  >
+                    {enviandoTemplate ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                    Enviar template de teste
+                  </button>
+                </form>
+              </>
+            )}
+          </div>
+          )}
         </div>
 
         {/* ── Lembretes ── */}
@@ -930,6 +1106,86 @@ const ConfigNegocio = () => {
           </div>
         </div>
 
+        <div className="bg-white rounded-2xl border border-borda p-6 shadow-sm space-y-4">
+          <div>
+            <h3 className="text-sm font-semibold text-texto">Confirmação do agendamento</h3>
+            <p className="text-xs text-texto-sec mt-0.5">
+              Todo novo horário fica pendente e o cliente precisa confirmar no WhatsApp. Se não confirmar no prazo, o sistema cancela automaticamente para liberar a agenda.
+            </p>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-texto mb-1.5">Regra de confirmação</label>
+            <Select
+              value={form.autoCancelarNaoConfirmados ? 'obrigatoria' : 'desligada'}
+              onValueChange={(v) => setForm((p) => ({ ...p, autoCancelarNaoConfirmados: v === 'obrigatoria' }))}
+            >
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="obrigatoria">Obrigatória para todos os novos agendamentos</SelectItem>
+                <SelectItem value="desligada">Desligada (não recomendado)</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          {form.autoCancelarNaoConfirmados && (
+            <div className="space-y-3">
+              <div>
+                <label className="block text-sm font-medium text-texto mb-1.5">Reengajamento da fila no fim do dia</label>
+                <input
+                  type="time"
+                  step="60"
+                  value={form.filaReengajamentoHorario || '20:30'}
+                  onChange={(e) => setForm((p) => ({ ...p, filaReengajamentoHorario: e.target.value || '20:30' }))}
+                  className="w-full px-4 py-2.5 rounded-lg border border-borda focus:outline-none focus:ring-2 focus:ring-primaria/30 focus:border-primaria text-sm"
+                />
+                <p className="text-xs text-texto-sec mt-1.5">
+                  Nesse horário, a IA chama quem ficou aguardando hoje e pergunta se prefere amanhã ou outro dia, sem sugerir horário pronto.
+                </p>
+              </div>
+
+              <div>
+              <label className="block text-sm font-medium text-texto mb-1.5">Prazo máximo para confirmar</label>
+              <Select
+                value={String(form.horasAutoCancelar || 4)}
+                onValueChange={(v) => setForm((p) => ({ ...p, horasAutoCancelar: Number(v) }))}
+              >
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {HORAS_CONFIRMACAO_OPCOES.map((opcao) => (
+                    <SelectItem key={opcao.valor} value={String(opcao.valor)}>
+                      {opcao.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-texto-sec mt-1.5">
+                Recomendação prática: 4h. Evita furos e ainda dá tempo de encaixar alguém da lista de espera.
+              </p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-texto mb-1.5">Margem antes do cancelamento automático</label>
+                <Select
+                  value={String(form.minutosMargemAutoCancelamento ?? 15)}
+                  onValueChange={(v) => setForm((p) => ({ ...p, minutosMargemAutoCancelamento: Number(v) }))}
+                >
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {MARGEM_AUTO_CANCELAMENTO_OPCOES.map((opcao) => (
+                      <SelectItem key={opcao.valor} value={String(opcao.valor)}>
+                        {opcao.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-texto-sec mt-1.5">
+                  Tempo extra para o cliente responder após o lembrete de confirmação antes de liberar o horário.
+                </p>
+              </div>
+            </div>
+          )}
+        </div>
+
         {/* ── Fluxo de presença ── */}
         <div className="bg-white rounded-2xl border border-borda p-6 shadow-sm space-y-4">
           <div>
@@ -940,11 +1196,11 @@ const ConfigNegocio = () => {
           </div>
           <div>
             <label className="block text-sm font-medium text-texto mb-1.5">Confirmação de presença</label>
-            <Select value={form.exigirConfirmacaoPresenca ? 'obrigatoria' : 'opcional'} onValueChange={(v) => setForm((p) => ({ ...p, exigirConfirmacaoPresenca: v === 'obrigatoria' }))}>
+            <Select value={form.exigirConfirmacaoPresenca ? 'ativada' : 'desativada'} onValueChange={(v) => setForm((p) => ({ ...p, exigirConfirmacaoPresenca: v === 'ativada' }))}>
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
-                <SelectItem value="opcional">Opcional</SelectItem>
-                <SelectItem value="obrigatoria">Obrigatória antes de finalizar</SelectItem>
+                <SelectItem value="desativada">Desativada</SelectItem>
+                <SelectItem value="ativada">Ativada (obrigatória antes de finalizar)</SelectItem>
               </SelectContent>
             </Select>
             <p className="text-xs text-texto-sec mt-1.5">

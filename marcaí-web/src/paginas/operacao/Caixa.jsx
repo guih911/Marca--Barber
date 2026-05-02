@@ -41,6 +41,43 @@ const formatarVariacao = (valor) => {
   return `${valor > 0 ? '+' : ''}${valor}% vs mês anterior`
 }
 
+const obterLeituraOperacional = ({ sessaoAberta, resumo, resumoMensal }) => {
+  if (!sessaoAberta || !resumo) {
+    return {
+      titulo: 'Comece o turno com controle',
+      descricao: 'Abra o caixa no início do expediente para registrar entradas, saídas e fechamento com rastreabilidade.',
+      alertas: [
+        'Defina saldo inicial para facilitar conferência no fechamento.',
+        'Use reforço/sangria com descrição para manter histórico limpo.',
+      ],
+    }
+  }
+
+  const atendimentos = Number(resumo.totalAtendimentos || 0)
+  const mediaSessao = atendimentos > 0 ? Math.round((Number(resumo.totalComDescontos || 0) / atendimentos)) : 0
+  const ticketMensal = Number(resumoMensal?.ticketMedio || 0)
+  const variacaoTicket = ticketMensal > 0 && mediaSessao > 0
+    ? Math.round(((mediaSessao - ticketMensal) / ticketMensal) * 100)
+    : null
+
+  const alertas = []
+  if (atendimentos === 0) alertas.push('Sem atendimentos registrados na sessão até agora.')
+  if (variacaoTicket != null && variacaoTicket < -15) {
+    alertas.push('Ticket da sessão está abaixo do mês. Vale revisar descontos e serviços adicionais.')
+  }
+  if (alertas.length === 0) {
+    alertas.push('Operação dentro do esperado para o turno atual.')
+  }
+
+  return {
+    titulo: 'Leitura operacional do caixa',
+    descricao: mediaSessao > 0
+      ? `Ticket médio do turno: ${formatarReais(mediaSessao)}. Compare com o mês para ajustar estratégia durante o dia.`
+      : 'Ainda sem ticket médio no turno. Assim que concluir atendimentos, acompanhe este indicador para decidir ações.',
+    alertas,
+  }
+}
+
 const CardFinanceiro = ({ titulo, valor, subtitulo, variacao, icone: Icone }) => (
   <div className="bg-white rounded-2xl border border-borda p-4 shadow-sm">
     <div className="flex items-start justify-between gap-3">
@@ -196,6 +233,10 @@ const Caixa = () => {
       : []
   ), [resumoMensal])
   const profissionaisMesAtual = useMemo(() => resumoMensal?.topProfissionais || [], [resumoMensal])
+  const leituraOperacional = useMemo(
+    () => obterLeituraOperacional({ sessaoAberta, resumo, resumoMensal }),
+    [sessaoAberta, resumo, resumoMensal]
+  )
 
   return (
     <div className="space-y-6 max-w-6xl">
@@ -213,6 +254,177 @@ const Caixa = () => {
         <div className="flex justify-center py-16"><Loader2 size={28} className="animate-spin text-texto-sec" /></div>
       ) : (
         <>
+          {/* Status atual */}
+          <div className="bg-white rounded-2xl border border-borda p-4 shadow-sm">
+            <h3 className="text-sm font-semibold text-texto">{leituraOperacional.titulo}</h3>
+            <p className="text-xs text-texto-sec mt-1">{leituraOperacional.descricao}</p>
+            <div className="mt-3 space-y-1.5">
+              {leituraOperacional.alertas.map((item) => (
+                <p key={item} className="text-xs text-texto flex items-start gap-2">
+                  <span className="mt-1 inline-block w-1.5 h-1.5 rounded-full bg-primaria shrink-0" />
+                  {item}
+                </p>
+              ))}
+            </div>
+          </div>
+
+          {/* Status atual */}
+          <div className={`rounded-2xl border-2 p-5 ${sessaoAberta ? 'border-sucesso bg-green-50' : 'border-borda bg-white'}`}>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${sessaoAberta ? 'bg-sucesso text-white' : 'bg-gray-100 text-gray-400'}`}>
+                  {sessaoAberta ? <LockOpen size={20} /> : <Lock size={20} />}
+                </div>
+                <div>
+                  <p className="font-semibold text-texto">
+                    Caixa {sessaoAberta ? 'Aberto' : 'Fechado'}
+                  </p>
+                  {sessaoAberta && (
+                    <p className="text-xs text-texto-sec">
+                      Aberto às {formatarDataHora(resumo.sessao.aberturaEm)} · {formatarDuracao(resumo.sessao.aberturaEm)}
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              {!sessaoAberta && !modoAbrirForm && (
+                <button
+                  onClick={() => setModoAbrirForm(true)}
+                  className="px-4 py-2 bg-sucesso text-white text-sm font-semibold rounded-xl hover:bg-green-600 transition-colors flex items-center gap-2"
+                >
+                  <LockOpen size={16} /> Abrir caixa
+                </button>
+              )}
+              {sessaoAberta && !modoFecharForm && (
+                <button
+                  onClick={() => setModoFecharForm(true)}
+                  className="px-4 py-2 bg-perigo/10 text-perigo text-sm font-semibold rounded-xl hover:bg-perigo/20 transition-colors flex items-center gap-2"
+                >
+                  <Lock size={16} /> Fechar caixa
+                </button>
+              )}
+            </div>
+
+            {/* Formulário abrir */}
+            {modoAbrirForm && (
+              <div className="mt-4 pt-4 border-t border-borda space-y-3">
+                <div>
+                  <label className="text-xs font-medium text-texto-sec">Saldo inicial em caixa (R$)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={saldoInicial}
+                    onChange={(e) => setSaldoInicial(e.target.value)}
+                    placeholder="0,00"
+                    className="w-full mt-1 border border-borda rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primaria/30"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-texto-sec">Observações (opcional)</label>
+                  <input
+                    type="text"
+                    value={observacoes}
+                    onChange={(e) => setObservacoes(e.target.value)}
+                    placeholder="Ex: troco do dia anterior"
+                    className="w-full mt-1 border border-borda rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primaria/30"
+                  />
+                </div>
+                <div className="flex gap-2">
+                  <button onClick={() => { setModoAbrirForm(false); setObservacoes('') }} className="flex-1 py-2 border border-borda rounded-xl text-sm text-texto-sec hover:bg-fundo transition-colors">Cancelar</button>
+                  <button
+                    onClick={handleAbrir}
+                    disabled={abrindo}
+                    className="flex-1 py-2 bg-sucesso text-white rounded-xl text-sm font-semibold hover:bg-green-600 transition-colors disabled:opacity-60 flex items-center justify-center gap-2"
+                  >
+                    {abrindo ? <Loader2 size={16} className="animate-spin" /> : <LockOpen size={16} />}
+                    Confirmar abertura
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Formulário fechar */}
+            {modoFecharForm && (
+              <div className="mt-4 pt-4 border-t border-borda space-y-3">
+                <div>
+                  <label className="text-xs font-medium text-texto-sec">Saldo final contado em caixa (R$)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={saldoFinal}
+                    onChange={(e) => setSaldoFinal(e.target.value)}
+                    placeholder="0,00"
+                    className="w-full mt-1 border border-borda rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primaria/30"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-texto-sec">Observações (opcional)</label>
+                  <input
+                    type="text"
+                    value={observacoes}
+                    onChange={(e) => setObservacoes(e.target.value)}
+                    placeholder="Ex: quebra de caixa de R$5"
+                    className="w-full mt-1 border border-borda rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primaria/30"
+                  />
+                </div>
+                <div className="flex gap-2">
+                  <button onClick={() => { setModoFecharForm(false); setObservacoes('') }} className="flex-1 py-2 border border-borda rounded-xl text-sm text-texto-sec hover:bg-fundo transition-colors">Cancelar</button>
+                  <button
+                    onClick={handleFechar}
+                    disabled={fechando}
+                    className="flex-1 py-2 bg-perigo text-white rounded-xl text-sm font-semibold hover:bg-red-600 transition-colors disabled:opacity-60 flex items-center justify-center gap-2"
+                  >
+                    {fechando ? <Loader2 size={16} className="animate-spin" /> : <Lock size={16} />}
+                    Confirmar fechamento
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Botões de ajuste manual no caixa */}
+          {sessaoAberta && (
+            <div className="flex gap-2">
+              <button
+                onClick={() => setModalMovimentacao('SANGRIA')}
+                className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-red-50 border border-red-200 text-red-700 rounded-xl text-sm font-medium hover:bg-red-100 transition-colors"
+              >
+                <ArrowDownCircle size={16} /> Retirar dinheiro do caixa
+              </button>
+              <button
+                onClick={() => setModalMovimentacao('REFORCO')}
+                className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-green-50 border border-green-200 text-green-700 rounded-xl text-sm font-medium hover:bg-green-100 transition-colors"
+              >
+                <ArrowUpCircle size={16} /> Adicionar dinheiro ao caixa
+              </button>
+            </div>
+          )}
+
+          {/* Resumo da sessão atual */}
+          {sessaoAberta && resumo && (
+            <div className="grid grid-cols-2 gap-4">
+              <div className="bg-white rounded-2xl border border-borda p-4 shadow-sm">
+                <p className="text-xs font-medium text-texto-sec uppercase tracking-wide">Saldo inicial</p>
+                <p className="text-xl font-bold text-texto mt-1">{formatarReais(resumo.sessao.saldoInicial)}</p>
+              </div>
+              <div className="bg-white rounded-2xl border border-borda p-4 shadow-sm">
+                <p className="text-xs font-medium text-texto-sec uppercase tracking-wide">Atendimentos</p>
+                <p className="text-xl font-bold text-texto mt-1">{resumo.totalAtendimentos}</p>
+                <p className="text-xs text-texto-sec">desde abertura</p>
+              </div>
+              <div className="bg-white rounded-2xl border border-borda p-4 shadow-sm">
+                <p className="text-xs font-medium text-texto-sec uppercase tracking-wide">Receita bruta</p>
+                <p className="text-xl font-bold text-sucesso mt-1">{formatarReais(resumo.totalServicos)}</p>
+              </div>
+              <div className="bg-white rounded-2xl border border-borda p-4 shadow-sm">
+                <p className="text-xs font-medium text-texto-sec uppercase tracking-wide">Com desc./gorj.</p>
+                <p className="text-xl font-bold text-primaria mt-1">{formatarReais(resumo.totalComDescontos)}</p>
+              </div>
+            </div>
+          )}
+
           {resumoMensal && (
             <>
               <div className="bg-white rounded-2xl border border-borda p-5 shadow-sm space-y-2">
@@ -344,163 +556,6 @@ const Caixa = () => {
                 </div>
               </div>
             </>
-          )}
-
-          {/* Status atual */}
-          <div className={`rounded-2xl border-2 p-5 ${sessaoAberta ? 'border-sucesso bg-green-50' : 'border-borda bg-white'}`}>
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${sessaoAberta ? 'bg-sucesso text-white' : 'bg-gray-100 text-gray-400'}`}>
-                  {sessaoAberta ? <LockOpen size={20} /> : <Lock size={20} />}
-                </div>
-                <div>
-                  <p className="font-semibold text-texto">
-                    Caixa {sessaoAberta ? 'Aberto' : 'Fechado'}
-                  </p>
-                  {sessaoAberta && (
-                    <p className="text-xs text-texto-sec">
-                      Aberto às {formatarDataHora(resumo.sessao.aberturaEm)} · {formatarDuracao(resumo.sessao.aberturaEm)}
-                    </p>
-                  )}
-                </div>
-              </div>
-
-              {!sessaoAberta && !modoAbrirForm && (
-                <button
-                  onClick={() => setModoAbrirForm(true)}
-                  className="px-4 py-2 bg-sucesso text-white text-sm font-semibold rounded-xl hover:bg-green-600 transition-colors flex items-center gap-2"
-                >
-                  <LockOpen size={16} /> Abrir caixa
-                </button>
-              )}
-              {sessaoAberta && !modoFecharForm && (
-                <button
-                  onClick={() => setModoFecharForm(true)}
-                  className="px-4 py-2 bg-perigo/10 text-perigo text-sm font-semibold rounded-xl hover:bg-perigo/20 transition-colors flex items-center gap-2"
-                >
-                  <Lock size={16} /> Fechar caixa
-                </button>
-              )}
-            </div>
-
-            {/* Formulário abrir */}
-            {modoAbrirForm && (
-              <div className="mt-4 pt-4 border-t border-borda space-y-3">
-                <div>
-                  <label className="text-xs font-medium text-texto-sec">Saldo inicial em caixa (R$)</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    value={saldoInicial}
-                    onChange={(e) => setSaldoInicial(e.target.value)}
-                    placeholder="0,00"
-                    className="w-full mt-1 border border-borda rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primaria/30"
-                  />
-                </div>
-                <div>
-                  <label className="text-xs font-medium text-texto-sec">Observações (opcional)</label>
-                  <input
-                    type="text"
-                    value={observacoes}
-                    onChange={(e) => setObservacoes(e.target.value)}
-                    placeholder="Ex: troco do dia anterior"
-                    className="w-full mt-1 border border-borda rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primaria/30"
-                  />
-                </div>
-                <div className="flex gap-2">
-                  <button onClick={() => { setModoAbrirForm(false); setObservacoes('') }} className="flex-1 py-2 border border-borda rounded-xl text-sm text-texto-sec hover:bg-fundo transition-colors">Cancelar</button>
-                  <button
-                    onClick={handleAbrir}
-                    disabled={abrindo}
-                    className="flex-1 py-2 bg-sucesso text-white rounded-xl text-sm font-semibold hover:bg-green-600 transition-colors disabled:opacity-60 flex items-center justify-center gap-2"
-                  >
-                    {abrindo ? <Loader2 size={16} className="animate-spin" /> : <LockOpen size={16} />}
-                    Confirmar abertura
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {/* Formulário fechar */}
-            {modoFecharForm && (
-              <div className="mt-4 pt-4 border-t border-borda space-y-3">
-                <div>
-                  <label className="text-xs font-medium text-texto-sec">Saldo final contado em caixa (R$)</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    value={saldoFinal}
-                    onChange={(e) => setSaldoFinal(e.target.value)}
-                    placeholder="0,00"
-                    className="w-full mt-1 border border-borda rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primaria/30"
-                  />
-                </div>
-                <div>
-                  <label className="text-xs font-medium text-texto-sec">Observações (opcional)</label>
-                  <input
-                    type="text"
-                    value={observacoes}
-                    onChange={(e) => setObservacoes(e.target.value)}
-                    placeholder="Ex: quebra de caixa de R$5"
-                    className="w-full mt-1 border border-borda rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primaria/30"
-                  />
-                </div>
-                <div className="flex gap-2">
-                  <button onClick={() => { setModoFecharForm(false); setObservacoes('') }} className="flex-1 py-2 border border-borda rounded-xl text-sm text-texto-sec hover:bg-fundo transition-colors">Cancelar</button>
-                  <button
-                    onClick={handleFechar}
-                    disabled={fechando}
-                    className="flex-1 py-2 bg-perigo text-white rounded-xl text-sm font-semibold hover:bg-red-600 transition-colors disabled:opacity-60 flex items-center justify-center gap-2"
-                  >
-                    {fechando ? <Loader2 size={16} className="animate-spin" /> : <Lock size={16} />}
-                    Confirmar fechamento
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* Resumo da sessão atual */}
-          {sessaoAberta && resumo && (
-            <div className="grid grid-cols-2 gap-4">
-              <div className="bg-white rounded-2xl border border-borda p-4 shadow-sm">
-                <p className="text-xs font-medium text-texto-sec uppercase tracking-wide">Saldo inicial</p>
-                <p className="text-xl font-bold text-texto mt-1">{formatarReais(resumo.sessao.saldoInicial)}</p>
-              </div>
-              <div className="bg-white rounded-2xl border border-borda p-4 shadow-sm">
-                <p className="text-xs font-medium text-texto-sec uppercase tracking-wide">Atendimentos</p>
-                <p className="text-xl font-bold text-texto mt-1">{resumo.totalAtendimentos}</p>
-                <p className="text-xs text-texto-sec">desde abertura</p>
-              </div>
-              <div className="bg-white rounded-2xl border border-borda p-4 shadow-sm">
-                <p className="text-xs font-medium text-texto-sec uppercase tracking-wide">Receita bruta</p>
-                <p className="text-xl font-bold text-sucesso mt-1">{formatarReais(resumo.totalServicos)}</p>
-              </div>
-              <div className="bg-white rounded-2xl border border-borda p-4 shadow-sm">
-                <p className="text-xs font-medium text-texto-sec uppercase tracking-wide">Com desc./gorj.</p>
-                <p className="text-xl font-bold text-primaria mt-1">{formatarReais(resumo.totalComDescontos)}</p>
-              </div>
-            </div>
-          )}
-
-          {/* Botões de ajuste manual no caixa */}
-          {sessaoAberta && (
-            <div className="flex gap-2">
-              <button
-                onClick={() => setModalMovimentacao('SANGRIA')}
-                className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-red-50 border border-red-200 text-red-700 rounded-xl text-sm font-medium hover:bg-red-100 transition-colors"
-              >
-                <ArrowDownCircle size={16} /> Retirar dinheiro do caixa
-              </button>
-              <button
-                onClick={() => setModalMovimentacao('REFORCO')}
-                className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-green-50 border border-green-200 text-green-700 rounded-xl text-sm font-medium hover:bg-green-100 transition-colors"
-              >
-                <ArrowUpCircle size={16} /> Adicionar dinheiro ao caixa
-              </button>
-            </div>
           )}
 
           {/* Por forma de pagamento */}

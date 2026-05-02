@@ -1,29 +1,54 @@
 /**
  * Serviço para envio de mensagens WhatsApp.
- * Provedores disponíveis: Meta Cloud API e SendZen.
+ * Provedor oficial: Meta Cloud API.
  */
+const META_GRAPH_VERSION = (process.env.META_GRAPH_API_VERSION || 'v22.0').trim()
 
 const CAMPOS_COMPARTILHADOS = [
   'numeroAdministrador',
   'webhookCallbackUrl',
   'webhookSecret',
   'embeddedSignupAt',
-  'sendzenConnectedAt',
 ]
 
 const normalizarNumeroEnvio = (numero = '') => String(numero || '').replace(/\D/g, '')
 
-const mascararErroHttp = async (res, fallback) => {
-  const data = await res.json().catch(() => null)
-  if (data?.error?.message) return data.error.message
-  if (data?.message) return data.message
-  if (data?.erro?.mensagem) return data.erro.mensagem
-  const texto = await res.text().catch(() => '')
-  return texto || fallback
+/**
+ * Só dígitos no envio. BR: celular 11 dígitos (DDD+9+8) sem 55 -> prefixa 55.
+ * Evita envios para a Meta com DDD+celular e sem código do país.
+ */
+const normalizarNumeroDestinoWhatsapp = (raw = '') => {
+  const d = normalizarNumeroEnvio(raw)
+  if (!d) return ''
+  if (d.length === 11 && /^(?:[1-9][0-9])9[0-9]{8}$/.test(d) && !d.startsWith('55')) {
+    return `55${d}`
+  }
+  return d
+}
+
+/** Lê JSON de erro da Graph; anexa code/subcode para o controlador. */
+const lancarSeErroGraphResposta = async (res) => {
+  if (res.ok) return
+  const data = await res.json().catch(() => ({}))
+  const e = data?.error
+  if (!e) {
+    const texto = data && typeof data === 'string' ? data : JSON.stringify(data)
+    throw new Error(texto && texto !== '{}' ? texto : `Meta API HTTP ${res.status}`)
+  }
+  const partes = [e.message || e.type || 'Erro da Meta (Graph API)']
+  if (e.code != null) partes.push(`(code ${e.code})`)
+  if (e.error_subcode != null) partes.push(`(subcode ${e.error_subcode})`)
+  if (e.error_data?.details) partes.push(String(e.error_data.details))
+  const err = new Error(partes.join(' '))
+  err.metaCode = e.code
+  err.metaSubcode = e.error_subcode
+  err.metaErr = e
+  throw err
 }
 
 const obterConfigDoProvedor = (configWhatsApp = {}, provedor = null) => {
-  const alvo = provedor || configWhatsApp?.provedorAtivo || configWhatsApp?.provedor || null
+  const alvo = provedor || configWhatsApp?.provedorAtivo || configWhatsApp?.provedor || 'meta'
+  if (alvo !== 'meta') return null
   if (!alvo) return null
 
   const nested = configWhatsApp?.[alvo]
@@ -43,7 +68,12 @@ const obterConfigDoProvedor = (configWhatsApp = {}, provedor = null) => {
 }
 
 const resolverConfigAtiva = (configWhatsApp = {}) => (
-  obterConfigDoProvedor(configWhatsApp, null)
+  obterConfigDoProvedor(configWhatsApp, 'meta')
+  || (
+    configWhatsApp?.phoneNumberId && (configWhatsApp?.token || configWhatsApp?.apiToken)
+      ? { ...configWhatsApp, provedor: 'meta', provedorAtivo: 'meta' }
+      : null
+  )
 )
 
 // ─── Meta Cloud API ────────────────────────────────────────────────────────────
@@ -53,10 +83,10 @@ const enviarMeta = async (config, para, texto) => {
   const bearerToken = token || apiToken
   if (!phoneNumberId || !bearerToken) throw new Error('Meta Cloud API: phoneNumberId e token são obrigatórios')
 
-  const url = `https://graph.facebook.com/v19.0/${phoneNumberId}/messages`
+  const url = `https://graph.facebook.com/${META_GRAPH_VERSION}/${phoneNumberId}/messages`
   const body = {
     messaging_product: 'whatsapp',
-    to: para,
+    to: normalizarNumeroDestinoWhatsapp(para),
     type: 'text',
     text: { body: texto },
   }
@@ -70,38 +100,9 @@ const enviarMeta = async (config, para, texto) => {
     body: JSON.stringify(body),
   })
 
-  if (!res.ok) throw new Error(await mascararErroHttp(res, `Meta API error ${res.status}`))
+  if (!res.ok) await lancarSeErroGraphResposta(res)
 
   return res.json()
-}
-
-const enviarSendzen = async (config, para, texto) => {
-  const apiKey = config?.apiKey || config?.token
-  const from = normalizarNumeroEnvio(config?.from || config?.displayPhoneNumber || '')
-  const to = normalizarNumeroEnvio(para)
-
-  if (!apiKey || !from) throw new Error('SendZen: apiKey e número remetente são obrigatórios')
-  if (!to) throw new Error('SendZen: número de destino inválido')
-
-  const res = await fetch('https://api.sendzen.io/v1/messages', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      from,
-      to,
-      type: 'text',
-      text: {
-        body: texto,
-        preview_url: true,
-      },
-    }),
-  })
-
-  if (!res.ok) throw new Error(await mascararErroHttp(res, `SendZen API error ${res.status}`))
-  return res.json().catch(() => ({}))
 }
 
 const enviarAudioMeta = async (config, para, audioBuffer, mimeType = 'audio/mpeg') => {
@@ -110,7 +111,7 @@ const enviarAudioMeta = async (config, para, audioBuffer, mimeType = 'audio/mpeg
   if (!phoneNumberId || !bearerToken) throw new Error('Meta Cloud API: phoneNumberId/token faltando')
 
   // Cloud API exige Upload primeiro
-  const urlUpload = `https://graph.facebook.com/v19.0/${phoneNumberId}/media`
+  const urlUpload = `https://graph.facebook.com/${META_GRAPH_VERSION}/${phoneNumberId}/media`
   
   const uploadData = new FormData()
   uploadData.append('file', new Blob([audioBuffer], { type: mimeType }), 'voice.mp3')
@@ -126,7 +127,7 @@ const enviarAudioMeta = async (config, para, audioBuffer, mimeType = 'audio/mpeg
   if (!resUpload.ok) throw new Error('Meta Media Upload Erro: ' + resUpload.status)
   const uploadJson = await resUpload.json()
 
-  const urlSend = `https://graph.facebook.com/v19.0/${phoneNumberId}/messages`
+  const urlSend = `https://graph.facebook.com/${META_GRAPH_VERSION}/${phoneNumberId}/messages`
   const resSend = await fetch(urlSend, {
     method: 'POST',
     headers: {
@@ -144,41 +145,12 @@ const enviarAudioMeta = async (config, para, audioBuffer, mimeType = 'audio/mpeg
   return resSend.json()
 }
 
-const enviarAudioSendzen = async (config, para, audioBuffer) => {
-  // ATENÇÃO: Dependente da especificação Sendzen de Upload de Mídia ou Base64.
-  // Assumindo endpoint de media upload similar (ou uso de Base64 no envio).
-  // Para fins de 10/10 sem derrubar API, tentaremos anexar buffer convertido.
-  const apiKey = config?.apiKey || config?.token
-  const from = normalizarNumeroEnvio(config?.from || config?.displayPhoneNumber || '')
-  if (!apiKey || !from) throw new Error('SendZen: configuracoes faltando')
-
-  const base64Audio = audioBuffer.toString('base64')
-  const res = await fetch('https://api.sendzen.io/v1/messages', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      from,
-      to: normalizarNumeroEnvio(para),
-      type: 'audio',
-      audio: {
-        link: `data:audio/mpeg;base64,${base64Audio}`
-      },
-    }),
-  })
-
-  if (!res.ok) throw new Error(await mascararErroHttp(res, `Sendzen Audio error ${res.status}`))
-  return res.json().catch(() => ({}))
-}
-
 const enviarInterativoMeta = async (config, para, payload) => {
   const { phoneNumberId, token, apiToken } = config
   const bearerToken = token || apiToken
   if (!phoneNumberId || !bearerToken) throw new Error('Meta Cloud API: phoneNumberId e token são obrigatórios')
 
-  const url = `https://graph.facebook.com/v19.0/${phoneNumberId}/messages`
+  const url = `https://graph.facebook.com/${META_GRAPH_VERSION}/${phoneNumberId}/messages`
   const res = await fetch(url, {
     method: 'POST',
     headers: {
@@ -187,40 +159,14 @@ const enviarInterativoMeta = async (config, para, payload) => {
     },
     body: JSON.stringify({
       messaging_product: 'whatsapp',
-      to: normalizarNumeroEnvio(para),
+      to: normalizarNumeroDestinoWhatsapp(para),
       type: 'interactive',
       interactive: payload,
     }),
   })
 
-  if (!res.ok) throw new Error(await mascararErroHttp(res, `Meta API error ${res.status}`))
+  if (!res.ok) await lancarSeErroGraphResposta(res)
   return res.json()
-}
-
-const enviarInterativoSendzen = async (config, para, payload) => {
-  const apiKey = config?.apiKey || config?.token
-  const from = normalizarNumeroEnvio(config?.from || config?.displayPhoneNumber || '')
-  const to = normalizarNumeroEnvio(para)
-
-  if (!apiKey || !from) throw new Error('SendZen: apiKey e número remetente são obrigatórios')
-  if (!to) throw new Error('SendZen: número de destino inválido')
-
-  const res = await fetch('https://api.sendzen.io/v1/messages', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      from,
-      to,
-      type: 'interactive',
-      interactive: payload,
-    }),
-  })
-
-  if (!res.ok) throw new Error(await mascararErroHttp(res, `SendZen API error ${res.status}`))
-  return res.json().catch(() => ({}))
 }
 
 const montarTextoFallbackInterativo = ({ header = '', body = '', buttons = [] } = {}) => {
@@ -244,8 +190,6 @@ const enviarMensagemInterativa = async (configWhatsApp, para, payload, tenantId,
     switch (configAtiva.provedor) {
       case 'meta':
         return await enviarInterativoMeta(configAtiva, para, payload)
-      case 'sendzen':
-        return await enviarInterativoSendzen(configAtiva, para, payload)
       default:
         console.warn(`[WhatsApp] Provedor desconhecido: ${configAtiva.provedor}`)
         return null
@@ -276,8 +220,6 @@ const enviarMensagem = async (configWhatsApp, para, texto, tenantId, lidJid = nu
     switch (provedor) {
       case 'meta':
         return await enviarMeta(configAtiva, para, texto)
-      case 'sendzen':
-        return await enviarSendzen(configAtiva, para, texto)
       default:
         console.warn(`[WhatsApp] Provedor desconhecido: ${provedor}`)
         return null
@@ -296,11 +238,10 @@ const enviarAudio = async (configWhatsApp, para, audioBuffer, tenantId, lidJid =
   }
 
   try {
+    const mimeType = opcoes?.mimetype || 'audio/mpeg'
     switch (configAtiva.provedor) {
       case 'meta':
-        return await enviarAudioMeta(configAtiva, para, audioBuffer)
-      case 'sendzen':
-        return await enviarAudioSendzen(configAtiva, para, audioBuffer)
+        return await enviarAudioMeta(configAtiva, para, audioBuffer, mimeType)
       default:
         return null
     }
@@ -310,12 +251,51 @@ const enviarAudio = async (configWhatsApp, para, audioBuffer, tenantId, lidJid =
   }
 }
 
+/**
+ * Perfil comercial do número (Graph API). A Cloud API não expõe foto de contatos como no app pessoal.
+ * @see https://developers.facebook.com/docs/graph-api/reference/whats-app-business-account-to-number-current-status-whatsapp-business-profile
+ */
+const buscarWhatsappBusinessProfile = async (configWhatsApp) => {
+  const configAtiva = resolverConfigAtiva(configWhatsApp)
+  if (!configAtiva || configAtiva.provedor !== 'meta') return null
+
+  const { phoneNumberId, token, apiToken } = configAtiva
+  const bearerToken = token || apiToken
+  if (!phoneNumberId || !bearerToken) return null
+
+  const fields = 'about,description,profile_picture_url,vertical'
+  const url = `https://graph.facebook.com/${META_GRAPH_VERSION}/${phoneNumberId}/whatsapp_business_profile?fields=${encodeURIComponent(fields)}`
+
+  try {
+    const res = await fetch(url, {
+      headers: { Authorization: `Bearer ${bearerToken}` },
+    })
+    if (!res.ok) return null
+    const json = await res.json()
+    const row = Array.isArray(json?.data) ? json.data[0] : json?.data
+    const perfil = row && typeof row === 'object' ? row : json
+    if (!perfil || typeof perfil !== 'object') return null
+    return {
+      profilePictureUrl: perfil.profile_picture_url || null,
+      about: perfil.about || null,
+      description: perfil.description || null,
+      vertical: perfil.vertical || null,
+    }
+  } catch (err) {
+    console.warn('[WhatsApp] buscarWhatsappBusinessProfile:', err.message)
+    return null
+  }
+}
+
 const obterFotoPerfil = async (configWhatsApp, para, tenantId) => {
   const configAtiva = resolverConfigAtiva(configWhatsApp)
   if (!configAtiva?.provedor || !para) return null
 
   try {
     switch (configAtiva.provedor) {
+      case 'meta':
+        // Foto de cliente via Cloud API não está disponível como no WhatsApp Web; só perfil comercial.
+        return null
       default:
         return null
     }
@@ -331,7 +311,7 @@ const baixarMidiaMeta = async (config, mediaId) => {
   if (!bearerToken) throw new Error('Meta Cloud API: token é obrigatório para download')
 
   // 1. Pega URL da mídia
-  const resMeta = await fetch(`https://graph.facebook.com/v19.0/${mediaId}`, {
+  const resMeta = await fetch(`https://graph.facebook.com/${META_GRAPH_VERSION}/${mediaId}`, {
     headers: { Authorization: `Bearer ${bearerToken}` },
   })
   if (!resMeta.ok) throw new Error(`Meta Media Get Info Erro: ${resMeta.status}`)
@@ -349,19 +329,6 @@ const baixarMidiaMeta = async (config, mediaId) => {
   return Buffer.from(arrayBuffer)
 }
 
-const baixarMidiaSendzen = async (config, url) => {
-  const apiKey = config?.apiKey || config?.token
-  if (!apiKey) throw new Error('SendZen: apiKey é obrigatória para download')
-
-  const res = await fetch(url, {
-    headers: { Authorization: `Bearer ${apiKey}` },
-  })
-  if (!res.ok) throw new Error(`SendZen Media Download Erro: ${res.status}`)
-
-  const arrayBuffer = await res.arrayBuffer()
-  return Buffer.from(arrayBuffer)
-}
-
 const baixarMidia = async (configWhatsApp, mediaIdOuUrl) => {
   const configAtiva = resolverConfigAtiva(configWhatsApp)
   if (!configAtiva?.provedor || !mediaIdOuUrl) return null
@@ -370,8 +337,6 @@ const baixarMidia = async (configWhatsApp, mediaIdOuUrl) => {
     switch (configAtiva.provedor) {
       case 'meta':
         return await baixarMidiaMeta(configAtiva, mediaIdOuUrl)
-      case 'sendzen':
-        return await baixarMidiaSendzen(configAtiva, mediaIdOuUrl)
       default:
         return null
     }
@@ -387,8 +352,9 @@ module.exports = {
   enviarAudio,
   baixarMidia,
   enviarMeta,
-  enviarSendzen,
+  buscarWhatsappBusinessProfile,
   obterFotoPerfil,
   obterConfigDoProvedor,
   resolverConfigAtiva,
+  normalizarNumeroDestinoWhatsapp,
 }

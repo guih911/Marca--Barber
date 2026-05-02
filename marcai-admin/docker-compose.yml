@@ -12,7 +12,14 @@ services:
       ASAAS_API_KEY: ${ASAAS_API_KEY:-}
       ASAAS_ENV: ${ASAAS_ENV:-sandbox}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      META_APP_ID: ${META_APP_ID:-}
+      META_APP_SECRET: ${META_APP_SECRET:-}
+      META_EMBEDDED_SIGNUP_CONFIG_ID: ${META_EMBEDDED_SIGNUP_CONFIG_ID:-}
+      META_GRAPH_API_VERSION: ${META_GRAPH_API_VERSION:-v22.0}
+      META_WEBHOOK_VERIFY_TOKEN: ${META_WEBHOOK_VERIFY_TOKEN:-}
+      META_SYSTEM_USER_TOKEN: ${META_SYSTEM_USER_TOKEN:-}
       PORT: 4000
+    command: sh -c "npx prisma generate && npx prisma migrate deploy && node src/server.js"
     expose:
       - "4000"
     volumes:

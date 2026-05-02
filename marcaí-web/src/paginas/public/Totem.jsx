@@ -88,10 +88,17 @@ const Totem = () => {
     if (!agendamento?.id) return
     setConfirmando(true)
     try {
-      await apiFetch(`/api/agendamentos/${agendamento.id}/presenca`, { method: 'PATCH', body: {} })
+      await apiFetch('/api/public/check-in/confirmar', {
+        method: 'PATCH',
+        body: {
+          slug,
+          telefone,
+          agendamentoId: agendamento.id,
+        },
+      })
       setEtapa(ETAPAS.CONFIRMADO)
     } catch {
-      setEtapa(ETAPAS.CONFIRMADO) // Considera confirmado mesmo se der erro
+      setEtapa(ETAPAS.ERRO)
     } finally {
       setConfirmando(false)
     }
@@ -267,6 +274,25 @@ const Totem = () => {
               <ArrowLeft size={18} className="inline mr-2" />Tentar novamente
             </button>
           </div>
+        </div>
+      )}
+
+      {/* ETAPA: ERRO */}
+      {etapa === ETAPAS.ERRO && (
+        <div className="text-center">
+          <div className="w-24 h-24 rounded-full bg-red-500/20 border-2 border-red-500 flex items-center justify-center mx-auto mb-6">
+            <Phone size={40} className="text-red-300" />
+          </div>
+          <h2 className="text-2xl font-bold text-white mb-3">Não foi possível confirmar agora</h2>
+          <p className="text-white/60 text-base mb-8">
+            Chame a recepção para concluir seu check-in.
+          </p>
+          <button
+            onClick={resetar}
+            className="px-8 py-4 bg-white/15 text-white text-lg font-medium rounded-2xl hover:bg-white/25 transition-colors"
+          >
+            <ArrowLeft size={18} className="inline mr-2" />Tentar novamente
+          </button>
         </div>
       )}
     </div>

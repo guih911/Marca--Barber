@@ -1,5 +1,4 @@
 const banco = require('../../config/banco')
-const whatsappServico = require('../ia/whatsapp.servico')
 const { processarEvento } = require('../ia/messageOrchestrator')
 
 const normalizarTelefone = (telefone) => {
@@ -39,13 +38,6 @@ const formatarDataHoraFila = (dataHora, timeZone = 'America/Sao_Paulo') => (
     timeZone,
   })
 )
-
-const nomeClienteConfiavelEncaixe = (cliente) => {
-  const nome = String(cliente?.nome || '').trim()
-  if (!nome || nome === cliente?.telefone) return false
-  if (/^\+?\d[\d\s()\-]{5,}$/.test(nome)) return false
-  return true
-}
 
 const entradaMaisAdequadaParaSlot = (entradas = [], profissionalId, dataHoraLiberada) => {
   if (!Array.isArray(entradas) || entradas.length === 0) return null
@@ -198,7 +190,7 @@ const notificarFilaParaSlot = async (tenantId, { servicoId, profissionalId, data
   try {
     const tenantFlags = await banco.tenant.findUnique({
       where: { id: tenantId },
-      select: { listaEsperaAtivo: true, filaEncaixeAutomaticoAtivo: true, configWhatsApp: true, timezone: true },
+      select: { listaEsperaAtivo: true, configWhatsApp: true, timezone: true },
     })
     if (!tenantFlags?.listaEsperaAtivo) return
 
@@ -227,53 +219,18 @@ const notificarFilaParaSlot = async (tenantId, { servicoId, profissionalId, data
       ? await banco.profissional.findUnique({ where: { id: profissionalId }, select: { id: true, nome: true } }).catch(() => null)
       : null
 
-    const profissionalCriarId = profissionalSlot?.id || entrada.profissionalId
-    if (!profissionalCriarId) {
-      console.warn('[FilaEspera] Sem profissionalId para encaixe; usando fluxo de aviso manual.')
-    }
-
-    const encaixePodeTentar = Boolean(
-      tenantFlags.filaEncaixeAutomaticoAtivo
-      && entrada.aceitaEncaixeAutomatico
-      && profissionalCriarId
-      && nomeClienteConfiavelEncaixe(entrada.cliente)
-    )
-
-    if (encaixePodeTentar) {
-      try {
-        const agendamentosServico = require('../agendamentos/agendamentos.servico')
-        await agendamentosServico.criar(tenantId, {
-          clienteId: entrada.clienteId,
-          profissionalId: profissionalCriarId,
-          servicoId: entrada.servicoId,
-          inicio: new Date(dataHoraLiberada).toISOString(),
-          origem: 'WHATSAPP',
-          encaixeFila: true,
-        })
-        await atualizarStatus(entrada.id, 'CONVERTIDO', {
-          notificadoEm: new Date(),
-          dataDesejada: new Date(dataHoraLiberada),
-          profissionalId: profissionalCriarId,
-        })
-        console.log(`[FilaEspera] Encaixe automático — ${entrada.servico.nome} | ${telNormalizado}`)
-        return
-      } catch (encErr) {
-        console.warn('[FilaEspera] Encaixe automático não foi possível, enviando aviso para confirmar:', encErr?.mensagem || encErr?.message || encErr)
-      }
-    }
-
-    if (tenant?.configWhatsApp) {
-      processarEvento({
-        evento: 'FILA_ESPERA',
-        agendamento: {
-          inicioEm: dataHoraLiberada,
-          servico: entrada.servico,
-          profissional: profissionalSlot || entrada.profissional
-        },
-        tenantId,
-        cliente: entrada.cliente
-      })
-    }
+    // Só marca NOTIFICADO quando a oferta realmente foi disparada.
+    if (!tenant?.configWhatsApp) return
+    await processarEvento({
+      evento: 'FILA_ESPERA',
+      agendamento: {
+        inicioEm: dataHoraLiberada,
+        servico: entrada.servico,
+        profissional: profissionalSlot || entrada.profissional
+      },
+      tenantId,
+      cliente: entrada.cliente
+    })
 
     await atualizarStatus(entrada.id, 'NOTIFICADO', {
       notificadoEm: new Date(),
@@ -281,7 +238,7 @@ const notificarFilaParaSlot = async (tenantId, { servicoId, profissionalId, data
       profissionalId: profissionalSlot?.id || entrada.profissionalId || null,
     })
 
-    console.log(`[FilaEspera] Notificado ${entrada.cliente.telefone} — ${entrada.servico.nome}`)
+    console.log(`[FilaEspera] Oferta enviada para confirmacao (${entrada.cliente.telefone}) — ${entrada.servico.nome}`)
   } catch (err) {
     console.error('[FilaEspera] Erro ao notificar:', err.message)
   }

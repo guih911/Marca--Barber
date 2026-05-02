@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Crown, CheckCircle2, Users, Bot, Scissors, Loader2, ExternalLink, ArrowUpRight, ClipboardList } from 'lucide-react'
+import { Crown, CheckCircle2, Users, Bot, Scissors, Loader2, ExternalLink, ArrowUpRight, ClipboardList, Gift, Camera } from 'lucide-react'
 import api from '../../servicos/api'
 import useAuth from '../../hooks/useAuth'
 import { useToast } from '../../contextos/ToastContexto'
@@ -8,6 +8,8 @@ const FEATURES_SOLO = [
   { icone: Scissors, label: 'Agenda completa', desc: '1 profissional' },
   { icone: Bot, label: 'Don IA (recepcionista)', desc: 'Agendamentos automáticos pelo WhatsApp' },
   { icone: Users, label: 'Clientes ilimitados', desc: 'Cadastro e histórico completo' },
+  { icone: Gift, label: 'Corte grátis no aniversário', desc: 'Campanha de aniversário habilitável' },
+  { icone: Camera, label: 'Galeria', desc: 'Vitrine visual da barbearia' },
 ]
 
 const FEATURES_SALAO = [
@@ -153,8 +155,8 @@ const ConfigPlanoSalao = () => {
           </div>
           <button
             onClick={() => {
-              toast('Entre em contato em marcai.com.br para fazer upgrade!', 'info')
-              window.open('https://marcai.com.br', '_blank')
+              toast('Entre em contato em barbermark.com.br para fazer upgrade!', 'info')
+              window.open('https://barbermark.com.br', '_blank')
             }}
             className="mt-4 w-full py-2.5 bg-primaria hover:bg-primaria-escura text-white rounded-xl text-sm font-semibold transition-colors flex items-center justify-center gap-2"
           >
@@ -167,10 +169,10 @@ const ConfigPlanoSalao = () => {
       <div className="bg-fundo rounded-2xl border border-borda p-5 flex items-center justify-between">
         <div>
           <p className="text-sm font-medium text-texto">Precisa de ajuda?</p>
-          <p className="text-xs text-texto-sec mt-0.5">Fale com o suporte em marcai.com.br</p>
+          <p className="text-xs text-texto-sec mt-0.5">Fale com o suporte em barbermark.com.br</p>
         </div>
         <button
-          onClick={() => window.open('https://marcai.com.br', '_blank')}
+          onClick={() => window.open('https://barbermark.com.br', '_blank')}
           className="flex items-center gap-1.5 text-xs text-primaria font-medium hover:underline"
         >
           Suporte <ExternalLink size={12} />

@@ -1,4 +1,4 @@
-const PROD_BASE = 'https://barber.xn--marca-3sa.com'
+const PROD_BASE = 'https://barber.marcaí.com'
 
 /**
  * @param {import('@expo/config').ConfigContext} ctx

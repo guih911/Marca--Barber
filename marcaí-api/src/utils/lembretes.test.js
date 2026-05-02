@@ -29,9 +29,9 @@ test('obterLembretesEnviados normaliza a lista persistida no agendamento', () =>
 })
 
 test('estaNaJanelaDeLembrete respeita a janela do cron sem disparar lembretes menores juntos', () => {
-  assert.equal(estaNaJanelaDeLembrete(58, 60), true)
+  assert.equal(estaNaJanelaDeLembrete(59.5, 60), true)
   assert.equal(estaNaJanelaDeLembrete(44, 60), false)
-  assert.equal(estaNaJanelaDeLembrete(4, 10), true)
-  assert.equal(estaNaJanelaDeLembrete(4, 5), true)
+  assert.equal(estaNaJanelaDeLembrete(9.2, 10), true)
+  assert.equal(estaNaJanelaDeLembrete(4.5, 5), true)
   assert.equal(estaNaJanelaDeLembrete(16, 15), false)
 })

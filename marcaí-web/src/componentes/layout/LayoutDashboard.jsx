@@ -3,8 +3,6 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   PanelLeftClose,
   PanelLeftOpen,
-  Wifi,
-  WifiOff,
   Menu,
   Loader2,
   Download,
@@ -14,7 +12,7 @@ import {
   Users,
 } from 'lucide-react'
 import Sidebar from './Sidebar'
-import api from '../../servicos/api'
+import ConectarWhatsappButton from '../ConectarWhatsappButton'
 import useAuth from '../../hooks/useAuth'
 
 const titulos = {
@@ -29,13 +27,13 @@ const titulos = {
   '/config/servicos': 'Servicos',
   '/config/recursos': 'Recursos do Sistema',
   '/config/usuarios': 'Usuarios',
-  '/config/integracoes': 'Integracoes',
+  '/config/integracoes/guia-whatsapp': 'Guia WhatsApp (Meta)',
   '/operacao/caixa': 'Caixa',
   '/operacao/lista-espera': 'Lista de espera',
 }
 
 const subtitulos = {
-  '/dashboard': 'Visao geral da operacao de hoje',
+  '/dashboard': 'Visão geral da operação de hoje',
   '/dashboard/agenda': 'Visualize e gerencie os horarios do dia',
   '/dashboard/mensagens': 'Conversas dos clientes via WhatsApp',
   '/dashboard/agendamentos': 'Todos os agendamentos do seu negocio',
@@ -46,7 +44,7 @@ const subtitulos = {
   '/config/negocio': 'Dados e configuracoes da barbearia',
   '/config/recursos': 'Ative ou desative funcionalidades do sistema',
   '/config/usuarios': 'Usuarios com acesso ao painel',
-  '/config/integracoes': 'Conecte o WhatsApp e outras integracoes',
+  '/config/integracoes/guia-whatsapp': 'Passo a passo da integracao oficial com a Meta',
   '/operacao/caixa': 'Controle de entradas e saidas financeiras',
   '/operacao/lista-espera': 'Ordem de atendimento quando não há horário livre',
 }
@@ -57,74 +55,6 @@ const itensNavegacaoMobile = [
   { label: 'Mensagens', rota: '/dashboard/mensagens', icone: MessageSquareMore },
   { label: 'Clientes', rota: '/operacao/clientes', icone: Users },
 ]
-
-const StatusWhatsApp = () => {
-  const [status, setStatus] = useState(null)
-  const navigate = useNavigate()
-
-  useEffect(() => {
-    const verificar = async () => {
-      try {
-        const [metaRes, sendzenRes] = await Promise.allSettled([
-          api.get('/api/ia/meta/config'),
-          api.get('/api/ia/sendzen/config'),
-        ])
-
-        const metaConectada = metaRes.status === 'fulfilled' && metaRes.value?.dados?.status?.conectado
-        const sendzenConectada = sendzenRes.status === 'fulfilled' && sendzenRes.value?.dados?.status?.conectado
-
-        if (metaConectada || sendzenConectada) {
-          setStatus('conectado')
-        } else {
-          setStatus('desconectado')
-        }
-      } catch {
-        setStatus('desconectado')
-      }
-    }
-
-    verificar()
-    const intervalo = setInterval(verificar, 10000)
-    return () => clearInterval(intervalo)
-  }, [])
-
-  if (status === null) return null
-
-  const { pathname } = window.location
-  if (status === 'desconectado' && pathname !== '/config/integracoes') return null
-
-  const visualPorStatus = {
-    conectado: {
-      classe: 'bg-sucesso/10 text-sucesso',
-      icone: <Wifi size={13} />,
-      label: 'WhatsApp conectado',
-    },
-    iniciando: {
-      classe: 'bg-gray-100 text-texto-sec',
-      icone: <Loader2 size={13} className="animate-spin" />,
-      label: 'Aguardando Meta ou Sendzen',
-    },
-    desconectado: {
-      classe: 'bg-perigo/10 text-perigo',
-      icone: <WifiOff size={13} />,
-      label: 'Conectar WhatsApp',
-    },
-  }
-
-  const visual = visualPorStatus[status] || visualPorStatus.desconectado
-  const clicavel = status === 'desconectado'
-
-  return (
-    <button
-      onClick={clicavel ? () => navigate('/config/integracoes') : undefined}
-      className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] md:text-xs font-semibold transition-colors ${visual.classe} ${clicavel ? 'cursor-pointer hover:opacity-80' : 'cursor-default'}`}
-      title={clicavel ? 'Ir para Integracoes' : undefined}
-    >
-      {visual.icone}
-      <span className="hidden sm:inline">{visual.label}</span>
-    </button>
-  )
-}
 
 const LayoutDashboard = () => {
   const { tenant } = useAuth()
@@ -155,7 +85,7 @@ const LayoutDashboard = () => {
     return () => obs.disconnect()
   }, [])
 
-  const titulo = titulos[location.pathname] || 'Marcai Barber'
+  const titulo = titulos[location.pathname] || 'BarberMark'
   const planoSolo = tenant?.planoContratado === 'SOLO'
   const baseSub = subtitulos[location.pathname] || ''
   const subtitulo =
@@ -289,7 +219,7 @@ const LayoutDashboard = () => {
                   <span className="hidden sm:inline">Instalar app</span>
                 </button>
               )}
-              <StatusWhatsApp />
+              <ConectarWhatsappButton />
             </div>
           </div>
         </header>

@@ -264,7 +264,7 @@ const recuperarSenha = async ({ email }) => {
 
   await banco.tokenResetSenha.create({ data: { email, token, expiresAt } })
 
-  const link = `${process.env.FRONTEND_URL || 'https://app.marcai.com.br'}/redefinir-senha/${token}`
+  const link = `${process.env.FRONTEND_URL || 'https://app.barbermark.com.br'}/redefinir-senha/${token}`
 
   const html = montarHtmlPadrao({
     titulo: 'Redefinir sua senha',

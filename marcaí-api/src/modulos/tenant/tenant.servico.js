@@ -1,5 +1,21 @@
 const banco = require('../../config/banco')
 const { obterLembretesConfigurados } = require('../../utils/lembretes')
+const { gerarSugestaoMensagemDon } = require('../../utils/gerarSugestaoConfigDon')
+
+const CHAVES_CONFIG_DON_PERMITIDAS = new Set([
+  'lembreteDiaAnterior',
+  'lembreteNoDia',
+  'cardComAgendamentoFuturo',
+  'cardRecorrente',
+  'cardNovoCliente',
+])
+
+const filtrarConfigMensagensDon = (valor) => {
+  if (!valor || typeof valor !== 'object' || Array.isArray(valor)) return {}
+  return Object.fromEntries(
+    Object.entries(valor).filter(([k, v]) => CHAVES_CONFIG_DON_PERMITIDAS.has(k) && typeof v === 'string')
+  )
+}
 
 const normalizarPlanoContratado = (plano) => {
   const valor = String(plano || '').trim().toUpperCase()
@@ -27,6 +43,15 @@ const normalizarCicloCobranca = (ciclo) => {
   return mapa[valor]
 }
 
+const normalizarHorarioReengajamentoFila = (horario) => {
+  if (horario == null || horario === '') return '20:30'
+  const valor = String(horario).trim()
+  if (!/^([01]\d|2[0-3]):([0-5]\d)$/.test(valor)) {
+    throw { status: 400, mensagem: 'Horário de reengajamento da fila inválido. Use HH:mm.', codigo: 'HORARIO_REENGAJAMENTO_INVALIDO' }
+  }
+  return valor
+}
+
 // Retorna o tenant do usuário logado
 const buscarMeu = async (tenantId) => {
   const tenant = await banco.tenant.findUnique({ where: { id: tenantId } })
@@ -49,6 +74,12 @@ const atualizar = async (tenantId, dados) => {
   if (dados.configWhatsApp !== undefined) campos.configWhatsApp = dados.configWhatsApp
   if (dados.autoCancelarNaoConfirmados !== undefined) campos.autoCancelarNaoConfirmados = Boolean(dados.autoCancelarNaoConfirmados)
   if (dados.horasAutoCancelar !== undefined) campos.horasAutoCancelar = Number(dados.horasAutoCancelar)
+  if (dados.minutosMargemAutoCancelamento !== undefined) {
+    const margem = Number(dados.minutosMargemAutoCancelamento)
+    campos.minutosMargemAutoCancelamento = Number.isFinite(margem)
+      ? Math.max(0, Math.min(180, margem))
+      : 15
+  }
   if (dados.lembreteMinutosAntes !== undefined) campos.lembreteMinutosAntes = Number(dados.lembreteMinutosAntes)
   if (dados.lembretesMinutosAntes !== undefined) {
     campos.lembretesMinutosAntes = Array.isArray(dados.lembretesMinutosAntes)
@@ -69,6 +100,7 @@ const atualizar = async (tenantId, dados) => {
   if (dados.membershipsAtivo !== undefined) campos.membershipsAtivo = Boolean(dados.membershipsAtivo)
   if (dados.galeriaAtivo !== undefined) campos.galeriaAtivo = Boolean(dados.galeriaAtivo)
   if (dados.listaEsperaAtivo !== undefined) campos.listaEsperaAtivo = Boolean(dados.listaEsperaAtivo)
+  if (dados.filaReengajamentoHorario !== undefined) campos.filaReengajamentoHorario = normalizarHorarioReengajamentoFila(dados.filaReengajamentoHorario)
   if (dados.filaEncaixeAutomaticoAtivo !== undefined) campos.filaEncaixeAutomaticoAtivo = Boolean(dados.filaEncaixeAutomaticoAtivo)
   if (dados.caixaAtivo !== undefined) campos.caixaAtivo = Boolean(dados.caixaAtivo)
   if (dados.planoContratado !== undefined) campos.planoContratado = normalizarPlanoContratado(dados.planoContratado)
@@ -104,8 +136,35 @@ const atualizarConfiguracaoIA = async (tenantId, dados) => {
   if (dados.mensagemForaHorario !== undefined) campos.mensagemForaHorario = dados.mensagemForaHorario
   if (dados.mensagemRetorno !== undefined) campos.mensagemRetorno = dados.mensagemRetorno || null
   if (dados.antecedenciaCancelar !== undefined) campos.antecedenciaCancelar = Number(dados.antecedenciaCancelar)
+  if (dados.nomeIA !== undefined) campos.nomeIA = dados.nomeIA?.trim() || null
+  if (dados.apresentacaoSalaoAtivo !== undefined) campos.apresentacaoSalaoAtivo = Boolean(dados.apresentacaoSalaoAtivo)
+  if (dados.iaIncluirLinkAgendamento !== undefined) campos.iaIncluirLinkAgendamento = Boolean(dados.iaIncluirLinkAgendamento)
+
+  if (dados.configMensagensDon !== undefined) {
+    if (dados.configMensagensDon === null) {
+      campos.configMensagensDon = null
+    } else if (dados.configMensagensDon && typeof dados.configMensagensDon === 'object') {
+      const anterior = await banco.tenant.findUnique({
+        where: { id: tenantId },
+        select: { configMensagensDon: true },
+      })
+      const base =
+        anterior?.configMensagensDon && typeof anterior.configMensagensDon === 'object'
+          ? filtrarConfigMensagensDon(anterior.configMensagensDon)
+          : {}
+      const recebido = filtrarConfigMensagensDon(dados.configMensagensDon)
+      campos.configMensagensDon = { ...base, ...recebido }
+    }
+  }
 
   return banco.tenant.update({ where: { id: tenantId }, data: campos })
+}
+
+// Sugestão de texto (IA) para a tela Config. Don Barber — sem persistir
+const sugerirMensagemConfigDon = async (tenantId, campo) => {
+  const tenant = await banco.tenant.findUnique({ where: { id: tenantId } })
+  if (!tenant) throw { status: 404, mensagem: 'Tenant não encontrado', codigo: 'NAO_ENCONTRADO' }
+  return gerarSugestaoMensagemDon(tenant, campo)
 }
 
 // Lista usuários do tenant
@@ -117,4 +176,4 @@ const listarUsuarios = async (tenantId) => {
   })
 }
 
-module.exports = { buscarMeu, atualizar, atualizarConfiguracaoIA, listarUsuarios }
+module.exports = { buscarMeu, atualizar, atualizarConfiguracaoIA, sugerirMensagemConfigDon, listarUsuarios }

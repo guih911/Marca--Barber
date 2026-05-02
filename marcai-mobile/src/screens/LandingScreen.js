@@ -14,16 +14,16 @@ export default function LandingScreen({ navigation }) {
             <LogoMark size={88} />
           </View>
           <Text style={styles.badge}>Marcaí Barber V2</Text>
-          <Text style={styles.title}>Gestao profissional da sua barbearia</Text>
+          <Text style={styles.title}>Gestão profissional da sua barbearia</Text>
           <Text style={styles.subtitle}>
-            Controle agenda, atendimento e desempenho em um fluxo rapido e organizado.
+            Controle agenda, atendimento e desempenho em um fluxo rápido e organizado.
           </Text>
         </View>
 
         <View style={styles.features}>
-          <Feature title="Agenda inteligente" text="Visual moderno para operacao do dia." />
-          <Feature title="Painel administrativo" text="Indicadores e visao geral em segundos." />
-          <Feature title="Fluxo simplificado" text="Acesso rapido para equipe e gestao." />
+          <Feature title="Agenda inteligente" text="Visual moderno para operação do dia." />
+          <Feature title="Painel administrativo" text="Indicadores e visão geral em segundos." />
+          <Feature title="Fluxo simplificado" text="Acesso rápido para equipe e gestão." />
         </View>
 
         <PrimaryButton label="Entrar no sistema" onPress={() => navigation.navigate('Login')} />

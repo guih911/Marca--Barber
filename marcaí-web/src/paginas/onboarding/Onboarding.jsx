@@ -579,7 +579,7 @@ const Onboarding = () => {
               <circle cx="16" cy="15" r="1.5" fill="white" />
             </svg>
           </div>
-          <span className="font-display tracking-[0.12em] text-xl text-texto">Marcaí Barber</span>
+          <span className="font-display tracking-[0.12em] text-xl text-texto">BarberMark</span>
         </div>
 
         <ProgressBar passo={passo} total={4} />

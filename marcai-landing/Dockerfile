@@ -1,5 +1,8 @@
 FROM node:20-alpine AS builder
 
+ARG VITE_LANDING_BASE_URL=https://marcaí.com
+ENV VITE_LANDING_BASE_URL=$VITE_LANDING_BASE_URL
+
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci

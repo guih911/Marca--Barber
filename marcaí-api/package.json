@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "nodemon src/app.js",
     "start": "node src/app.js",
+    "test": "node --test src",
+    "ia:relatorio-semanal": "node scripts/relatorio-ia-semanal.js",
     "migrar": "prisma migrate dev",
     "seed": "node prisma/seed.js",
     "studio": "prisma studio",

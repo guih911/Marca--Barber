@@ -1,4 +1,5 @@
 const crypto = require('crypto')
+const { domainToASCII } = require('url')
 const iaServico = require('./ia.servico')
 const clientesServico = require('../clientes/clientes.servico')
 const conversasServico = require('../conversas/conversas.servico')
@@ -27,10 +28,91 @@ const META_APP_SECRET = process.env.META_APP_SECRET || ''
 const META_EMBEDDED_SIGNUP_CONFIG_ID = process.env.META_EMBEDDED_SIGNUP_CONFIG_ID || ''
 const META_WEBHOOK_VERIFY_TOKEN = process.env.META_WEBHOOK_VERIFY_TOKEN || ''
 const META_WEBHOOK_CALLBACK_URL = process.env.META_WEBHOOK_CALLBACK_URL || ''
+const META_REGISTER_PIN = String(process.env.META_REGISTER_PIN || '123456').replace(/\D/g, '').slice(0, 6)
+// System User token (BSP) — usado p/ /register e /subscribed_apps quando o token do Embedded Signup não tem permissão.
+// Crie em business.facebook.com → Configurações → Usuários do sistema → "Marcaí" (Admin) → Gerar token nunca expira
+// com whatsapp_business_management + whatsapp_business_messaging.
+const META_SYSTEM_USER_TOKEN = (process.env.META_SYSTEM_USER_TOKEN || '').trim()
 const SENDZEN_WEBHOOK_CALLBACK_URL = process.env.SENDZEN_WEBHOOK_CALLBACK_URL || ''
 const SENDZEN_WEBHOOK_SECRET = process.env.SENDZEN_WEBHOOK_SECRET || ''
 const SENDZEN_WEBHOOK_TENANT_ID = (process.env.SENDZEN_WEBHOOK_TENANT_ID || '').trim()
 const APP_URL = process.env.APP_URL || ''
+const OAUTH_REDIRECT_ENV = (process.env.META_OAUTH_REDIRECT_URI || process.env.OAUTH_REDIRECT_URL || '').trim()
+/** Hostnames extras (ASCII) aceitos p.ex. se APP_URL e a barra de endereço usam formas distintas (IDN vs punycode). */
+const META_OAUTH_EXTRA_REDIRECT_HOSTS = (process.env.META_OAUTH_EXTRA_REDIRECT_HOSTS || '')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean)
+
+const hostParaOauth = (hostname) => {
+  try {
+    return domainToASCII(String(hostname || '').toLowerCase())
+  } catch {
+    return String(hostname || '').toLowerCase()
+  }
+}
+
+/** Conjunto de hosts permitidos: APP_URL, OAUTH_REDIRECT, extras — evita rejeitar punycode quando .env tem IDN (ou o inverso). */
+const coletarHostsOauthPermitidos = () => {
+  const hosts = new Set()
+  const addUrl = (s) => {
+    if (!s) return
+    try {
+      hosts.add(hostParaOauth(new URL(s).hostname))
+    } catch {
+      // ignore
+    }
+  }
+  addUrl(APP_URL)
+  addUrl(OAUTH_REDIRECT_ENV)
+  for (const h of META_OAUTH_EXTRA_REDIRECT_HOSTS) {
+    if (h.includes('://')) addUrl(h)
+    else {
+      try {
+        hosts.add(hostParaOauth(h))
+      } catch {
+        // ignore
+      }
+    }
+  }
+  return hosts
+}
+
+const hostsOauthCache = { lista: null, chave: null }
+const obterHostsOauthPermitidos = () => {
+  const chave = `${APP_URL}|${OAUTH_REDIRECT_ENV}|${META_OAUTH_EXTRA_REDIRECT_HOSTS.join(',')}`
+  if (hostsOauthCache.lista && hostsOauthCache.chave === chave) return hostsOauthCache.lista
+  hostsOauthCache.chave = chave
+  hostsOauthCache.lista = coletarHostsOauthPermitidos()
+  return hostsOauthCache.lista
+}
+
+/**
+ * Valida e normaliza a URL de redirect (idêntica à "Valid OAuth Redirect URIs" e à usada no diálogo OAuth).
+ * Remove hash e search para alinhar ao que o front envia (href sem query).
+ */
+const normalizarRedirectUriOauth = (bruto) => {
+  if (!bruto || typeof bruto !== 'string') return null
+  try {
+    const u = new URL(bruto.trim())
+    if (u.protocol !== 'https:' && !(u.hostname === 'localhost' || u.hostname === '127.0.0.1')) return null
+    const hosts = obterHostsOauthPermitidos()
+    if (hosts.size > 0) {
+      if (!hosts.has(hostParaOauth(u.hostname))) return null
+    }
+    u.hash = ''
+    u.search = ''
+    return u.href
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Sempre que o body trouxer redirectUri, essa string é a que a Meta usou no OAuth — tem prioridade sobre o .env.
+ */
+const resolverRedirectUriEmbeddedSignup = (redirectBody) =>
+  normalizarRedirectUriOauth(redirectBody) || normalizarRedirectUriOauth(OAUTH_REDIRECT_ENV) || OAUTH_REDIRECT_ENV || null
 
 // Serializa processamento por numero para evitar respostas duplicadas em rajadas.
 const filaProcessamento = new Map()
@@ -311,7 +393,40 @@ const mensagemClienteDuplicadaRecente = async (conversaId, conteudo) => {
   })
 
   if (!ultimaIgual) return false
-  return Date.now() - new Date(ultimaIgual.criadoEm).getTime() < 15000
+  const dentroJanela = Date.now() - new Date(ultimaIgual.criadoEm).getTime() < 15000
+  if (!dentroJanela) return false
+
+  // Se a IA já respondeu depois da mensagem igual, só libera quando a resposta da IA
+  // terminou em pergunta/oferta (ex.: "serve?"), pois o próximo "sim" é legítimo.
+  // Se a resposta foi conclusão (ex.: "Confirmado!"), trata retry curto como duplicata.
+  const iaRespondeuDepois = await banco.mensagem.findFirst({
+    where: {
+      conversaId,
+      remetente: 'ia',
+      criadoEm: { gt: ultimaIgual.criadoEm },
+    },
+    orderBy: { criadoEm: 'desc' },
+    select: { conteudo: true },
+  })
+  if (!iaRespondeuDepois) return true
+
+  const textoIA = String(iaRespondeuDepois.conteudo || '').toLowerCase()
+  const iaPerguntouNoTurno = /\?|serve\b|prefere\b|quer\b|confirmar\b|ajustar\b|outro horario|outro horário/.test(textoIA)
+  return !iaPerguntouNoTurno
+}
+
+// Dedup por ID nativo do provedor (wamid da Meta) para evitar processar retries do mesmo evento.
+const mensagensWebhookProcessadas = new Map()
+const registrarMensagemWebhook = (chaveUnica) => {
+  if (!chaveUnica) return false
+  const agora = Date.now()
+  const ttlMs = 10 * 60 * 1000
+  for (const [k, ts] of mensagensWebhookProcessadas.entries()) {
+    if (agora - ts > ttlMs) mensagensWebhookProcessadas.delete(k)
+  }
+  if (mensagensWebhookProcessadas.has(chaveUnica)) return false
+  mensagensWebhookProcessadas.set(chaveUnica, agora)
+  return true
 }
 
 const processarWebhookSerializado = (chave, fn) => {
@@ -335,6 +450,7 @@ const obterMetaPublicConfig = () => ({
   configId: META_EMBEDDED_SIGNUP_CONFIG_ID || null,
   apiVersion: META_API_VERSION,
   webhookCallbackUrl: META_WEBHOOK_CALLBACK_URL || null,
+  bspTokenConfigurado: Boolean(META_SYSTEM_USER_TOKEN),
 })
 
 const chamarGraphApi = async (path, { method = 'GET', accessToken, query = {}, body } = {}) => {
@@ -362,18 +478,172 @@ const chamarGraphApi = async (path, { method = 'GET', accessToken, query = {}, b
   return dados
 }
 
-const trocarCodePorTokenMeta = async (code) => {
+/**
+ * Lista de tokens, em ordem, para tentar operações que exigem whatsapp_business_management
+ * (subscribed_apps, /register). O Embedded Signup costuma falhar com (#200) quando a barbearia
+ * não é admin do WABA recém-criado; cair no app access token (oficialmente suportado pela Meta)
+ * ou no System User token resolve sem reconectar.
+ */
+const obterTokensCandidatosWaba = (userAccessToken) => {
+  const tokens = []
+  if (userAccessToken) tokens.push({ tipo: 'user', token: userAccessToken })
+  if (META_SYSTEM_USER_TOKEN) tokens.push({ tipo: 'system_user', token: META_SYSTEM_USER_TOKEN })
+  if (META_APP_ID && META_APP_SECRET) {
+    // App Access Token aceita registrar número e assinar webhook do WABA quando o app é Tech Provider.
+    tokens.push({ tipo: 'app', token: `${META_APP_ID}|${META_APP_SECRET}` })
+  }
+  return tokens
+}
+
+const erroEhPermissao = (msg) =>
+  /you do not have permission to access this field|\(#200\)|\(#10\)|\(#100\)|access token|permission/i.test(
+    String(msg || ''),
+  )
+
+const tentarRegistrarNumeroMeta = async ({ phoneNumberId, accessToken }) => {
+  if (!phoneNumberId) {
+    return { ok: false, motivo: 'sem_phone_id' }
+  }
+
+  const pin = META_REGISTER_PIN && META_REGISTER_PIN.length === 6 ? META_REGISTER_PIN : '123456'
+  const tentativas = obterTokensCandidatosWaba(accessToken)
+  if (!tentativas.length) return { ok: false, motivo: 'sem_token' }
+
+  const motivos = []
+  for (const { tipo, token } of tentativas) {
+    try {
+      const resposta = await chamarGraphApi(`${phoneNumberId}/register`, {
+        method: 'POST',
+        accessToken: token,
+        body: { messaging_product: 'whatsapp', pin },
+      })
+      console.log('[Meta /register] OK via token tipo =', tipo)
+      return { ok: true, jaEstava: false, tokenTipo: tipo, resposta: resposta || null }
+    } catch (erro) {
+      const msg = String(erro?.message || '')
+      const jaEstava =
+        /already registered|already exists|already configured|duplicate|133015|133016/i.test(msg)
+      if (jaEstava) return { ok: true, jaEstava: true, tokenTipo: tipo, motivo: msg }
+      motivos.push(`${tipo}: ${msg}`)
+      if (!erroEhPermissao(msg)) {
+        return { ok: false, tokenTipo: tipo, motivo: msg || 'falha_register' }
+      }
+    }
+  }
+  return { ok: false, motivo: motivos.join(' | ') || 'falha_register' }
+}
+
+const tentarAssinarWebhookWaba = async ({ wabaId, accessToken }) => {
+  if (!wabaId) return { ok: false, motivo: 'sem_waba' }
+
+  const tentativas = obterTokensCandidatosWaba(accessToken)
+  if (!tentativas.length) return { ok: false, motivo: 'sem_token' }
+
+  const motivos = []
+  for (const { tipo, token } of tentativas) {
+    try {
+      await chamarGraphApi(`${wabaId}/subscribed_apps`, { method: 'POST', accessToken: token })
+      console.log('[Meta subscribed_apps] OK via token tipo =', tipo)
+      return { ok: true, tokenTipo: tipo }
+    } catch (erro) {
+      const msg = String(erro?.message || '')
+      motivos.push(`${tipo}: ${msg}`)
+      if (!erroEhPermissao(msg)) {
+        return { ok: false, tokenTipo: tipo, motivo: msg || 'falha_subscribed_apps' }
+      }
+    }
+  }
+  return {
+    ok: false,
+    motivo:
+      'Token sem permissão para assinar o WABA (erro Meta #200). Detalhe: '
+      + (motivos.join(' | ') || 'sem_detalhe')
+      + '. Configure META_SYSTEM_USER_TOKEN (Business Manager → Usuários do sistema) com whatsapp_business_management + whatsapp_business_messaging, ou reconecte aceitando todas as permissões.',
+  }
+}
+
+const montarUrlTrocaCodeMeta = (code, { incluirRedirect, redirectUri } = {}) => {
   const url = new URL(`https://graph.facebook.com/${META_API_VERSION}/oauth/access_token`)
   url.searchParams.set('client_id', META_APP_ID)
   url.searchParams.set('client_secret', META_APP_SECRET)
   url.searchParams.set('code', code)
+  if (incluirRedirect && redirectUri) {
+    url.searchParams.set('redirect_uri', redirectUri)
+  }
+  return url.toString()
+}
 
-  const resposta = await fetch(url)
-  const dados = await resposta.json().catch(() => ({}))
+/**
+ * Troca o code do Embedded Signup por access_token.
+ * O FB.login (SDK JS) usa redirect interno; em muitos casos a Graph API aceita a troca *sem* redirect_uri
+ * ou com redirect_uri = página, conforme a doc comunitária. Faz tentativa com URI e, se falhar, sem param.
+ * @see https://developers.facebook.com/docs/whatsapp/embedded-signup/implementation
+ */
+const trocarCodePorTokenMeta = async (code, { redirectUri } = {}) => {
+  if (!code) {
+    throw new Error('Código OAuth vazio.')
+  }
+
+  const fazer = async (incluirRedirect) => {
+    const urlStr = montarUrlTrocaCodeMeta(code, { incluirRedirect, redirectUri })
+    const resposta = await fetch(urlStr)
+    const dados = await resposta.json().catch(() => ({}))
+    return { resposta, dados }
+  }
+
+  // 1) Sem redirect_uri — é o que costuma bater com FB.login + Embedded Signup (SDK usa redirect interno).
+  // 2) Com redirect_uri da página — fallback quando a Meta exige a URL em Valid OAuth Redirect URIs.
+  let { resposta, dados } = await fazer(false)
+
+  if (!resposta.ok && redirectUri) {
+    console.warn(
+      '[Meta OAuth] 2ª tentativa: troca de code com redirect_uri=',
+      redirectUri,
+      '(1ª sem redirect — padrão Embedded Signup + SDK).',
+    )
+    const comUri = await fazer(true)
+    resposta = comUri.resposta
+    dados = comUri.dados
+  }
+
   if (!resposta.ok) {
-    throw new Error(dados?.error?.message || `Meta OAuth error ${resposta.status}`)
+    const msg = dados?.error?.message || dados?.error?.error_user_msg || `Meta OAuth error ${resposta.status}`
+    const err = new Error(msg)
+    const pedeRedirect = /redirect|verification code/i.test(msg) || Number(dados?.error?.error_subcode) === 36008
+    if (pedeRedirect) {
+      err.dicaOauth =
+        'Inclua a URL exata do painel (ex.: /dashboard) em "Valid OAuth Redirect URIs" (Login do Facebook p/ Empresas) e use a mesma URL no navegador. Se ainda falhar, a API já tenta também sem redirect_uri (SDK).'
+    }
+    throw err
+  }
+  if (!dados?.access_token) {
+    throw new Error('A Meta não retornou access_token na troca do code.')
   }
   return dados
+}
+
+/**
+ * O code do Embedded Signup devolve access token de curta duração; sem troca, envio/recebimento param após ~1–2h.
+ * @see https://developers.facebook.com/docs/facebook-login/guides/access-tokens/get-long-lived
+ */
+const trocarTokenCurtoPorLongLivedMeta = async (shortLivedToken) => {
+  if (!shortLivedToken || !META_APP_ID || !META_APP_SECRET) return null
+  const u = new URL(`https://graph.facebook.com/${META_API_VERSION}/oauth/access_token`)
+  u.searchParams.set('grant_type', 'fb_exchange_token')
+  u.searchParams.set('client_id', META_APP_ID)
+  u.searchParams.set('client_secret', META_APP_SECRET)
+  u.searchParams.set('fb_exchange_token', shortLivedToken)
+  const r = await fetch(u.toString())
+  const d = await r.json().catch(() => ({}))
+  if (!r.ok) {
+    console.warn(
+      '[Meta OAuth] Long-lived indisponível, mantendo token do code:',
+      d?.error?.message || d?.error?.type || r.status,
+    )
+    return null
+  }
+  if (!d.access_token) return null
+  return d
 }
 
 const resolverTenantMeta = async ({ tenantId = null, phoneNumberId = null, wabaId = null }) => {
@@ -390,9 +660,49 @@ const resolverTenantMeta = async ({ tenantId = null, phoneNumberId = null, wabaI
         wabaId ? { configWhatsApp: { path: ['wabaId'], equals: String(wabaId) } } : undefined,
         phoneNumberId ? { configWhatsApp: { path: ['meta', 'phoneNumberId'], equals: String(phoneNumberId) } } : undefined,
         wabaId ? { configWhatsApp: { path: ['meta', 'wabaId'], equals: String(wabaId) } } : undefined,
+        wabaId
+          ? { configWhatsApp: { path: ['meta', 'businessAccountId'], equals: String(wabaId) } }
+          : undefined,
       ].filter(Boolean),
     },
   })
+}
+
+/** Fallback quando o filtro JSON do Prisma não casa (tipos, serialização) — espelha a ideia do Sendzen. */
+const configWhatsappCasaComWebhookMeta = (cfg, { phoneNumberId, wabaId } = {}) => {
+  if (!cfg || typeof cfg !== 'object') return false
+  const m = cfg.meta && typeof cfg.meta === 'object' ? cfg.meta : {}
+  const pids = [cfg.phoneNumberId, m.phoneNumberId].filter((x) => x != null && x !== '').map((x) => String(x))
+  const wabaIds = [cfg.wabaId, m.wabaId, m.businessAccountId, cfg.businessAccountId]
+    .filter((x) => x != null && x !== '')
+    .map((x) => String(x))
+  if (phoneNumberId && pids.includes(String(phoneNumberId))) return true
+  if (wabaId && wabaIds.includes(String(wabaId))) return true
+  if (phoneNumberId && jsonConfigMencionaId(cfg, phoneNumberId)) return true
+  if (wabaId && jsonConfigMencionaId(cfg, wabaId)) return true
+  return false
+}
+
+const resolverTenantMetaFallbackMemoria = async ({ phoneNumberId, wabaId } = {}) => {
+  if (!phoneNumberId && !wabaId) return null
+  const candidatos = await banco.tenant.findMany({
+    where: { configWhatsApp: { not: null } },
+    select: { id: true, configWhatsApp: true, nome: true },
+  })
+  for (const t of candidatos) {
+    if (configWhatsappCasaComWebhookMeta(t.configWhatsApp, { phoneNumberId, wabaId })) {
+      console.log('[Webhook Meta] Tenant resolvido (fallback em memória)', { tenantId: t.id, nome: t.nome })
+      return buscarTenant(t.id)
+    }
+  }
+  if (candidatos.length > 0) {
+    const amostra = candidatos.slice(0, 3).map((c) => ({ id: c.id, nome: c.nome }))
+    console.warn('[Webhook Meta] Nenhum configWhatsApp bateu com o webhook. Amostra de tenants:', {
+      procurado: { phoneNumberId, wabaId },
+      amostra,
+    })
+  }
+  return null
 }
 
 const resolverTenantSendzen = async ({ tenantId = null, phoneNumberId = null, wabaId = null, from = null }) => {
@@ -437,6 +747,7 @@ const processarWebhook = async ({
   tenantId,
   telefone,
   mensagem,
+  mensagemOrigemId = null,
   nome,
   canal = 'WHATSAPP',
   configWhatsApp,
@@ -528,6 +839,14 @@ const processarWebhook = async ({
     usarNomeParaMerge: true,
   })
   const conversa = await conversasServico.buscarOuCriarConversa(tenantId, cliente.id, canal)
+
+  if (mensagemOrigemId) {
+    const chaveId = `${conversa.id}:${String(mensagemOrigemId)}`
+    if (!registrarMensagemWebhook(chaveId)) {
+      console.log('[Webhook] Evento duplicado por message id ignorado:', mensagemOrigemId)
+      return { tipo: 'duplicada_id' }
+    }
+  }
 
   if (ehAudio) {
     atualizarPreferenciaCanal({ clienteId: cliente.id, usouAudio: true }).catch(() => {})
@@ -671,7 +990,7 @@ const processarWebhook = async ({
     const horarioFunc = `${rangeDias} ${fmtH(menorI)} às ${fmtH(maiorF)}`
 
     // Monta link
-    const appUrl = process.env.APP_URL || 'https://barber.marcaí.com'
+    const appUrl = process.env.APP_URL || 'https://app.barbermark.com.br'
     const linkSlug = tenant.hashPublico || tenant.slug
     const telDigitos = (cliente.telefone || '').replace(/\D/g, '')
     const telReal = telDigitos.startsWith('55') && telDigitos.length >= 12 && telDigitos.length <= 13
@@ -744,16 +1063,20 @@ const processarWebhook = async ({
   if (configWhatsApp) {
     if (resultado.mensagemProativa) {
       if (resultado.mensagemProativaInterativa) {
+        let okInterativo = false
         try {
-          await whatsappServico.enviarMensagemInterativa(
+          const r = await whatsappServico.enviarMensagemInterativa(
             configWhatsApp,
             telefone,
             resultado.mensagemProativaInterativa,
             tenantId,
             lidWhatsapp ? `${lidWhatsapp}@lid` : null
           )
+          okInterativo = Boolean(r)
         } catch (errInterativo) {
           console.error('[WhatsApp] Envio interativo falhou, usando texto puro:', errInterativo?.message || errInterativo)
+        }
+        if (!okInterativo) {
           await enviarRespostaWhatsapp(resultado.mensagemProativa, { momento: 'SAUDACAO' })
         }
       } else {
@@ -933,29 +1256,8 @@ const normalizarConfigWhatsAppPersistida = (cfg = {}) => {
       : null
   )
 
-  const sendzenLegada = base?.sendzen || (
-    base?.from || base?.apiKey || base?.whatsappBusinessAccountId
-      ? {
-          apiKey: base?.apiKey || null,
-          token: base?.token || null,
-          from: base?.from || null,
-          displayPhoneNumber: base?.displayPhoneNumber || null,
-          whatsappBusinessAccountId: base?.whatsappBusinessAccountId || null,
-          phoneNumberId: base?.phoneNumberId || null,
-          webhookSecret: base?.webhookSecret || null,
-          webhookCallbackUrl: base?.webhookCallbackUrl || null,
-          sendzenConnectedAt: base?.sendzenConnectedAt || null,
-        }
-      : null
-  )
-
   if (metaLegada) normalizado.meta = metaLegada
-  if (sendzenLegada) normalizado.sendzen = sendzenLegada
-  const ativo = ['sendzen', 'meta'].includes(base?.provedorAtivo)
-    ? base.provedorAtivo
-    : ['sendzen', 'meta'].includes(base?.provedor)
-      ? base.provedor
-      : (sendzenLegada ? 'sendzen' : null) || (metaLegada ? 'meta' : null)
+  const ativo = 'meta'
   if (ativo) {
     normalizado.provedorAtivo = ativo
     normalizado.provedor = ativo
@@ -964,7 +1266,7 @@ const normalizarConfigWhatsAppPersistida = (cfg = {}) => {
   return normalizado
 }
 
-const construirConfigWhatsApp = ({ cfgAtual = {}, provedorAtivo = null, meta = undefined, sendzen = undefined }) => {
+const construirConfigWhatsApp = ({ cfgAtual = {}, provedorAtivo = null, meta = undefined }) => {
   const base = normalizarConfigWhatsAppPersistida(cfgAtual)
   const novoConfig = preservarCamposCompartilhados(base, {})
 
@@ -974,14 +1276,8 @@ const construirConfigWhatsApp = ({ cfgAtual = {}, provedorAtivo = null, meta = u
     novoConfig.meta = base.meta
   }
 
-  if (sendzen !== undefined) {
-    if (sendzen) novoConfig.sendzen = sendzen
-  } else if (base.sendzen) {
-    novoConfig.sendzen = base.sendzen
-  }
-
-  const ordemPreferencia = [provedorAtivo, base.provedorAtivo, base.provedor, 'sendzen', 'meta']
-    .filter((item) => ['sendzen', 'meta'].includes(item))
+  const ordemPreferencia = [provedorAtivo, base.provedorAtivo, base.provedor, 'meta']
+    .filter((item) => ['meta'].includes(item))
   const ativoResolvido = ordemPreferencia.find((item) => Boolean(novoConfig?.[item]))
   if (ativoResolvido) {
     novoConfig.provedorAtivo = ativoResolvido
@@ -1020,11 +1316,22 @@ const extrairTextoMensagemRecebida = async (messageObj = {}, configWhatsApp = nu
   
   if (messageObj?.type === 'text' && messageObj?.text?.body) return { texto: messageObj.text.body, ehAudio: false }
 
-  if (messageObj?.type === 'audio') {
-    const mediaId = messageObj?.audio?.id
-    const mediaUrl = messageObj?.audio?.link
-    const idOuUrl = mediaId || mediaUrl
-    console.log(`[Voz] Áudio recebido: id/url=${idOuUrl}, type=${messageObj?.type}`)
+  // Áudio: WhatsApp Cloud manda "url" (lookaside fbsbx) ou "link"; às vezes só "id" (Graph).
+  // voz: mesmo esquema em messageObj.voice (type === 'voice')
+  if (messageObj?.type === 'audio' || messageObj?.type === 'voice') {
+    const node = messageObj?.audio || messageObj?.voice
+    const mediaId = node?.id
+    // Doc Meta alterna link vs url; o webhook real traz muito "url", não "link"
+    const mediaUrlDireto = node?.link || node?.url
+    const idOuUrl =
+      mediaUrlDireto && /^https?:\/\//i.test(String(mediaUrlDireto).trim())
+        ? String(mediaUrlDireto).trim()
+        : (mediaId || mediaUrlDireto)
+
+    const mime = node?.mime_type || 'audio/ogg; codecs=opus'
+    console.log(
+      `[Voz] Mídia recebida: type=${messageObj?.type} temUrl=${Boolean(mediaUrlDireto && /^https?:\/\//i.test(String(mediaUrlDireto)))} alvo=${idOuUrl && String(idOuUrl).length > 12 ? String(idOuUrl).slice(0, 64) + '...' : idOuUrl}`
+    )
 
     if (idOuUrl && configWhatsApp) {
       try {
@@ -1032,7 +1339,7 @@ const extrairTextoMensagemRecebida = async (messageObj = {}, configWhatsApp = nu
         const buffer = await whatsappServico.baixarMidia(configWhatsApp, idOuUrl)
         if (buffer) {
           console.log(`[Voz] Transcrevendo buffer (${buffer.length} bytes)...`)
-          const transcricao = await transcreverAudio(buffer, messageObj?.audio?.mime_type)
+          const transcricao = await transcreverAudio(buffer, mime)
           if (transcricao) {
             console.log(`[Voz] Transcrição concluída: "${transcricao.slice(0, 50)}..."`)
             return { texto: transcricao, ehAudio: true }
@@ -1042,6 +1349,10 @@ const extrairTextoMensagemRecebida = async (messageObj = {}, configWhatsApp = nu
         console.warn('[Voz] Falha ao processar áudio recebido:', err.message)
       }
     }
+
+    // Não descarta o áudio silenciosamente: mantém o fluxo da IA mesmo quando
+    // a transcrição falha (ela pode pedir para o cliente repetir em texto).
+    return { texto: 'Te enviei um áudio agora.', ehAudio: true }
   }
 
   if (messageObj?.type === 'button') {
@@ -1101,6 +1412,7 @@ const webhook = async (req, res, next) => {
         tenantId,
         telefone,
         mensagem: msgFinal,
+        mensagemOrigemId: req.body?.messageObj?.id || null,
         nome,
         lidWhatsapp,
         avatarUrl,
@@ -1137,6 +1449,16 @@ const webhookMeta = async (req, res) => {
     res.status(200).json({ sucesso: true })
 
     const entradas = Array.isArray(req.body?.entry) ? req.body.entry : []
+    const c0 = entradas[0]
+    const ch0 = Array.isArray(c0?.changes) ? c0.changes[0] : null
+    const meta0 = ch0?.value?.metadata || {}
+    console.log('[Webhook Meta] recebido', {
+      nEntradas: entradas.length,
+      field: ch0?.field || null,
+      phone_number_id: meta0?.phone_number_id || null,
+      wabaIdEntry: c0?.id || null,
+      temMensagens: Array.isArray(ch0?.value?.messages) ? ch0.value.messages.length : 0,
+    })
 
     for (const entry of entradas) {
       const changes = Array.isArray(entry?.changes) ? entry.changes : []
@@ -1145,9 +1467,19 @@ const webhookMeta = async (req, res) => {
         const valor = change?.value || {}
         const metadata = valor?.metadata || {}
         const phoneNumberId = metadata?.phone_number_id || null
-        const wabaId = change?.value?.business_account_id || entry?.id || null
-        const tenant = await resolverTenantMeta({ tenantId: req.params?.tenantId || null, phoneNumberId, wabaId })
-        if (!tenant) continue
+        const wabaId =
+          change?.value?.business_account_id
+          || metadata?.business_account_id
+          || entry?.id
+          || null
+        let tenant = await resolverTenantMeta({ tenantId: req.params?.tenantId || null, phoneNumberId, wabaId })
+        if (!tenant) {
+          tenant = await resolverTenantMetaFallbackMemoria({ phoneNumberId, wabaId })
+        }
+        if (!tenant) {
+          console.warn('[Webhook Meta] Nenhum tenant local para este evento. phone_number_id=%s waba/entry id=%s', phoneNumberId, wabaId)
+          continue
+        }
 
         const mensagens = Array.isArray(valor?.messages) ? valor.messages : []
         for (const messageObj of mensagens) {
@@ -1162,12 +1494,31 @@ const webhookMeta = async (req, res) => {
                 tenantId: tenant.id,
                 telefone: `+${telefone}`,
                 mensagem: extraido.texto,
+                mensagemOrigemId: messageObj?.id || null,
                 nome,
                 canal: 'WHATSAPP',
                 configWhatsApp: tenant.configWhatsApp,
                 ehAudio: extraido.ehAudio,
               })
             )
+          }
+        }
+
+        const statuses = Array.isArray(valor?.statuses) ? valor.statuses : []
+        for (const st of statuses) {
+          const s = st?.status
+          const wamid = st?.id
+          const rec = st?.recipient_id
+          const listErr = Array.isArray(st?.errors) ? st.errors : []
+          if (s === 'failed' || listErr.length) {
+            console.warn('[Webhook Meta] entrega com falha (a Graph pode ter aceitado; a Meta rejeitou no envio final)', {
+              tenantId: tenant.id,
+              tenantNome: tenant.nome,
+              wamid,
+              status: s,
+              destinatario: rec,
+              erros: listErr,
+            })
           }
         }
       }
@@ -1389,10 +1740,27 @@ const obterConfiguracaoMeta = async (req, res) => {
     const cfg = tenant.configWhatsApp || {}
     const metaCfg = obterConfigProvedor(cfg, 'meta') || {}
 
+    const perfilComercial = await whatsappServico.buscarWhatsappBusinessProfile(cfg)
+
     res.json({
       sucesso: true,
       dados: {
         ...meta,
+        recebimento: (() => {
+          const publicBase = String(
+            process.env.API_PUBLIC_BASE_URL || process.env.PUBLIC_API_URL || APP_URL || '',
+          ).replace(/\/$/, '')
+          return {
+            urlWebhookSugerida: publicBase ? `${publicBase}/api/ia/webhook/meta` : null,
+            urlCallbackEnv: META_WEBHOOK_CALLBACK_URL || null,
+            checklist: [
+              'No Facebook Developers: app → WhatsApp → Configuração: URL e token de verificação iguais ao servidor (META_WEBHOOK_CALLBACK_URL e META_WEBHOOK_VERIFY_TOKEN).',
+              'Caminho correto: /api/ia/webhook/meta (sem :tenantId). O token de verificação (GET) = META_WEBHOOK_VERIFY_TOKEN.',
+              'Se o log "Nenhum tenant local" aparecer, o waba/phoneNumber_id do evento não bate com a barbearia salva: reconecte na Meta ou corrija o banco.',
+              'Inscrever o app no WABA (subscribed_apps): use "Reinscrever" em Integrações ou POST /api/ia/meta/reassinar-webhook.',
+            ],
+          }
+        })(),
         status: {
           conectado: Boolean(metaCfg?.phoneNumberId && (metaCfg?.token || metaCfg?.apiToken)),
           provedor: 'meta',
@@ -1402,6 +1770,12 @@ const obterConfiguracaoMeta = async (req, res) => {
           businessAccountId: metaCfg?.businessAccountId || null,
           displayPhoneNumber: metaCfg?.displayPhoneNumber || null,
           verifiedName: metaCfg?.verifiedName || null,
+          profilePictureUrl: perfilComercial?.profilePictureUrl || null,
+          registerStatus: metaCfg?.registerStatus || 'PENDENTE',
+          webhookAssinado: Boolean(metaCfg?.webhookAssinado),
+          prontoParaTeste: Boolean(metaCfg?.onboardingProntoParaTeste),
+          registerErro: metaCfg?.registerErro || null,
+          webhookErro: metaCfg?.webhookErro || null,
           webhookUrl: META_WEBHOOK_CALLBACK_URL || null,
           webhookVerifyTokenConfigurado: Boolean(META_WEBHOOK_VERIFY_TOKEN),
         },
@@ -1415,7 +1789,7 @@ const obterConfiguracaoMeta = async (req, res) => {
 const concluirEmbeddedSignupMeta = async (req, res) => {
   try {
     const tenantId = req.usuario.tenantId
-    const { code, phoneNumberId, wabaId, businessAccountId = null } = req.body || {}
+    const { code, phoneNumberId, wabaId, businessAccountId = null, redirectUri: redirectBody } = req.body || {}
 
     if (!code) {
       return res.status(400).json({ sucesso: false, erro: { mensagem: 'Code do Embedded Signup é obrigatório.' } })
@@ -1424,14 +1798,36 @@ const concluirEmbeddedSignupMeta = async (req, res) => {
       return res.status(400).json({ sucesso: false, erro: { mensagem: 'Variáveis da Meta não configuradas no servidor.' } })
     }
 
-    const tokenData = await trocarCodePorTokenMeta(code)
-    const accessToken = tokenData.access_token
+    const redirectUri = resolverRedirectUriEmbeddedSignup(redirectBody)
+    if (!redirectUri) {
+      return res.status(400).json({
+        sucesso: false,
+        erro: {
+          mensagem: 'Falta o redirect para a troca do code OAuth da Meta.',
+          dica: 'Ajuste OAUTH_REDIRECT_URL no .env (mesmo domínio de APP_URL) ou abra o painel, use Conectar WhatsApp e tente de novo o envio de redirectUri.',
+        },
+      })
+    }
+
+    const tokenData = await trocarCodePorTokenMeta(code, { redirectUri })
+    let accessToken = tokenData.access_token
     if (!accessToken) throw new Error('A Meta não retornou access_token na troca do code.')
 
+    const longLived = await trocarTokenCurtoPorLongLivedMeta(accessToken)
+    if (longLived?.access_token) {
+      accessToken = longLived.access_token
+      console.log('[Meta Embedded Signup] Token long-lived OK, expires_in ~', longLived.expires_in, 's')
+    } else {
+      console.warn(
+        '[Meta Embedded Signup] Usando token do code sem long-lived. Se o envio/IA parar após 1–2h, reconecte na Meta.',
+      )
+    }
+
     let detalhesNumero = {}
-    if (phoneNumberId) {
+    let phoneIdFinal = phoneNumberId
+    if (phoneIdFinal) {
       try {
-        detalhesNumero = await chamarGraphApi(String(phoneNumberId), {
+        detalhesNumero = await chamarGraphApi(String(phoneIdFinal), {
           accessToken,
           query: { fields: 'display_phone_number,verified_name,id' },
         })
@@ -1440,12 +1836,39 @@ const concluirEmbeddedSignupMeta = async (req, res) => {
       }
     }
 
-    if (wabaId) {
+    if (!phoneIdFinal && wabaId) {
       try {
-        await chamarGraphApi(`${wabaId}/subscribed_apps`, { method: 'POST', accessToken })
-      } catch (erroSubscribe) {
-        console.warn('[Meta Embedded Signup] Não foi possível inscrever app no WABA:', erroSubscribe.message)
+        const lista = await chamarGraphApi(`${wabaId}/phone_numbers`, {
+          accessToken,
+          query: { fields: 'id,display_phone_number' },
+        })
+        const primeiro = lista?.data?.[0]
+        if (primeiro?.id) {
+          phoneIdFinal = primeiro.id
+          detalhesNumero = await chamarGraphApi(String(phoneIdFinal), {
+            accessToken,
+            query: { fields: 'display_phone_number,verified_name,id' },
+          })
+        }
+      } catch (erroLista) {
+        console.warn('[Meta Embedded Signup] Fallback phone_numbers WABA:', erroLista.message)
       }
+    }
+
+    const resultadoRegistro = await tentarRegistrarNumeroMeta({
+      phoneNumberId: phoneIdFinal ? String(phoneIdFinal) : null,
+      accessToken,
+    })
+    if (!resultadoRegistro.ok) {
+      console.warn('[Meta Embedded Signup] /register falhou:', resultadoRegistro.motivo)
+    }
+
+    const resultadoWebhook = await tentarAssinarWebhookWaba({
+      wabaId: wabaId ? String(wabaId) : null,
+      accessToken,
+    })
+    if (!resultadoWebhook.ok) {
+      console.warn('[Meta Embedded Signup] Não foi possível inscrever app no WABA:', resultadoWebhook.motivo)
     }
 
     const tenant = await buscarTenant(tenantId)
@@ -1460,11 +1883,17 @@ const concluirEmbeddedSignupMeta = async (req, res) => {
       apiToken: accessToken,
       appId: META_APP_ID,
       configId: META_EMBEDDED_SIGNUP_CONFIG_ID,
-        phoneNumberId: phoneNumberId ? String(phoneNumberId) : (metaAtual.phoneNumberId || null),
+        phoneNumberId: phoneIdFinal ? String(phoneIdFinal) : (metaAtual.phoneNumberId || null),
         wabaId: wabaId ? String(wabaId) : (metaAtual.wabaId || null),
         businessAccountId: businessAccountId ? String(businessAccountId) : (metaAtual.businessAccountId || null),
         displayPhoneNumber: detalhesNumero.display_phone_number || metaAtual.displayPhoneNumber || null,
         verifiedName: detalhesNumero.verified_name || metaAtual.verifiedName || null,
+        registerStatus: resultadoRegistro.ok ? 'OK' : 'PENDENTE',
+        registerErro: resultadoRegistro.ok ? null : (resultadoRegistro.motivo || null),
+        registerAtualizadoEm: new Date().toISOString(),
+        webhookAssinado: Boolean(resultadoWebhook.ok),
+        webhookErro: resultadoWebhook.ok ? null : (resultadoWebhook.motivo || null),
+        onboardingProntoParaTeste: Boolean(resultadoRegistro.ok && resultadoWebhook.ok),
       webhookVerifyToken: META_WEBHOOK_VERIFY_TOKEN,
         webhookCallbackUrl: META_WEBHOOK_CALLBACK_URL || metaAtual.webhookCallbackUrl || null,
       embeddedSignupAt: new Date().toISOString(),
@@ -1477,6 +1906,29 @@ const concluirEmbeddedSignupMeta = async (req, res) => {
       select: { id: true, configWhatsApp: true },
     })
 
+    const idSalvo = atualizado.configWhatsApp?.meta?.phoneNumberId || atualizado.configWhatsApp?.phoneNumberId
+    const avisos = []
+    if (!idSalvo) {
+      avisos.push(
+        'O phone_number_id não foi detectado. Sem ele, a API não envia mensagens e o webhook não acha a barbearia. Abra a Meta, confirme o número na WABA e conecte de novo, ou fale com o suporte com o print do fluxo.',
+      )
+    }
+    if (!longLived?.access_token) {
+      avisos.push(
+        'Não foi possível obter token de longa duração. A conexão pode parar de funcionar após cerca de 1–2 horas. Reconecte em Integrações ou crie System User com token permanente no painel da Meta.',
+      )
+    }
+    if (!resultadoRegistro.ok) {
+      avisos.push(
+        'Conexão salva, mas faltou registrar o número na Cloud API (/register). Sem isso o envio pode falhar com erro 133010.',
+      )
+    }
+    if (!resultadoWebhook.ok) {
+      avisos.push(
+        `Conexão salva, mas não foi possível assinar o webhook da WABA. O recebimento de mensagens pode não funcionar até corrigir. Motivo: ${resultadoWebhook.motivo || 'falha_subscribed_apps'}`,
+      )
+    }
+
     res.json({
       sucesso: true,
       dados: {
@@ -1485,11 +1937,30 @@ const concluirEmbeddedSignupMeta = async (req, res) => {
         wabaId: atualizado.configWhatsApp?.meta?.wabaId || atualizado.configWhatsApp?.wabaId || null,
         displayPhoneNumber: atualizado.configWhatsApp?.meta?.displayPhoneNumber || atualizado.configWhatsApp?.displayPhoneNumber || null,
         verifiedName: atualizado.configWhatsApp?.meta?.verifiedName || atualizado.configWhatsApp?.verifiedName || null,
+        registerStatus: atualizado.configWhatsApp?.meta?.registerStatus || atualizado.configWhatsApp?.registerStatus || 'PENDENTE',
+        webhookAssinado: Boolean(atualizado.configWhatsApp?.meta?.webhookAssinado || atualizado.configWhatsApp?.webhookAssinado),
+        prontoParaTeste: Boolean(atualizado.configWhatsApp?.meta?.onboardingProntoParaTeste || atualizado.configWhatsApp?.onboardingProntoParaTeste),
+        tokenLongLived: Boolean(longLived?.access_token),
+        avisos: avisos.length ? avisos : undefined,
       },
     })
   } catch (erro) {
     console.error('[Meta Embedded Signup] Erro ao concluir integração:', erro)
-    res.status(500).json({ sucesso: false, erro: { mensagem: erro.message || 'Não foi possível concluir a integração com a Meta.' } })
+    const dicaOauth = erro.dicaOauth
+    const msg = erro.message || ''
+    const pareceOauth = Boolean(
+      dicaOauth
+        || /redirect_uri|OAuthException|code has expired|code is invalid|invalid code/i.test(msg),
+    )
+    const dicaDominio =
+      'No painel da Meta: Configurações do app > Básico > Domínios do app (e em Login do Facebook, URIs de redirecionamento OAuth válidos) inclua exatamente o host da URL em que o painel abre (com ou sem www, igual ao OAUTH_REDIRECT_URL). Domínio com acento: use o mesmo formato do navegador ou o punycode (ex.: xn--...).'
+    res.status(pareceOauth ? 400 : 500).json({
+      sucesso: false,
+      erro: {
+        mensagem: msg || 'Não foi possível concluir a integração com a Meta.',
+        ...(dicaOauth || pareceOauth ? { dica: dicaOauth || dicaDominio } : {}),
+      },
+    })
   }
 }
 
@@ -1498,9 +1969,7 @@ const desconectarMetaOficial = async (req, res) => {
     const tenantId = req.usuario.tenantId
     const tenant = await buscarTenant(tenantId)
     const cfgAtual = tenant.configWhatsApp || {}
-    const proximoAtivo = (cfgAtual?.provedorAtivo || cfgAtual?.provedor) === 'meta'
-      ? (cfgAtual?.sendzen ? 'sendzen' : null)
-      : (cfgAtual?.provedorAtivo || cfgAtual?.provedor || null)
+    const proximoAtivo = null
     const novoConfig = construirConfigWhatsApp({
       cfgAtual,
       provedorAtivo: proximoAtivo,
@@ -1638,22 +2107,387 @@ const enviarLinkAgendamento = async (req, res, next) => {
   }
 }
 
+function dicaErroTesteWhatsapp(erroEnvio) {
+  const msg = String(erroEnvio?.message || '')
+  const code = erroEnvio?.metaCode
+  if (/133010|account not registered/i.test(msg) || code === 133010) {
+    return 'Número comercial não registrado na Cloud API: use a etapa 2 (ou o comando /register do guia).'
+  }
+  if (
+    code === 100
+    || /message must be a template|must be a template|template message/i.test(msg)
+    || (/\(100\)/.test(msg) && /template/i.test(msg))
+  ) {
+    return 'Texto simples exige janela de 24h: abra o WhatsApp e envie "oi" para o número comercial do negócio; em seguida tente o teste de novo. Fora disso, use um template aprovado na Meta.'
+  }
+  if (/131031|re-?engagement|24.?hour|outside.*window/i.test(msg) || code === 131031) {
+    return 'Fora da janela de atendimento. O contato precisa ter escrito no número comercial recentemente, ou use template.'
+  }
+  if (/131026|undeliverable|incapable of receiving/i.test(msg) || code === 131026) {
+    return 'A Meta não entregou: confira se o destino tem WhatsApp (número pessoal, app atualizado) e se não é limite B2B entre duas contas API.'
+  }
+  if (/131049|ecosystem|engagement/i.test(msg) || code === 131049) {
+    return 'A Meta limitou o envio; espaçe os testes ou use outro número.'
+  }
+  if (/131051|not registered on whatsapp|invalid phone/i.test(msg) || (code === 100 && /phone|recipient|parameter/i.test(msg))) {
+    return 'Telefone rejeitado: use E.164 com +55, 9 do celular, sem dígitos faltando.'
+  }
+  return null
+}
+
+const enviarTesteMeta = async (req, res, next) => {
+  try {
+    const tenantId = req.usuario.tenantId
+    const telefoneBruto = String(req.body?.telefone || '').trim()
+    const mensagem = String(req.body?.mensagem || 'oi').trim() || 'oi'
+
+    if (!telefoneBruto) {
+      return res.status(400).json({ sucesso: false, erro: { mensagem: 'Telefone é obrigatório.' } })
+    }
+
+    const destino = whatsappServico.normalizarNumeroDestinoWhatsapp(telefoneBruto)
+    const soDigitos = String(destino).replace(/\D/g, '')
+    if (!soDigitos || soDigitos.length < 10 || soDigitos.length > 15) {
+      return res.status(400).json({
+        sucesso: false,
+        erro: {
+          mensagem: 'Número inválido ou incompleto.',
+          dica: 'Use o celular com DDI, ex. +55 62 9 9999-9999 (9 do celular).',
+        },
+      })
+    }
+
+    const tenant = await banco.tenant.findUnique({
+      where: { id: tenantId },
+      select: { id: true, nome: true, configWhatsApp: true },
+    })
+    if (!tenant?.configWhatsApp) {
+      return res.status(422).json({
+        sucesso: false,
+        erro: { mensagem: 'WhatsApp não está conectado. Conecte em Configurações > Integrações.' },
+      })
+    }
+
+    try {
+      const resposta = await whatsappServico.enviarMensagem(tenant.configWhatsApp, destino, mensagem, tenant.id)
+      const wamid = resposta?.messages?.[0]?.id
+      return res.json({
+        sucesso: true,
+        dados: {
+          destino: `+${soDigitos}`,
+          mensagem: wamid
+            ? 'A Meta aceitou a mensagem (há wamid na resposta).'
+            : 'A Meta respondeu; veja "respostaMeta" se wamid não veio.',
+          wamid: wamid || null,
+          respostaMeta: resposta || null,
+          lembrete:
+            'Não recebeu? (1) No seu celular, envie antes um "oi" para o número comercial. (2) No App da Meta, inscreva o webhook (field messages) para receber "status" failed. (3) Use +55 e o 9 do celular.',
+        },
+      })
+    } catch (erroEnvio) {
+      const msg = String(erroEnvio?.message || 'Falha ao enviar teste.')
+      const dica = dicaErroTesteWhatsapp(erroEnvio)
+      const precisaRegistro = /133010|account not registered/i.test(msg) || erroEnvio?.metaCode === 133010
+      return res.status(422).json({
+        sucesso: false,
+        erro: {
+          mensagem: msg,
+          ...(dica
+            ? { dica }
+            : precisaRegistro
+              ? {
+                  dica:
+                    'O número comercial ainda não está registrado na Cloud API. Faça o passo /register no guia e teste novamente.',
+                }
+              : {}),
+        },
+      })
+    }
+  } catch (erro) {
+    next(erro)
+  }
+}
+
+const reassinarWebhookMeta = async (req, res) => {
+  try {
+    const tenantId = req.usuario.tenantId
+    const tenant = await buscarTenant(tenantId)
+    const cfg = tenant.configWhatsApp || {}
+    const metaCfg = obterConfigProvedor(cfg, 'meta') || {}
+    const wabaId = metaCfg.wabaId
+    const accessToken = metaCfg.token || metaCfg.apiToken
+    if (!wabaId || !accessToken) {
+      return res.status(400).json({
+        sucesso: false,
+        erro: { mensagem: 'Falta wabaId ou token na integração Meta. Reconecte em Integrações.' },
+      })
+    }
+    const resultado = await tentarAssinarWebhookWaba({ wabaId: String(wabaId), accessToken })
+    if (!resultado.ok) {
+      return res.status(422).json({
+        sucesso: false,
+        erro: {
+          mensagem: resultado.motivo || 'Falha ao inscrever o app no WABA.',
+          dica:
+            'No Embedded Signup, aceite todas as permissões. No app da Meta, o token precisa de whatsapp_business_management e whatsapp_business_messaging para assinar subscribed_apps.',
+        },
+      })
+    }
+    const novoConfig = construirConfigWhatsApp({
+      cfgAtual: cfg,
+      meta: {
+        ...metaCfg,
+        webhookAssinado: true,
+        webhookErro: null,
+        webhookInscritoEm: new Date().toISOString(),
+      },
+    })
+    await banco.tenant.update({ where: { id: tenantId }, data: { configWhatsApp: novoConfig } })
+    res.json({
+      sucesso: true,
+      dados: {
+        mensagem: 'App inscrito no WABA. Confirme ainda no painel da Meta (Webhooks) a URL pública e o token = META_WEBHOOK_VERIFY_TOKEN.',
+        webhookAssinado: true,
+      },
+    })
+  } catch (erro) {
+    res.status(500).json({ sucesso: false, erro: { mensagem: erro.message } })
+  }
+}
+
+const contarParametrosCorpoTemplate = (texto) => {
+  if (!texto) return 0
+  const s = String(texto)
+  const re = /\{\{(\d+)\}\}/g
+  let max = 0
+  let m
+  while ((m = re.exec(s)) !== null) {
+    const n = parseInt(m[1], 10)
+    if (n > max) max = n
+  }
+  return max
+}
+
+const resolverCredenciaisWabaMeta = (tenant) => {
+  const cfg = tenant.configWhatsApp || {}
+  const metaCfg = obterConfigProvedor(cfg, 'meta') || {}
+  const token = metaCfg.token || metaCfg.apiToken
+  const wabaId = metaCfg.wabaId || metaCfg.businessAccountId
+  const phoneNumberId = metaCfg.phoneNumberId
+  return { token, wabaId, phoneNumberId, metaCfg }
+}
+
+const listarTemplatesMeta = async (req, res) => {
+  try {
+    const tenant = await buscarTenant(req.usuario.tenantId)
+    const { token, wabaId } = resolverCredenciaisWabaMeta(tenant)
+    if (!token || !wabaId) {
+      return res.status(422).json({
+        sucesso: false,
+        erro: { mensagem: 'Conecte o WhatsApp (Meta) em Integrações. É necessário WABA e token.' },
+      })
+    }
+    const dados = await chamarGraphApi(`${wabaId}/message_templates`, {
+      accessToken: token,
+      query: {
+        fields: 'name,status,language,category,components,sub_category,id',
+        limit: 100,
+      },
+    })
+    const templates = (dados.data || []).map((row) => {
+      const compBody = (row.components || []).find(
+        (c) => String(c.type).toUpperCase() === 'BODY',
+      )
+      const qtd = contarParametrosCorpoTemplate(compBody?.text)
+      return {
+        name: row.name,
+        status: row.status,
+        language: row.language,
+        category: row.category,
+        id: row.id,
+        sub_category: row.sub_category,
+        qtdParametrosCorpo: qtd,
+        textoCorpoResumo: compBody?.text
+          ? String(compBody.text).slice(0, 240)
+          : null,
+      }
+    })
+    res.json({ sucesso: true, dados: { templates, paging: dados.paging || null } })
+  } catch (erro) {
+    res.status(422).json({ sucesso: false, erro: { mensagem: erro.message } })
+  }
+}
+
+const enviarTemplateTesteMeta = async (req, res, next) => {
+  try {
+    const tenant = await buscarTenant(req.usuario.tenantId)
+    const { token, phoneNumberId } = resolverCredenciaisWabaMeta(tenant)
+    if (!token || !phoneNumberId) {
+      return res.status(422).json({
+        sucesso: false,
+        erro: { mensagem: 'Conecte o WhatsApp (Meta) com número e token salvos (Integrações).' },
+      })
+    }
+    const nomeTemplate = String(req.body?.nomeTemplate || '').trim()
+    const idioma = String(req.body?.idioma || '').trim()
+    const telefoneBruto = String(req.body?.telefone || '').trim()
+    if (!nomeTemplate || !idioma) {
+      return res.status(400).json({
+        sucesso: false,
+        erro: { mensagem: 'nomeTemplate e idioma são obrigatórios (veja a lista de templates).' },
+      })
+    }
+    if (!telefoneBruto) {
+      return res.status(400).json({ sucesso: false, erro: { mensagem: 'Telefone de teste é obrigatório.' } })
+    }
+    const to = whatsappServico.normalizarNumeroDestinoWhatsapp(telefoneBruto)
+    const d = String(to).replace(/\D/g, '')
+    if (d.length < 10 || d.length > 15) {
+      return res.status(400).json({ sucesso: false, erro: { mensagem: 'Número de destino inválido (use DDI, ex. +55).' } })
+    }
+    let parametros = req.body?.parametrosCorpo
+    if (parametros == null) parametros = []
+    if (typeof parametros === 'string') {
+      parametros = parametros
+        .split(/[,;|\n]/)
+        .map((s) => s.trim())
+        .filter(Boolean)
+    }
+    if (!Array.isArray(parametros)) parametros = []
+    const templateRoot = {
+      name: nomeTemplate,
+      language: { code: idioma },
+    }
+    if (parametros.length) {
+      templateRoot.components = [
+        {
+          type: 'body',
+          parameters: parametros.map((t) => ({ type: 'text', text: String(t) })),
+        },
+      ]
+    }
+    const url = `https://graph.facebook.com/${META_API_VERSION}/${phoneNumberId}/messages`
+    const r = await fetch(url, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        messaging_product: 'whatsapp',
+        to: d,
+        type: 'template',
+        template: templateRoot,
+      }),
+    })
+    const json = await r.json().catch(() => ({}))
+    if (!r.ok) {
+      const e = json?.error
+      const errObj = { message: e?.message || `Meta API ${r.status}`, metaCode: e?.code }
+      const dica = dicaErroTesteWhatsapp(errObj) || (e?.message ? null : 'Confira se o template está aprovado e o idioma bate (ex. pt_BR).')
+      return res.status(422).json({
+        sucesso: false,
+        erro: {
+          mensagem: e?.message || `Falha ao enviar template (${r.status})`,
+          code: e?.code,
+          ...(dica ? { dica } : {}),
+        },
+      })
+    }
+    const wamid = json?.messages?.[0]?.id
+    return res.json({
+      sucesso: true,
+      dados: {
+        wamid: wamid || null,
+        destino: `+${d}`,
+        lembrete:
+          'O template precisa estar APPROVED; no modo teste, o destino deve estar na lista de números permitidos no app da Meta.',
+      },
+    })
+  } catch (erro) {
+    next(erro)
+  }
+}
+
+/**
+ * Em boot, tenta inscrever apps Meta nos WABAs já conectados que não estavam inscritos.
+ * Útil para destravar tenants antigos depois de configurar META_SYSTEM_USER_TOKEN ou após a
+ * adição do fallback por App Access Token (sem exigir reconectar manualmente cada barbearia).
+ */
+const garantirInscricaoWebhookMetaParaTodos = async () => {
+  if (!META_APP_ID || !META_APP_SECRET) return
+  try {
+    const tenants = await banco.tenant.findMany({
+      where: { configWhatsApp: { not: null } },
+      select: { id: true, nome: true, configWhatsApp: true },
+    })
+    let corrigidos = 0
+    for (const t of tenants) {
+      const cfg = t.configWhatsApp || {}
+      const metaCfg = obterConfigProvedor(cfg, 'meta') || {}
+      const conectado = Boolean(metaCfg.phoneNumberId && (metaCfg.token || metaCfg.apiToken))
+      const inscrito = Boolean(metaCfg.webhookAssinado)
+      const wabaId = metaCfg.wabaId || metaCfg.businessAccountId
+      if (!conectado || inscrito || !wabaId) continue
+      const accessToken = metaCfg.token || metaCfg.apiToken
+      const r = await tentarAssinarWebhookWaba({ wabaId: String(wabaId), accessToken })
+      if (r.ok) {
+        const novoConfig = construirConfigWhatsApp({
+          cfgAtual: cfg,
+          meta: {
+            ...metaCfg,
+            webhookAssinado: true,
+            webhookErro: null,
+            webhookInscritoEm: new Date().toISOString(),
+          },
+        })
+        await banco.tenant.update({ where: { id: t.id }, data: { configWhatsApp: novoConfig } })
+        corrigidos++
+        console.log(`[Webhook Meta auto-fix] Tenant ${t.nome || t.id}: webhook assinado (token=${r.tokenTipo}).`)
+      } else {
+        console.warn(
+          `[Webhook Meta auto-fix] Tenant ${t.nome || t.id}: ainda sem webhook (${r.motivo || 'desconhecido'}).`,
+        )
+        if (metaCfg.webhookErro !== r.motivo) {
+          // Atualiza o webhookErro p/ o painel mostrar a causa atual e o admin agir.
+          const novoConfig = construirConfigWhatsApp({
+            cfgAtual: cfg,
+            meta: {
+              ...metaCfg,
+              webhookAssinado: false,
+              webhookErro: r.motivo || metaCfg.webhookErro || null,
+              webhookUltimaTentativaEm: new Date().toISOString(),
+            },
+          })
+          await banco.tenant
+            .update({ where: { id: t.id }, data: { configWhatsApp: novoConfig } })
+            .catch(() => {})
+        }
+      }
+    }
+    if (corrigidos > 0) console.log(`[Webhook Meta auto-fix] ${corrigidos} tenant(s) inscritos automaticamente.`)
+  } catch (erro) {
+    console.warn('[Webhook Meta auto-fix] Falha geral:', erro?.message || erro)
+  }
+}
+
 module.exports = {
   webhook,
   obterConfiguracaoMeta,
-  obterConfiguracaoSendzen,
   concluirEmbeddedSignupMeta,
   desconectarMetaOficial,
-  conectarSendzen,
-  desconectarSendzen,
   verificarWebhookMeta,
   webhookMeta,
-  webhookSendzen,
   simular,
   testeCliente,
   resetarTesteCliente,
   suiteTesteCliente,
   enviarLinkAgendamento,
+  enviarTesteMeta,
+  listarTemplatesMeta,
+  enviarTemplateTesteMeta,
+  reassinarWebhookMeta,
   iniciarCronLembretes,
+  garantirInscricaoWebhookMetaParaTodos,
   processarWebhookInterno: processarWebhook,
 }

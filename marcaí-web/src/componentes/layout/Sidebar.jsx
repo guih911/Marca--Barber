@@ -1,4 +1,4 @@
-﻿import { NavLink, useNavigate } from 'react-router-dom'
+import { NavLink, useNavigate } from 'react-router-dom'
 import {
   LayoutDashboard,
   Calendar,
@@ -10,13 +10,13 @@ import {
   UserCheck,
   Clock,
   UserCog,
-  Puzzle,
   Settings2,
   ClipboardList,
   Landmark,
 } from 'lucide-react'
 import { cn, obterIniciais } from '../../lib/utils'
 import useAuth from '../../hooks/useAuth'
+import BrandLogo from './BrandLogo'
 
 // plano: undefined = sem restrição | 'SALAO' = só no plano Salão
 // Camada 1: o que o barbeiro usa no dia a dia. Camada 2: o resto (ferramentas)
@@ -28,7 +28,7 @@ const itensDia = [
 ]
 const itensFerramentas = [
   { label: 'Caixa', icone: Landmark, rota: '/operacao/caixa', recurso: 'caixaAtivo' },
-  { label: 'Lista de espera', icone: ClipboardList, rota: '/operacao/lista-espera', recurso: 'listaEsperaAtivo', plano: 'SALAO' },
+  { label: 'Lista de espera', icone: ClipboardList, rota: '/operacao/lista-espera', recurso: 'listaEsperaAtivo' },
 ]
 
 const todosItensConfiguracao = [
@@ -37,7 +37,6 @@ const todosItensConfiguracao = [
   { label: 'Serviços', icone: Scissors, rota: '/config/servicos' },
   { label: 'Meu Negócio', icone: Building2, rota: '/config/negocio' },
   { label: 'Recursos', icone: Settings2, rota: '/config/recursos' },
-  { label: 'Integrações', icone: Puzzle, rota: '/config/integracoes' },
   { label: 'Usuários', icone: UserCog, rota: '/config/usuarios', plano: 'SALAO' },
 ]
 
@@ -107,18 +106,12 @@ const Sidebar = ({ compacto = false }) => {
       )}
     >
       {compacto ? (
-        <img
-          src="/logo.svg"
-          alt="Marcaí Barber"
-          style={{ width: 44, height: 44, objectFit: 'contain', display: 'block', margin: '8px auto' }}
-        />
+        <div className="flex justify-center px-2 pt-2 pb-[20px]">
+          <BrandLogo variant="compact" />
+        </div>
       ) : (
-        <div style={{ width: '100%', height: 116, flexShrink: 0, overflow: 'hidden', marginTop: 7, marginBottom: 20 }}>
-          <img
-            src="/logo.svg"
-            alt="Marcaí Barber"
-            style={{ width: '100%', height: 180, objectFit: 'contain', objectPosition: 'left top', display: 'block', transform: 'translateY(-18px)' }}
-          />
+        <div className="w-full flex items-center justify-start px-4 pt-2 pb-[20px]">
+          <BrandLogo variant="sidebar" />
         </div>
       )}
 

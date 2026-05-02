@@ -104,6 +104,38 @@ const calcularColunasDeSobreposicao = (agendamentos) => {
 }
 
 const clientePresente = (agendamento) => Boolean(agendamento?.presencaConfirmadaEm)
+const MAX_GAP_SEQUENCIAL_MS = 5 * 60 * 1000
+
+const agruparAgendamentosSequenciais = (agendamentos = []) => {
+  if (!Array.isArray(agendamentos) || agendamentos.length === 0) return []
+  const ordenados = [...agendamentos].sort((a, b) => obterInicioMs(a) - obterInicioMs(b))
+  const grupos = []
+  let grupoAtual = []
+
+  const podeAgrupar = (anterior, atual) => {
+    if (!anterior || !atual) return false
+    if (!anterior.clienteId || !atual.clienteId || anterior.clienteId !== atual.clienteId) return false
+    if (!anterior.profissionalId || !atual.profissionalId || anterior.profissionalId !== atual.profissionalId) return false
+
+    const fimAnterior = obterFimMs(anterior)
+    const inicioAtual = obterInicioMs(atual)
+    const gap = inicioAtual - fimAnterior
+    return gap >= 0 && gap <= MAX_GAP_SEQUENCIAL_MS
+  }
+
+  for (const agendamento of ordenados) {
+    const ultimo = grupoAtual[grupoAtual.length - 1]
+    if (grupoAtual.length === 0 || podeAgrupar(ultimo, agendamento)) {
+      grupoAtual.push(agendamento)
+      continue
+    }
+    grupos.push(grupoAtual)
+    grupoAtual = [agendamento]
+  }
+
+  if (grupoAtual.length) grupos.push(grupoAtual)
+  return grupos
+}
 
 const MiniCalendario = ({ data, onChange }) => {
   const [mes, setMes] = useState(new Date(data.getFullYear(), data.getMonth(), 1))
@@ -526,10 +558,10 @@ const ModalDetalhes = ({ agendamento, onClose, onAcao, onRecarregar }) => {
         <ModalNaoCompareceu
           agendamento={agendamento}
           onFechar={() => setMostrarNaoCompareceu(false)}
-          onConfirmar={async (mensagem) => {
+          onConfirmar={async () => {
             setCarregandoAcao(true)
             try {
-              await api.patch(`/api/agendamentos/${agendamento.id}/nao-compareceu`, { mensagemWhatsApp: mensagem })
+              await api.patch(`/api/agendamentos/${agendamento.id}/nao-compareceu`, {})
               onRecarregar?.()
               onClose()
             } catch (e) {
@@ -584,22 +616,13 @@ const ModalDetalhes = ({ agendamento, onClose, onAcao, onRecarregar }) => {
   )
 }
 
-// Modal NÃ£o Compareceu â€” registra ausÃªncia e envia mensagem de recontato pelo WhatsApp
+// Modal NÃ£o Compareceu â€” registra ausÃªncia no agendamento
 const ModalNaoCompareceu = ({ agendamento, onFechar, onConfirmar }) => {
-  const primeiroNome = agendamento.cliente?.nome?.split(' ')[0] || 'cliente'
-  const hora = formatarHora(agendamento.inicioEm)
-  const servico = agendamento.servico?.nome || 'seu horário'
-  const temTelefone = !!agendamento.cliente?.telefone
-
-  const [enviarMsg, setEnviarMsg] = useState(temTelefone)
-  const [mensagem, setMensagem] = useState(
-    `Oi, ${primeiroNome}! Notamos que você não compareceu ao seu ${servico} de hoje às ${hora}. Tudo bem? Que tal remarcarmos para outro dia?`
-  )
   const [salvando, setSalvando] = useState(false)
 
   const confirmar = async () => {
     setSalvando(true)
-    await onConfirmar(enviarMsg && temTelefone ? mensagem : null)
+    await onConfirmar()
     setSalvando(false)
   }
 
@@ -620,29 +643,9 @@ const ModalNaoCompareceu = ({ agendamento, onFechar, onConfirmar }) => {
         </div>
 
         <div className="px-5 py-4 space-y-4">
-          {temTelefone ? (
-            <>
-              <label className="flex items-center gap-2.5 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={enviarMsg}
-                  onChange={(e) => setEnviarMsg(e.target.checked)}
-                  className="w-4 h-4 accent-primaria"
-                />
-                <span className="text-sm text-texto">Enviar mensagem de recontato pelo WhatsApp</span>
-              </label>
-              {enviarMsg && (
-                <textarea
-                  value={mensagem}
-                  onChange={(e) => setMensagem(e.target.value)}
-                  rows={4}
-                  className="w-full border border-borda rounded-xl px-3 py-2.5 text-sm text-texto focus:outline-none focus:ring-2 focus:ring-primaria/30 resize-none"
-                />
-              )}
-            </>
-          ) : (
-            <p className="text-sm text-texto-sec">Este cliente não tem telefone cadastrado.</p>
-          )}
+          <p className="text-sm text-texto-sec">
+            Essa ação marca o cliente como não compareceu. O sistema segue o fluxo automático configurado no backend.
+          </p>
         </div>
 
         <div className="flex gap-2.5 px-5 pb-5">
@@ -790,14 +793,21 @@ const ModalNovoAgendamento = ({ dataInicial, preset, onClose, onSalvar }) => {
   const [slots, setSlots] = useState([])
   const [carregando, setCarregando] = useState(false)
   const [clienteEncontrado, setClienteEncontrado] = useState(false)
+  const [clienteVerificado, setClienteVerificado] = useState(false)
 
   useEffect(() => {
     const digitos = normalizarTelefone(form.clienteTelefone)
-    if (digitos.length < 8) { setClienteEncontrado(false); return }
+    if (digitos.length < 8) {
+      setClienteEncontrado(false)
+      setClienteVerificado(false)
+      return
+    }
+
+    setClienteVerificado(false)
     const t = setTimeout(async () => {
       try {
-        const res = await api.get(`/api/clientes?busca=${digitos}&limite=1`)
-        const c = res.clientes?.[0]
+        const res = await api.get(`/api/clientes/buscar-por-telefone?telefone=${encodeURIComponent(digitos)}`)
+        const c = res?.dados
         if (c) {
           setForm(p => ({
             ...p,
@@ -809,7 +819,11 @@ const ModalNovoAgendamento = ({ dataInicial, preset, onClose, onSalvar }) => {
         } else {
           setClienteEncontrado(false)
         }
-      } catch { setClienteEncontrado(false) }
+        setClienteVerificado(true)
+      } catch {
+        setClienteEncontrado(false)
+        setClienteVerificado(false)
+      }
     }, 600)
     return () => clearTimeout(t)
   }, [form.clienteTelefone])
@@ -834,16 +848,29 @@ const ModalNovoAgendamento = ({ dataInicial, preset, onClose, onSalvar }) => {
     setCarregando(true)
     try {
       const telefoneNormalizado = normalizarTelefone(form.clienteTelefone)
-      let clienteRes = await api.get(`/api/clientes?busca=${telefoneNormalizado}&limite=1`)
-      let clienteId = clienteRes?.clientes?.[0]?.id
+      const clienteExistenteRes = await api.get(`/api/clientes/buscar-por-telefone?telefone=${encodeURIComponent(telefoneNormalizado)}`)
+      let clienteId = clienteExistenteRes?.dados?.id
       if (!clienteId) {
-        const novo = await api.post('/api/clientes', {
-          nome: form.clienteNome || telefoneNormalizado,
-          telefone: telefoneNormalizado,
-          tipoCortePreferido: form.clienteTipoCorte.trim() || undefined,
-          preferencias: form.clientePreferencias.trim() || undefined,
-        })
-        clienteId = novo.dados.id
+        try {
+          const novo = await api.post('/api/clientes', {
+            nome: form.clienteNome || telefoneNormalizado,
+            telefone: telefoneNormalizado,
+            tipoCortePreferido: form.clienteTipoCorte.trim() || undefined,
+            preferencias: form.clientePreferencias.trim() || undefined,
+          })
+          clienteId = novo.dados.id
+        } catch (erroCriacao) {
+          if (erroCriacao?.erro?.codigo === 'DUPLICADO') {
+            const existenteAposConflito = await api.get(`/api/clientes/buscar-por-telefone?telefone=${encodeURIComponent(telefoneNormalizado)}`)
+            clienteId = existenteAposConflito?.dados?.id
+          } else {
+            throw erroCriacao
+          }
+        }
+      }
+
+      if (!clienteId) {
+        throw new Error('Não foi possível identificar o cliente para este agendamento.')
       } else {
         const atualizacaoCliente = {}
         if (form.clienteNome.trim()) atualizacaoCliente.nome = form.clienteNome.trim()
@@ -940,6 +967,11 @@ const ModalNovoAgendamento = ({ dataInicial, preset, onClose, onSalvar }) => {
                 onChange={setTelefone}
                 placeholder="(11) 99999-0000"
               />
+              {clienteVerificado && !clienteEncontrado && (
+                <p className="text-[11px] font-medium text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-2 py-1">
+                  Cliente novo será cadastrado ao agendar.
+                </p>
+              )}
             </div>
             <div className="space-y-1.5">
               <Label>Nome do cliente</Label>
@@ -1057,11 +1089,12 @@ const GradeSemana = ({ dataAtual, agendamentos, profissionaisFiltro, onClickAgen
 }
 
 // Botões de ação rápida para a grade do dia (1-2 toques)
-const BotoesAcaoRapida = ({ ag, onAtualizar }) => {
+const BotoesAcaoRapida = ({ ag, onAtualizar, exigeConfirmacaoPresenca, onFinalizarRapido }) => {
   const [carregando, setCarregando] = useState(null)
   const toast = useToast()
   const podeOperar = ['AGENDADO', 'CONFIRMADO'].includes(ag.status)
   const presente = clientePresente(ag)
+  const podeFinalizarSemCheckin = !exigeConfirmacaoPresenca
 
   const acao = async (tipo, endpoint, body = {}) => {
     setCarregando(tipo)
@@ -1080,7 +1113,7 @@ const BotoesAcaoRapida = ({ ag, onAtualizar }) => {
 
   return (
     <div className="flex gap-1.5 mt-2" onClick={(e) => e.stopPropagation()}>
-      {!presente && (
+      {!presente && exigeConfirmacaoPresenca && (
         <button
           onClick={() => acao('checkin', `/api/agendamentos/${ag.id}/confirmar-presenca`)}
           disabled={carregando}
@@ -1088,6 +1121,16 @@ const BotoesAcaoRapida = ({ ag, onAtualizar }) => {
         >
           {carregando === 'checkin' ? <Loader2 size={12} className="animate-spin" /> : <CheckCircle2 size={12} />}
           Chegou
+        </button>
+      )}
+      {!presente && podeFinalizarSemCheckin && (
+        <button
+          onClick={() => onFinalizarRapido?.(ag)}
+          disabled={carregando}
+          className="flex-1 py-1.5 px-2 text-xs font-semibold bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors disabled:opacity-50 flex items-center justify-center gap-1"
+        >
+          <CheckCircle2 size={12} />
+          Finalizar atendimento
         </button>
       )}
       {presente && (
@@ -1115,11 +1158,12 @@ const BotoesAcaoRapida = ({ ag, onAtualizar }) => {
 }
 
 // Vista de dia
-const GradeDia = ({ dataAtual, agendamentos, onClickAgendamento, onAtualizar }) => {
+const GradeDia = ({ dataAtual, agendamentos, onClickAgendamento, onAtualizar, exigeConfirmacaoPresenca }) => {
   const ags = agendamentos.filter((a) => {
     const dt = new Date(a.inicioEm)
     return dt.toDateString() === dataAtual.toDateString()
   }).sort((a, b) => new Date(a.inicioEm) - new Date(b.inicioEm))
+  const grupos = agruparAgendamentosSequenciais(ags)
 
   return (
     <div className="flex-1 min-h-0 overflow-y-auto p-4">
@@ -1130,30 +1174,61 @@ const GradeDia = ({ dataAtual, agendamentos, onClickAgendamento, onAtualizar }) 
         </div>
       ) : (
         <div className="space-y-3">
-          {ags.map((ag) => {
-            const cor = coresPorStatus[ag.status] || coresPorStatus.AGENDADO
-            const podeOperar = ['AGENDADO', 'CONFIRMADO'].includes(ag.status)
+          {grupos.map((grupo) => {
+            const agReferencia = grupo[0]
+            const cor = coresPorStatus[agReferencia.status] || coresPorStatus.AGENDADO
+            const grupoSequencial = grupo.length > 1
+            const podeOperar = ['AGENDADO', 'CONFIRMADO'].includes(agReferencia.status)
+            const ultimoAg = grupo[grupo.length - 1]
+
             return (
-              <div key={ag.id} className={cn('w-full text-left p-4 rounded-xl', cor.bg, 'transition-opacity')}>
-                <button onClick={() => onClickAgendamento(ag)} className="w-full text-left hover:opacity-90">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="flex items-start gap-3 min-w-0">
-                      <AvatarPessoa pessoa={ag.cliente} tamanho="sm" className="border border-white/70" />
-                      <div className="min-w-0">
-                        <p className={cn('font-semibold truncate flex items-center gap-1.5', cor.texto)}>
-                          <span className="truncate">{ag.cliente?.nome}</span>
-                          {clientePresente(ag) && <span className="w-2 h-2 rounded-full bg-green-500 shrink-0" />}
-                        </p>
-                        <p className={cn('text-sm truncate', cor.texto, 'opacity-80')}>{ag.servico?.nome} - {ag.profissional?.nome}</p>
-                        {clientePresente(ag) && (
-                          <p className={cn('text-xs mt-1', cor.texto, 'opacity-80')}>Chegou às {formatarHora(ag.presencaConfirmadaEm)}</p>
-                        )}
-                      </div>
+              <div key={agReferencia.id} className={cn('w-full text-left p-4 rounded-xl', cor.bg, 'transition-opacity')}>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-start gap-3 min-w-0 flex-1">
+                    <AvatarPessoa pessoa={agReferencia.cliente} tamanho="sm" className="border border-white/70" />
+                    <div className="min-w-0 flex-1">
+                      <p className={cn('font-semibold truncate flex items-center gap-1.5', cor.texto)}>
+                        <span className="truncate">{agReferencia.cliente?.nome}</span>
+                        {clientePresente(agReferencia) && <span className="w-2 h-2 rounded-full bg-green-500 shrink-0" />}
+                      </p>
+
+                      {grupoSequencial ? (
+                        <div className="mt-1.5 space-y-1">
+                          {grupo.map((ag) => (
+                            <button
+                              key={ag.id}
+                              onClick={() => onClickAgendamento(ag)}
+                              className={cn('text-left text-sm w-full truncate hover:opacity-80', cor.texto, 'opacity-90')}
+                            >
+                              {formatarHora(ag.inicioEm)} · {ag.servico?.nome}
+                            </button>
+                          ))}
+                          <p className={cn('text-xs mt-1', cor.texto, 'opacity-75')}>
+                            Sequência até {formatarHora(ultimoAg.fimEm || ultimoAg.inicioEm)}
+                          </p>
+                        </div>
+                      ) : (
+                        <>
+                          <button onClick={() => onClickAgendamento(agReferencia)} className="w-full text-left hover:opacity-90">
+                            <p className={cn('text-sm truncate', cor.texto, 'opacity-80')}>{agReferencia.servico?.nome} - {agReferencia.profissional?.nome}</p>
+                            {clientePresente(agReferencia) && (
+                              <p className={cn('text-xs mt-1', cor.texto, 'opacity-80')}>Chegou às {formatarHora(agReferencia.presencaConfirmadaEm)}</p>
+                            )}
+                          </button>
+                        </>
+                      )}
                     </div>
-                    <span className="text-sm font-medium shrink-0">{formatarHora(ag.inicioEm)}</span>
                   </div>
-                </button>
-                {podeOperar && <BotoesAcaoRapida ag={ag} onAtualizar={onAtualizar} />}
+                  <span className="text-sm font-medium shrink-0">{formatarHora(agReferencia.inicioEm)}</span>
+                </div>
+                {podeOperar && (
+                  <BotoesAcaoRapida
+                    ag={agReferencia}
+                    onAtualizar={onAtualizar}
+                    exigeConfirmacaoPresenca={exigeConfirmacaoPresenca}
+                    onFinalizarRapido={onClickAgendamento}
+                  />
+                )}
               </div>
             )
           })}
@@ -1431,24 +1506,38 @@ const ModalWalkIn = ({ onClose, onSalvar }) => {
     setCarregando(true)
     try {
       const telefoneNormalizado = normalizarTelefone(form.clienteTelefone)
-      let clienteRes = await api.get(`/api/clientes?busca=${telefoneNormalizado}&limite=1`)
-      let clienteId = clienteRes?.clientes?.[0]?.id
+      const clienteExistenteRes = await api.get(`/api/clientes/buscar-por-telefone?telefone=${encodeURIComponent(telefoneNormalizado)}`)
+      let clienteId = clienteExistenteRes?.dados?.id
+
       if (!clienteId) {
-        const novo = await api.post('/api/clientes', {
-          nome: form.clienteNome || telefoneNormalizado,
-          telefone: telefoneNormalizado,
-          tipoCortePreferido: form.clienteTipoCorte.trim() || undefined,
-          preferencias: form.clientePreferencias.trim() || undefined,
-        })
-        clienteId = novo.dados.id
-      } else {
-        const atualizacaoCliente = {}
-        if (form.clienteNome.trim()) atualizacaoCliente.nome = form.clienteNome.trim()
-        if (form.clienteTipoCorte.trim()) atualizacaoCliente.tipoCortePreferido = form.clienteTipoCorte.trim()
-        if (form.clientePreferencias.trim()) atualizacaoCliente.preferencias = form.clientePreferencias.trim()
-        if (Object.keys(atualizacaoCliente).length > 0) {
-          await api.patch(`/api/clientes/${clienteId}`, atualizacaoCliente)
+        try {
+          const novo = await api.post('/api/clientes', {
+            nome: form.clienteNome || telefoneNormalizado,
+            telefone: telefoneNormalizado,
+            tipoCortePreferido: form.clienteTipoCorte.trim() || undefined,
+            preferencias: form.clientePreferencias.trim() || undefined,
+          })
+          clienteId = novo.dados.id
+        } catch (erroCriacao) {
+          if (erroCriacao?.erro?.codigo === 'DUPLICADO') {
+            const existenteAposConflito = await api.get(`/api/clientes/buscar-por-telefone?telefone=${encodeURIComponent(telefoneNormalizado)}`)
+            clienteId = existenteAposConflito?.dados?.id
+          } else {
+            throw erroCriacao
+          }
         }
+      }
+
+      if (!clienteId) {
+        throw new Error('Não foi possível identificar o cliente para o atendimento imediato.')
+      }
+
+      const atualizacaoCliente = {}
+      if (form.clienteNome.trim()) atualizacaoCliente.nome = form.clienteNome.trim()
+      if (form.clienteTipoCorte.trim()) atualizacaoCliente.tipoCortePreferido = form.clienteTipoCorte.trim()
+      if (form.clientePreferencias.trim()) atualizacaoCliente.preferencias = form.clientePreferencias.trim()
+      if (Object.keys(atualizacaoCliente).length > 0) {
+        await api.patch(`/api/clientes/${clienteId}`, atualizacaoCliente)
       }
       const novoAgendamento = await api.post('/api/agendamentos', {
         clienteId,
@@ -1835,6 +1924,7 @@ const PainelFilaEspera = ({ profissionais, onFechar }) => {
 }
 
 const Agenda = () => {
+  const { tenant } = useAuth()
   const [visao, setVisao] = useState(obterVisaoInicialAgenda)
   const [dataAtual, setDataAtual] = useState(new Date())
   const [agendamentos, setAgendamentos] = useState([])
@@ -1954,7 +2044,13 @@ const Agenda = () => {
       onClickAgendamento={setModalDetalhe}
     />
   ) : visao === 'dia' ? (
-    <GradeDia dataAtual={dataAtual} agendamentos={agsFiltrados} onClickAgendamento={setModalDetalhe} onAtualizar={carregarAgendamentos} />
+    <GradeDia
+      dataAtual={dataAtual}
+      agendamentos={agsFiltrados}
+      onClickAgendamento={setModalDetalhe}
+      onAtualizar={carregarAgendamentos}
+      exigeConfirmacaoPresenca={Boolean(tenant?.exigirConfirmacaoPresenca)}
+    />
   ) : (
     <GradeMes dataAtual={dataAtual} agendamentos={agsFiltrados} onClickAgendamento={setModalDetalhe} />
   )

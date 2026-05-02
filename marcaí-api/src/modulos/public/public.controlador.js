@@ -9,7 +9,6 @@ const { logClienteTrace, resumirCliente } = require('../../utils/clienteTrace')
 const { resumirHorarioFuncionamento, montarHorarioDetalhado } = require('../../utils/horarioFuncionamento')
 const { processarEvento } = require('../ia/messageOrchestrator')
 
-const STATUS_AGENDAMENTO_OCULTOS = ['REMARCADO']
 const STATUS_SEM_OPERACAO = ['CANCELADO', 'REMARCADO', 'NAO_COMPARECEU']
 const MAPA_PAGAMENTO = {
   PIX: 'PIX',
@@ -281,6 +280,7 @@ const info = async (req, res, next) => {
           horarioDetalhado,
           pagamentos,
           comodidades,
+          galeriaAtivo: Boolean(tenant.galeriaAtivo),
           entregaAtivo: Boolean(tenant.entregaAtivo),
           entregaConfiguracao: tenant.entregaAtivo ? {
             taxaEntregaCentavos: tenant.taxaEntregaCentavos || 0,
@@ -290,8 +290,7 @@ const info = async (req, res, next) => {
           } : null,
           redesSociais,
           whatsappNumero:
-            tenant.configWhatsApp?.sendzen?.displayPhoneNumber
-            || tenant.configWhatsApp?.meta?.displayPhoneNumber
+            tenant.configWhatsApp?.meta?.displayPhoneNumber
             || tenant.configWhatsApp?.displayPhoneNumber
             || tenant.telefone
             || null,
@@ -534,6 +533,13 @@ const pacotes = async (req, res, next) => {
 // GET /api/public/painel/:slug/:hash
 const painelTv = async (req, res, next) => {
   try {
+    res.set({
+      'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+      Pragma: 'no-cache',
+      Expires: '0',
+      'Surrogate-Control': 'no-store',
+    })
+
     const tenant = await buscarTenantPorPainel({
       slug: req.params.slug,
       hash: req.params.hash,
@@ -551,7 +557,7 @@ const painelTv = async (req, res, next) => {
       where: {
         tenantId: tenant.id,
         inicioEm: { gte: inicioUtc, lte: fimUtc },
-        status: { notIn: STATUS_AGENDAMENTO_OCULTOS },
+        status: { in: ['AGENDADO', 'CONFIRMADO'] },
       },
       include: {
         cliente: { select: { id: true, nome: true } },
@@ -800,6 +806,50 @@ const checkIn = async (req, res, next) => {
   }
 }
 
+// PATCH /api/public/check-in/confirmar
+const confirmarCheckIn = async (req, res, next) => {
+  try {
+    const { slug, telefone, agendamentoId } = req.body || {}
+    if (!slug || !telefone || !agendamentoId) {
+      return res.status(400).json({ sucesso: false, erro: { mensagem: 'slug, telefone e agendamentoId são obrigatórios' } })
+    }
+
+    const tenant = await banco.tenant.findFirst({
+      where: { slug },
+      select: { id: true, ativo: true },
+    })
+    if (!tenant || !tenant.ativo) {
+      return res.status(404).json({ sucesso: false, erro: { mensagem: 'Barbearia não encontrada' } })
+    }
+
+    const telLimpo = String(telefone).replace(/\D/g, '')
+    const telFinal = telLimpo.startsWith('55') && telLimpo.length >= 12 ? `+${telLimpo}` : `+55${telLimpo}`
+    const cliente = await clientesServico.buscarPorTelefone(tenant.id, telFinal)
+    if (!cliente) {
+      return res.status(404).json({ sucesso: false, erro: { mensagem: 'Cliente não encontrado para este telefone' } })
+    }
+
+    const agendamentoValido = await banco.agendamento.findFirst({
+      where: {
+        id: agendamentoId,
+        tenantId: tenant.id,
+        clienteId: cliente.id,
+        status: { in: ['AGENDADO', 'CONFIRMADO'] },
+      },
+      select: { id: true },
+    })
+
+    if (!agendamentoValido) {
+      return res.status(404).json({ sucesso: false, erro: { mensagem: 'Agendamento não encontrado para confirmação de chegada' } })
+    }
+
+    const agendamento = await agendamentosServico.confirmarPresenca(tenant.id, agendamentoId)
+    res.json({ sucesso: true, dados: { id: agendamento.id, presencaConfirmadaEm: agendamento.presencaConfirmadaEm } })
+  } catch (erro) {
+    next(erro)
+  }
+}
+
 // GET /api/public/:slug/planos
 const planos = async (req, res, next) => {
   try {
@@ -912,7 +962,7 @@ const assinar = async (req, res, next) => {
   }
 }
 
-// GET /api/public/:slug/meus-agendamentos?tel=5562993050931
+// GET /api/public/:slug/meus-agendamentos?tel=5511999887766
 const meusAgendamentos = async (req, res, next) => {
   try {
     const identificador = req.params.slug
@@ -1205,6 +1255,17 @@ const enviarCodigo = async (req, res, next) => {
     const telNorm = String(telefone).replace(/\D/g, '')
     const telFinal = telNorm.startsWith('55') && telNorm.length >= 12 ? `+${telNorm}` : `+55${telNorm}`
     const chave = `${tenant.id}:${telFinal}`
+    const clienteExistente = await clientesServico.buscarPorTelefone(tenant.id, telFinal)
+
+    if (!clienteExistente) {
+      return res.status(404).json({
+        sucesso: false,
+        erro: {
+          codigo: 'CLIENTE_NAO_CADASTRADO',
+          mensagem: 'Esse número ainda não tem cadastro. Faça seu primeiro agendamento para criar seu perfil.',
+        },
+      })
+    }
 
     // Rate limit: máximo 3 códigos por telefone a cada 5 min
     const existente = otpStore.get(chave)
@@ -1296,4 +1357,4 @@ setInterval(() => {
   }
 }, 10 * 60 * 1000)
 
-module.exports = { info, produtos, criarPedido, meusPedidos, cliente, perfil, atualizarPerfil, pacotes, painelTv, slots, slotsCombo, agendar, checkIn, planos, assinar, meusAgendamentos, historico, verificarAssinatura, reagendar, enviarCodigo, verificarCodigo }
+module.exports = { info, produtos, criarPedido, meusPedidos, cliente, perfil, atualizarPerfil, pacotes, painelTv, slots, slotsCombo, agendar, checkIn, confirmarCheckIn, planos, assinar, meusAgendamentos, historico, verificarAssinatura, reagendar, enviarCodigo, verificarCodigo }

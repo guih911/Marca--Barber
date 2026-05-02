@@ -1,0 +1,2 @@
+ALTER TABLE "tenants"
+ADD COLUMN IF NOT EXISTS "minutosMargemAutoCancelamento" INTEGER NOT NULL DEFAULT 15;

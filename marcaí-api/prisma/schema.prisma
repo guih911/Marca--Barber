@@ -7,6 +7,19 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// === SUPER ADMIN (tabela exclusiva do painel admin) ===
+
+model SuperAdmin {
+  id        String   @id @default(uuid())
+  nome      String
+  email     String   @unique
+  senhaHash String
+  ativo     Boolean  @default(true)
+  criadoEm  DateTime @default(now())
+
+  @@map("super_admins")
+}
+
 // === ENUMS ===
 
 enum Segmento {
@@ -128,6 +141,7 @@ model Tenant {
   antecedenciaCancelar         Int       @default(2)
   autoCancelarNaoConfirmados   Boolean   @default(false)
   horasAutoCancelar            Int       @default(4)
+  minutosMargemAutoCancelamento Int      @default(15)
   lembreteMinutosAntes         Int       @default(60)  // 0 = desativado; opções: 15, 30, 60, 120, 240, 1440
   lembretesMinutosAntes        Json?
   exigirConfirmacaoPresenca    Boolean   @default(false)
@@ -167,10 +181,13 @@ model Tenant {
   relatorioDiarioAtivo Boolean   @default(false)  // Relatório diário via WhatsApp para gestor
   galeriaAtivo         Boolean   @default(false)  // Galeria de fotos
   listaEsperaAtivo     Boolean   @default(false)  // Lista de espera
+  filaReengajamentoHorario String @default("20:30") // Horário local para reengajar fila no fim do dia (HH:mm)
   filaEncaixeAutomaticoAtivo Boolean @default(true)  // Vaga da fila vira agendamento sem pedir "sim" (se aceitaEncaixe na entrada)
   caixaAtivo           Boolean   @default(false)  // Caixa / financeiro
   nomeIA               String?  // nome do assistente IA (padrão: Don Barber)
   aprendizadoIA        Json?    // dados de aprendizado da IA (métricas, padrões)
+  iaIncluirLinkAgendamento Boolean @default(true)  // se false, IA não envia URL do link público (WhatsApp)
+  configMensagensDon  Json?     // lembretes/cards editáveis (ver utils/mensagensDonTemplates.js)
   ativo                Boolean   @default(true)
   criadoEm             DateTime  @default(now())
   atualizadoEm         DateTime  @updatedAt

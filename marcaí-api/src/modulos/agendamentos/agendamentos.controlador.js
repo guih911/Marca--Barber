@@ -30,7 +30,7 @@ const criar = async (req, res, next) => {
 
 const confirmar = async (req, res, next) => {
   try {
-    const ag = await agendamentosServico.confirmar(req.usuario.tenantId, req.params.id)
+    const ag = await agendamentosServico.confirmar(req.usuario.tenantId, req.params.id, { origemViaPainel: true })
     res.json({ sucesso: true, dados: ag })
   } catch (erro) {
     next(erro)

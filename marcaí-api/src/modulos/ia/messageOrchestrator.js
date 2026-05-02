@@ -9,6 +9,15 @@ const vozServico = require('./voz.servico')
 const openai = new OpenAI({ apiKey: configIA.apiKey || process.env.OPENAI_API_KEY, baseURL: configIA.baseURL })
 const anthropic = configIA.anthropicApiKey ? new Anthropic({ apiKey: configIA.anthropicApiKey }) : null
 
+const limparMarkdownWhatsapp = (texto = '') => (
+  String(texto || '')
+    .replace(/\*\*(.*?)\*\*/g, '$1')
+    .replace(/\*(.*?)\*/g, '$1')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/^[-*]\s+/gm, '')
+    .trim()
+)
+
 /**
  * messageOrchestrator
  * O Cérebro Central para disparar mensagens baseadas em evento.
@@ -18,6 +27,46 @@ const processarEvento = async ({ evento, agendamento, tenantId, cliente, origemV
   try {
     const tenant = await banco.tenant.findUnique({ where: { id: tenantId } })
     if (!tenant?.configWhatsApp || !cliente?.telefone) return
+    const timeZone = tenant.timezone || 'America/Sao_Paulo'
+
+    if (evento === 'NPS' && tenant.npsAtivo === false) {
+      return { sucesso: true, suprimido: true, motivo: 'NPS_DESABILITADO_NO_TENANT' }
+    }
+    const conversaMaisRecente = cliente?.id
+      ? await banco.conversa.findFirst({
+          where: { tenantId, clienteId: cliente.id, canal: 'WHATSAPP' },
+          orderBy: { atualizadoEm: 'desc' },
+          select: { id: true, status: true },
+        })
+      : null
+
+    // Se a equipe encerrou a conversa no chat, não enviamos automações
+    // até o cliente voltar e reabrir o atendimento.
+    if (conversaMaisRecente?.status === 'ENCERRADA') {
+      return { sucesso: true, suprimido: true, motivo: 'CONVERSA_ENCERRADA_PELA_EQUIPE' }
+    }
+
+    // Deduplicação do pós-atendimento:
+    // quando o cliente conclui mais de um serviço no mesmo dia, envia apenas 1 mensagem.
+    if (evento === 'CONCLUIR') {
+      const ultimaMensagemConcluir = await banco.mensagem.findFirst({
+        where: {
+          remetente: 'sistema',
+          conteudo: { startsWith: '[ORQ] CONCLUIR_ENVIADO' },
+          conversa: { tenantId, clienteId: cliente.id },
+        },
+        orderBy: { criadoEm: 'desc' },
+      })
+
+      if (ultimaMensagemConcluir) {
+        const dataEvento = agendamento?.concluidoEm || new Date()
+        const diaEvento = new Date(dataEvento).toLocaleDateString('en-CA', { timeZone })
+        const diaUltimoEnvio = new Date(ultimaMensagemConcluir.criadoEm).toLocaleDateString('en-CA', { timeZone })
+        if (diaEvento === diaUltimoEnvio) {
+          return { sucesso: true, suprimido: true, motivo: 'CONCLUIR_JA_ENVIADO_NO_DIA' }
+        }
+      }
+    }
 
     // 1. Coleta de Contexto Rápido (Histórico)
     const ultimoAgendamento = await banco.agendamento.findFirst({
@@ -66,23 +115,51 @@ const processarEvento = async ({ evento, agendamento, tenantId, cliente, origemV
 
     // 3. Montar Prompt Específico para o Evento
     const nomeBarbearia = tenant.nome || 'Barbearia'
-    const linkAgendamento = `${process.env.APP_URL || 'https://app.marcai.com.br'}/b/${tenant.hashPublico || tenant.slug}`
-    const dataFmt = agendamento?.inicioEm ? new Date(agendamento.inicioEm).toLocaleDateString('pt-BR') : ''
-    const horaFmt = agendamento?.inicioEm ? new Date(agendamento.inicioEm).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : ''
+    const linkAgendamento = `${process.env.APP_URL || 'https://app.barbermark.com.br'}/b/${tenant.hashPublico || tenant.slug}`
+    const dataFmt = agendamento?.inicioEm
+      ? new Date(agendamento.inicioEm).toLocaleDateString('pt-BR', {
+          day: '2-digit',
+          month: '2-digit',
+          year: 'numeric',
+          timeZone,
+        })
+      : ''
+    const horaFmt = agendamento?.inicioEm
+      ? new Date(agendamento.inicioEm).toLocaleTimeString('pt-BR', {
+          hour: '2-digit',
+          minute: '2-digit',
+          timeZone,
+        })
+      : ''
+    const dataHoraExtensoFmt = agendamento?.inicioEm
+      ? new Date(agendamento.inicioEm).toLocaleString('pt-BR', {
+          day: 'numeric',
+          month: 'long',
+          hour: '2-digit',
+          minute: '2-digit',
+          timeZone,
+        })
+      : ''
     const servicoNome = agendamento?.servico?.nome || 'atendimento'
     const profNome = agendamento?.profissional?.nome || 'nossa equipe'
 
     let prompt = `Você é Don, o cérebro comercial e concierge da barbearia ${nomeBarbearia}.\n`
     prompt += `Perfil: ${tom}. Regra: Fale como um humano sênior, sem clichês de robô. Curto, magnético e direto.\n`
-    prompt += `Cliente: ${cliente.nome}.\n`
+    prompt += `Cliente: ${cliente.nome || '(não cadastrado)'}.\n`
     prompt += `Histórico: ${contextoFrequencia}.\n`
     prompt += `Contexto Agenda: ${contextoAgenda}.\n\n`
-    prompt += `DIRETRIZES: NUNCA use placeholders como [Nome]. Use o link padrão ${linkAgendamento} apenas quando fizer sentido vender ou facilitar o retorno.\n`
+    const incluirLinkAgenda = tenant.iaIncluirLinkAgendamento !== false
+    prompt += incluirLinkAgenda
+      ? `DIRETRIZES: NUNCA use placeholders como [Nome]. Use o link padrão ${linkAgendamento} apenas quando fizer sentido vender ou facilitar o retorno.\n`
+      : 'DIRETRIZES: NUNCA use placeholders como [Nome]. O salão desativou o envio do link público de agendamento pela IA: NUNCA inclua URLs do app, link da agenda online nem o texto "segue o link" convencional.\n'
     prompt += 'PORTUGUÊS: use português do Brasil, com acentuação e ortografia corretas (não, você, está, ainda, nós, por favor, obrigado).\n\n'
 
     switch (evento) {
       case 'CONFIRMAR':
-        prompt += `EVENTO: Agendamento CRIADO (${origemViaPainel ? 'via Painel' : 'via Link Público'}).\n`
+        prompt += `EVENTO: Agendamento CONFIRMADO (${origemViaPainel ? 'pela equipe no painel' : 'pelo cliente'}).\n`
+        if (extra?.confirmadoPor) {
+          prompt += `Origem da confirmação: ${extra.confirmadoPor}.\n`
+        }
         prompt += `Detalhes: ${servicoNome} com ${profNome} em ${dataFmt} às ${horaFmt}.\n`
         break;
       
@@ -124,6 +201,11 @@ const processarEvento = async ({ evento, agendamento, tenantId, cliente, origemV
       case 'FILA_ESPERA':
         prompt += `EVENTO: Abrimos um horário (vaga) que o cliente queria na Fila de Espera!\n`
         prompt += `Vaga: ${dataFmt} às ${horaFmt} com ${profNome}.\n`
+        prompt += 'Ação obrigatória: ofereça a vaga em formato de pergunta e peça confirmação explícita para encaixar. Nunca diga que já reservou.\n'
+        break;
+      case 'FILA_ESPERA_FIM_DIA':
+        prompt += 'EVENTO: Encerramento do dia sem vaga para cliente da fila de espera.\n'
+        prompt += 'Ação obrigatória: faça pergunta aberta para seguir o atendimento amanhã ou em outro dia, sem sugerir horários prontos.\n'
         break;
 
       case 'ANIVERSARIO':
@@ -170,7 +252,7 @@ const processarEvento = async ({ evento, agendamento, tenantId, cliente, origemV
       case 'PEDIDO_NOVO_ADMIN':
         prompt += `EVENTO: Notificação para o DONO da barbearia sobre um novo pedido de delivery.\n`
         prompt += `Pedido: ${extra.resumoPedido}.\n`
-        prompt += `Cliente: ${cliente.nome}.\n`
+        prompt += `Cliente: ${cliente.nome || '(não cadastrado)'}.\n`
         break;
 
       case 'PEDIDO_STATUS':
@@ -211,8 +293,10 @@ const processarEvento = async ({ evento, agendamento, tenantId, cliente, origemV
 
       case 'BEM_VINDO':
         prompt += `EVENTO: O cliente ACABA DE SER CADASTRADO manualmente no sistema pela recepção.\n`
-        prompt += `Ação: Dê as boas-vindas oficiais, apresente-se como o conciliador digital da barbearia e convide-o a conhecer a facilidade de agendar por aqui ou pelo link.\n`
-        break;
+        prompt += incluirLinkAgenda
+          ? `Ação: Dê as boas-vindas oficiais, apresente-se como o conciliador digital da barbearia e convide-o a conhecer a facilidade de agendar por aqui ou pelo link.\n`
+          : 'Ação: Dê as boas-vindas oficiais, apresente-se como o conciliador digital da barbearia e convide a agendar por aqui no WhatsApp (o salão desativou o link público pela IA).\n'
+        break
 
       default:
         return;
@@ -222,7 +306,37 @@ const processarEvento = async ({ evento, agendamento, tenantId, cliente, origemV
     const systemOrchestrator = 'Você escreve mensagens de WhatsApp para clientes de barbearia. Curto, natural, em português do Brasil, com acentos corretos. Sem título, sem "Prezado cliente".'
 
     let textoResposta
-    if (anthropic) {
+    if (evento === 'FILA_ESPERA' && agendamento?.inicioEm) {
+      const primeiroNome = String(cliente?.nome || '').trim().split(/\s+/)[0]
+      const saudacao = primeiroNome && primeiroNome.toLowerCase() !== 'cliente' ? `Oi, ${primeiroNome}!` : 'Oi!'
+      textoResposta = `${saudacao} Abrimos uma vaga que você estava esperando.\n${dataHoraExtensoFmt} com ${profNome}.\nSe quiser, eu te encaixo nesse horário.`
+    } else if (evento === 'FILA_ESPERA_FIM_DIA') {
+      const primeiroNome = String(cliente?.nome || '').trim().split(/\s+/)[0]
+      const saudacao = primeiroNome && primeiroNome.toLowerCase() !== 'cliente' ? `Oi, ${primeiroNome}!` : 'Oi!'
+      const servico = extra?.servicoNome || servicoNome || 'o atendimento'
+      textoResposta = `${saudacao} Hoje não abriu vaga para ${servico}.\nQuer tentar amanhã ou prefere outro dia?\nSe já tiver um horário em mente, me fala que eu verifico para você.`
+    } else if (evento === 'RETORNO_POS_SERVICO' && tenant.mensagemRetorno && String(tenant.mensagemRetorno).trim()) {
+      const { preencherPlaceholders } = require('../../utils/mensagensDonTemplates')
+      const primeiroNome = (cliente.nome || '').split(' ')[0]
+      const nomeValido = primeiroNome && primeiroNome.toLowerCase() !== 'cliente' ? primeiroNome : ''
+      textoResposta = preencherPlaceholders(tenant.mensagemRetorno, {
+        nome: nomeValido,
+        servico: servicoNome,
+        dias: String(extra.dias != null ? extra.dias : ''),
+        salao: nomeBarbearia,
+        data: dataFmt,
+        hora: horaFmt,
+      })
+    } else if (evento === 'AUTO_CANCELAMENTO') {
+      const primeiroNome = String(cliente?.nome || '').trim().split(/\s+/)[0]
+      const saudacao = primeiroNome && primeiroNome.toLowerCase() !== 'cliente' ? `Oi, ${primeiroNome}!` : 'Oi!'
+      const horarioExtenso = dataFmt && horaFmt
+        ? `${dataFmt} às ${horaFmt}`
+        : (dataHoraExtensoFmt || 'o horário combinado')
+      textoResposta = incluirLinkAgenda
+        ? `${saudacao} Tudo bem?\nSeu horário de ${horarioExtenso} foi cancelado porque não recebemos a confirmação a tempo.\nSe quiser remarcar, é só acessar ${linkAgendamento}`
+        : `${saudacao} Tudo bem?\nSeu horário de ${horarioExtenso} foi cancelado porque não recebemos a confirmação a tempo.\nSe quiser, me chama aqui que eu te ajudo a remarcar.`
+    } else if (anthropic) {
       try {
         const msg = await anthropic.messages.create({
           model: configIA.modeloAnthropic || 'claude-sonnet-4-6',
@@ -252,9 +366,10 @@ const processarEvento = async ({ evento, agendamento, tenantId, cliente, origemV
       textoResposta = `Ei! Teu horário foi ajustado: ${dataFmt} às ${horaFmt} (${servicoNome} com ${profNome}). Até lá!`
     }
     if (!textoResposta) return
+    textoResposta = limparMarkdownWhatsapp(textoResposta)
 
     // 5. Orquestração de Canal (Interactive vs Audio vs Texto)
-    const premiumAudioEvents = ['WALK_IN', 'CONCLUIR', 'RENOVACAO_PLANO', 'CONFIRMAR_PRESENCA', 'ANIVERSARIO', 'REATIVACAO', 'FILA_ESPERA', 'RETORNO_POS_SERVICO', 'FIDELIDADE_RESGATE', 'FIDELIDADE_PONTOS', 'CHECK_IN', 'ASSINATURA_NOVA', 'ENVIAR_LINK_AGENDA']
+    const premiumAudioEvents = ['WALK_IN', 'CONCLUIR', 'RENOVACAO_PLANO', 'CONFIRMAR_PRESENCA', 'ANIVERSARIO', 'REATIVACAO', 'RETORNO_POS_SERVICO', 'FIDELIDADE_RESGATE', 'FIDELIDADE_PONTOS', 'CHECK_IN', 'ASSINATURA_NOVA', 'ENVIAR_LINK_AGENDA']
     const interactiveEvents = ['BEM_VINDO']
     const isInternal = ['PEDIDO_NOVO_ADMIN', 'ESTOQUE_BAIXO_ADMIN', 'NOTIFICACAO_INTERNA'].includes(evento)
     
@@ -273,7 +388,6 @@ const processarEvento = async ({ evento, agendamento, tenantId, cliente, origemV
             buttons: [
               { type: 'reply', reply: { id: 'AGENDAR', title: 'Agendar agora' } },
               { type: 'reply', reply: { id: 'VER_SERVICOS', title: 'Serviços' } },
-              { type: 'reply', reply: { id: 'MEU_PLANO', title: 'Ver meu Plano' } },
             ],
           },
         }
@@ -305,8 +419,10 @@ const processarEvento = async ({ evento, agendamento, tenantId, cliente, origemV
     // 6. Log de Conversa
     if (!isInternal) {
       try {
-        const conversasServico = require('../conversas/conversas.servico')
-        const conversa = await conversasServico.buscarOuCriarConversa(tenantId, cliente.id, 'WHATSAPP')
+        const conversa = conversaMaisRecente || await banco.conversa.create({
+          data: { tenantId, clienteId: cliente.id, canal: 'WHATSAPP', status: 'ATIVA' },
+          select: { id: true },
+        })
         await banco.mensagem.create({
           data: { 
             conversaId: conversa.id, 
@@ -314,6 +430,15 @@ const processarEvento = async ({ evento, agendamento, tenantId, cliente, origemV
             conteudo: (mensagemEnviada && premiumAudioEvents.includes(evento) ? `[Áudio] ${textoResposta}` : textoResposta) 
           },
         })
+        if (evento === 'CONCLUIR') {
+          await banco.mensagem.create({
+            data: {
+              conversaId: conversa.id,
+              remetente: 'sistema',
+              conteudo: `[ORQ] CONCLUIR_ENVIADO ${new Date().toISOString()} agendamento=${agendamento?.id || 'n/a'}`,
+            },
+          })
+        }
         await banco.conversa.update({ where: { id: conversa.id }, data: { atualizadoEm: new Date() } })
       } catch (errConversa) {
           console.warn('[Orchestrator] Erro ao salvar log:', errConversa.message)

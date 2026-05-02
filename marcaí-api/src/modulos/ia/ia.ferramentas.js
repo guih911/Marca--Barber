@@ -319,7 +319,7 @@ const ferramentas = [
     type: 'function',
     function: {
       name: 'entrarFilaEspera',
-      description: 'Coloca o cliente na fila de espera para um serviço quando não há horário disponível na data desejada. Com encaixe automático (padrão), ao abrir vaga a agenda pode marcar o horário e avisar no WhatsApp; use aceitaEncaixeAutomatico false só se o cliente disser claramente que prefere ser avisado antes de confirmar.',
+      description: 'Coloca o cliente na fila de espera para um serviço quando não há horário disponível na data desejada. Quando abrir vaga, o sistema oferece para o primeiro da fila e só encaixa se o cliente confirmar no WhatsApp.',
       parameters: {
         type: 'object',
         properties: {
@@ -327,7 +327,7 @@ const ferramentas = [
           servicoId: { type: 'string', description: 'ID do serviço desejado.' },
           profissionalId: { type: 'string', description: 'ID do profissional preferido (opcional). Se não informado, aceita qualquer profissional.' },
           dataDesejada: { type: 'string', description: 'Data desejada no formato YYYY-MM-DD.' },
-          aceitaEncaixeAutomatico: { type: 'boolean', description: 'Se true (padrão), o sistema pode agendar sozinho quando abrir vaga, desde que o salão tenha a opção ativa. Se o cliente quiser aprovar antes, envie false.' },
+          aceitaEncaixeAutomatico: { type: 'boolean', description: 'Campo legado. O fluxo atual sempre exige confirmação do cliente antes de encaixar.' },
         },
         required: ['clienteId', 'servicoId', 'dataDesejada'],
       },

@@ -2,13 +2,13 @@ const secoes = {
   termos: {
     etiqueta: 'Documento oficial',
     titulo: 'Termos de serviço',
-    subtitulo: 'Condições de uso da plataforma Marcaí Barber para atendimento, automação e operação via WhatsApp.',
+    subtitulo: 'Condições de uso da plataforma BarberMark para atendimento, automação e operação via WhatsApp.',
     atualizadoEm: '09 de abril de 2026',
     blocos: [
       {
         titulo: '1. Sobre a plataforma',
         paragrafos: [
-          'A Marcaí Barber é uma plataforma SaaS voltada para barbearias e salões que desejam organizar agenda, atendimento, relacionamento com clientes, automações e comunicação por canais oficiais como o WhatsApp.',
+          'A BarberMark é uma plataforma SaaS voltada para barbearias e salões que desejam organizar agenda, atendimento, relacionamento com clientes, automações e comunicação por canais oficiais como o WhatsApp.',
           'Ao utilizar o sistema, o cliente declara que tem autorização para operar sua empresa, seus profissionais e seus canais de atendimento dentro das regras da legislação brasileira e das políticas das plataformas integradas.',
         ],
       },
@@ -16,7 +16,7 @@ const secoes = {
         titulo: '2. Responsabilidade de uso',
         paragrafos: [
           'Cada barbearia é responsável pelo conteúdo das mensagens enviadas, pelo uso correto do sistema e pelo cumprimento das políticas da Meta, da LGPD e das demais regras aplicáveis ao seu negócio.',
-          'A Marcaí Barber não é afiliada, subsidiária ou representante da Meta. A integração com WhatsApp Business Platform depende de aprovação e manutenção das políticas definidas pela própria Meta.',
+          'A BarberMark não é afiliada, subsidiária ou representante da Meta. A integração com WhatsApp Business Platform depende de aprovação e manutenção das políticas definidas pela própria Meta.',
         ],
       },
       {
@@ -36,7 +36,7 @@ const secoes = {
       {
         titulo: '5. Encerramento',
         paragrafos: [
-          'O cliente pode solicitar o encerramento do uso da plataforma a qualquer momento. A Marcaí Barber também poderá encerrar a prestação do serviço em caso de inadimplência, abuso, fraude, violação contratual ou risco de compliance.',
+          'O cliente pode solicitar o encerramento do uso da plataforma a qualquer momento. A BarberMark também poderá encerrar a prestação do serviço em caso de inadimplência, abuso, fraude, violação contratual ou risco de compliance.',
         ],
       },
     ],
@@ -44,7 +44,7 @@ const secoes = {
   privacidade: {
     etiqueta: 'LGPD e dados',
     titulo: 'Política de privacidade',
-    subtitulo: 'Como a Marcaí Barber coleta, usa e protege dados pessoais no funcionamento da plataforma.',
+    subtitulo: 'Como a BarberMark coleta, usa e protege dados pessoais no funcionamento da plataforma.',
     atualizadoEm: '09 de abril de 2026',
     blocos: [
       {
@@ -64,7 +64,7 @@ const secoes = {
       {
         titulo: '3. Compartilhamento',
         paragrafos: [
-          'A Marcaí Barber não comercializa dados pessoais. O compartilhamento ocorre apenas quando necessário para a prestação do serviço, como em integrações com a Meta, infraestrutura em nuvem, envio de notificações ou cumprimento de obrigação legal.',
+          'A BarberMark não comercializa dados pessoais. O compartilhamento ocorre apenas quando necessário para a prestação do serviço, como em integrações com a Meta, infraestrutura em nuvem, envio de notificações ou cumprimento de obrigação legal.',
         ],
       },
       {
@@ -119,7 +119,7 @@ const LegalPublica = ({ tipo = 'termos' }) => {
           </div>
 
           <div className="mt-10 rounded-[24px] border border-white/8 bg-gradient-to-br from-amber-400/12 to-transparent p-6 text-sm leading-7 text-white/72">
-            Para assuntos relacionados a compliance, privacidade ou uso da plataforma, utilize os canais oficiais da Marcaí Barber e mantenha estes links públicos ativos para validações com a Meta e parceiros.
+            Para assuntos relacionados a compliance, privacidade ou uso da plataforma, utilize os canais oficiais da BarberMark e mantenha estes links públicos ativos para validações com a Meta e parceiros.
           </div>
         </div>
       </div>

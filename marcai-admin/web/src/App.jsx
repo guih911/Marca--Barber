@@ -8,6 +8,11 @@ import TenantDetalhe from './pages/TenantDetalhe'
 import SuperAdmins from './pages/SuperAdmins'
 import Sistema from './pages/Sistema'
 import Logs from './pages/Logs'
+import Billing from './pages/Billing'
+import IntegracoesMeta from './pages/IntegracoesMeta'
+import Relatorios from './pages/Relatorios'
+import Disparos from './pages/Disparos'
+import Inbox from './pages/Inbox'
 
 const Protegida = ({ children }) => isLoggedIn() ? children : <Navigate to="/login" />
 
@@ -19,6 +24,11 @@ export default function App() {
         <Route index element={<Dashboard />} />
         <Route path="tenants" element={<Tenants />} />
         <Route path="tenants/:id" element={<TenantDetalhe />} />
+        <Route path="inbox" element={<Inbox />} />
+        <Route path="disparos" element={<Disparos />} />
+        <Route path="relatorios" element={<Relatorios />} />
+        <Route path="billing" element={<Billing />} />
+        <Route path="integracoes/meta" element={<IntegracoesMeta />} />
         <Route path="admins" element={<SuperAdmins />} />
         <Route path="sistema" element={<Sistema />} />
         <Route path="logs" element={<Logs />} />

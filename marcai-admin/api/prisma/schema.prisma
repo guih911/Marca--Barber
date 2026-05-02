@@ -9,13 +9,22 @@ datasource db {
 
 // === SUPER ADMIN (tabela exclusiva do painel admin) ===
 
+enum PapelAdmin {
+  OWNER
+  ADMIN
+  SUPPORT
+
+  @@map("papel_admin")
+}
+
 model SuperAdmin {
-  id        String   @id @default(uuid())
+  id        String     @id @default(uuid())
   nome      String
-  email     String   @unique
+  email     String     @unique
   senhaHash String
-  ativo     Boolean  @default(true)
-  criadoEm  DateTime @default(now())
+  papel     PapelAdmin @default(ADMIN)
+  ativo     Boolean    @default(true)
+  criadoEm  DateTime   @default(now())
 
   @@map("super_admins")
 }
@@ -141,7 +150,9 @@ model Tenant {
   antecedenciaCancelar         Int       @default(2)
   autoCancelarNaoConfirmados   Boolean   @default(false)
   horasAutoCancelar            Int       @default(4)
+  minutosMargemAutoCancelamento Int      @default(15)
   lembreteMinutosAntes         Int       @default(60)  // 0 = desativado; opções: 15, 30, 60, 120, 240, 1440
+  lembretesMinutosAntes        Json?
   exigirConfirmacaoPresenca    Boolean   @default(false)
   configWhatsApp               Json?
   onboardingCompleto   Boolean   @default(false)
@@ -153,7 +164,15 @@ model Tenant {
   numeroDono           String?   // Telefone do dono para a IA enviar quando solicitado
   diferenciais         Json?     // ["sinuca","wifi","tv","estacionamento","cafezinho","cerveja"]
   linkMaps             String?   // Link Google Maps do salão
+  instagramUrl         String?
+  facebookUrl          String?
+  tiktokUrl            String?
   apresentacaoSalaoAtivo Boolean @default(true) // IA apresenta o salão na primeira visita
+  enviarMensagemAoCadastrarCliente Boolean @default(true) // envia WhatsApp automatico ao cadastrar cliente manualmente
+  taxaEntregaCentavos  Int       @default(0)
+  valorMinimoEntregaCentavos Int @default(0)
+  tempoMedioEntregaMin Int       @default(45)
+  janelasEntrega       Json?
 
   // ── Plano contratado pelo cliente (SOLO = 1 profissional, SALAO = equipe) ──
   planoContratado      String    @default("SALAO")  // "SOLO" | "SALAO"
@@ -162,6 +181,8 @@ model Tenant {
   // ── Feature flags (cada salão habilita o que quer) ──
   npsAtivo             Boolean   @default(true)   // Pesquisa de satisfação pós-atendimento
   fidelidadeAtivo      Boolean   @default(false)  // Programa de pontos/fidelidade
+  aniversarianteAtivo  Boolean   @default(false)  // Parabéns + benefício de aniversário
+  entregaAtivo         Boolean   @default(false)  // Venda de produtos com entrega
   estoqueAtivo         Boolean   @default(false)  // Controle de estoque de produtos
   comandaAtivo         Boolean   @default(false)  // Comanda digital por atendimento
   comissoesAtivo       Boolean   @default(false)  // Controle de comissões de profissionais
@@ -169,7 +190,13 @@ model Tenant {
   relatorioDiarioAtivo Boolean   @default(false)  // Relatório diário via WhatsApp para gestor
   galeriaAtivo         Boolean   @default(false)  // Galeria de fotos
   listaEsperaAtivo     Boolean   @default(false)  // Lista de espera
+  filaReengajamentoHorario String @default("20:30") // Horário local para reengajar fila no fim do dia (HH:mm)
+  filaEncaixeAutomaticoAtivo Boolean @default(true)  // Vaga da fila vira agendamento sem pedir "sim" (se aceitaEncaixe na entrada)
   caixaAtivo           Boolean   @default(false)  // Caixa / financeiro
+  nomeIA               String?  // nome do assistente IA (padrão: Don Barber)
+  aprendizadoIA        Json?    // dados de aprendizado da IA (métricas, padrões)
+  iaIncluirLinkAgendamento Boolean @default(true)  // se false, IA não envia URL do link público (WhatsApp)
+  configMensagensDon  Json?     // lembretes/cards editáveis (ver utils/mensagensDonTemplates.js)
   ativo                Boolean   @default(true)
   criadoEm             DateTime  @default(now())
   atualizadoEm         DateTime  @updatedAt
@@ -191,6 +218,7 @@ model Tenant {
   fotosGaleria     FotoGaleria[]
   sessoesCaixa     SessaoCaixa[]
   movimentacoesCaixa CaixaMovimentacao[]
+  pedidosEntrega   PedidoEntrega[]
 
   @@map("tenants")
 }
@@ -202,6 +230,7 @@ model Usuario {
   email        String   @unique
   senhaHash    String?
   googleId     String?  @unique
+  facebookId   String?  @unique
   avatarUrl    String?
   perfil       Perfil   @default(ADMIN)
   ativo        Boolean  @default(true)
@@ -303,6 +332,7 @@ model Cliente {
   assinaturasCliente AssinaturaCliente[]
   campanhasGrowthEnvios CampanhaGrowthEnvio[]
   pontosFidelidade PontosFidelidade[]
+  pedidosEntrega PedidoEntrega[]
 
   @@unique([tenantId, telefone])
   @@map("clientes")
@@ -329,6 +359,7 @@ model Agendamento {
   concluidoEm          DateTime? // Quando o atendimento foi finalizado (status→CONCLUIDO)
   presencaConfirmadaEm DateTime?
   lembreteEnviadoEm    DateTime?
+  lembretesConfiguradosEnviados Json?
   lembrete2hEnviadoEm  DateTime?
   retornoEnviadoEm     DateTime?
   feedbackNota         Int?     // Avaliação do cliente após o serviço (1-5)
@@ -372,6 +403,7 @@ model Conversa {
   escalonadoPara  String?
   motivoEscalacao String?
   modoBarbeiro    Boolean        @default(false)  // true quando barbeiro/dono está avaliando
+  estadoEngine    Json?          // estado da engine de decisão (fase + dados)
   criadoEm        DateTime       @default(now())
   atualizadoEm    DateTime       @updatedAt
 
@@ -405,6 +437,7 @@ model FilaEspera {
   dataDesejada   DateTime
   status         StatusFila @default(AGUARDANDO)
   notificadoEm   DateTime?
+  aceitaEncaixeAutomatico Boolean @default(true) // se false, envia vaga e pede confirmação (fluxo antigo)
   criadoEm       DateTime   @default(now())
 
   tenant       Tenant        @relation(fields: [tenantId], references: [id])
@@ -551,6 +584,10 @@ model ConfigFidelidade {
   pontosPerServico Int     @default(1)   // pontos ganhos por atendimento
   pontosParaResgate Int    @default(10)  // pontos necessários para 1 resgate
   descricaoResgate String  @default("1 serviço grátis") // o que ganha ao resgatar
+  aniversarioAtivo Boolean @default(false) // Envia parabéns e cria benefício no aniversário
+  aniversarioBeneficioTipo String @default("CORTE_GRATIS") // CORTE_GRATIS | VALE_PRESENTE
+  aniversarioDescricao String? // Texto customizado do benefício de aniversário
+  aniversarioValorCentavos Int? // Valor do vale-presente, quando aplicável
   ativo           Boolean  @default(true)
   criadoEm        DateTime @default(now())
   atualizadoEm    DateTime @updatedAt
@@ -603,11 +640,14 @@ model Produto {
   tenantId           String
   nome               String
   descricao          String?
+  fotoUrl            String?
   unidade            String   @default("unid") // unid, ml, g, etc.
   precoCustoCentavos Int?     // custo de aquisição
   precoVendaCentavos Int?     // preço de venda (se vender)
   quantidadeAtual    Float    @default(0)
   quantidadeMinima   Float    @default(2)  // alerta de estoque baixo
+  divulgarNoLink     Boolean  @default(false)
+  permiteEntrega     Boolean  @default(true)
   ativo              Boolean  @default(true)
   alertaEnviadoEm    DateTime? // última vez que alerta foi enviado
   criadoEm           DateTime @default(now())
@@ -616,6 +656,7 @@ model Produto {
   tenant     Tenant             @relation(fields: [tenantId], references: [id])
   movimentos MovimentoEstoque[]
   comandaItens ComandaItem[]
+  pedidoItens PedidoEntregaItem[]
 
   @@index([tenantId, ativo])
   @@map("produtos")
@@ -749,6 +790,15 @@ enum TipoMovimentacao {
   REFORCO
 }
 
+enum StatusPedidoEntrega {
+  NOVO
+  PREPARANDO
+  A_CAMINHO
+  CHEGUEI
+  FINALIZADO
+  CANCELADO
+}
+
 model CaixaMovimentacao {
   id          String           @id @default(uuid())
   tenantId    String
@@ -763,4 +813,56 @@ model CaixaMovimentacao {
 
   @@index([tenantId, sessaoId])
   @@map("caixa_movimentacoes")
+}
+
+model PedidoEntrega {
+  id                       String               @id @default(uuid())
+  tenantId                 String
+  clienteId                String?
+  clienteNome              String
+  clienteTelefone          String
+  enderecoEntrega          String
+  referenciaEndereco       String?
+  observacoes              String?
+  formaPagamento           String
+  taxaEntregaCentavos      Int                  @default(0)
+  subtotalCentavos         Int                  @default(0)
+  totalCentavos            Int                  @default(0)
+  janelaEntregaLabel       String?
+  janelaEntregaInicio      String?
+  janelaEntregaFim         String?
+  previsaoEntregaEm        DateTime?
+  status                   StatusPedidoEntrega  @default(NOVO)
+  preparandoEm             DateTime?
+  saiuParaEntregaEm        DateTime?
+  chegouEm                 DateTime?
+  finalizadoEm             DateTime?
+  canceladoEm              DateTime?
+  criadoEm                 DateTime             @default(now())
+  atualizadoEm             DateTime             @updatedAt
+
+  tenant      Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  cliente     Cliente?            @relation(fields: [clienteId], references: [id])
+  itens       PedidoEntregaItem[]
+
+  @@index([tenantId, status, criadoEm])
+  @@index([tenantId, clienteTelefone])
+  @@map("pedidos_entrega")
+}
+
+model PedidoEntregaItem {
+  id                    String   @id @default(uuid())
+  pedidoId              String
+  produtoId             String?
+  nomeProduto           String
+  quantidade            Float    @default(1)
+  precoUnitarioCentavos Int      @default(0)
+  subtotalCentavos      Int      @default(0)
+  criadoEm              DateTime @default(now())
+
+  pedido  PedidoEntrega @relation(fields: [pedidoId], references: [id], onDelete: Cascade)
+  produto Produto?      @relation(fields: [produtoId], references: [id])
+
+  @@index([pedidoId])
+  @@map("pedido_entrega_itens")
 }

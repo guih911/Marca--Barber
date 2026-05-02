@@ -1,27 +1,20 @@
 import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { api } from '../api'
-import { ChevronLeft, Users, Calendar, Scissors, UserCheck, ExternalLink, Power } from 'lucide-react'
+import { ChevronLeft, ExternalLink, Power } from 'lucide-react'
 
 export default function TenantDetalhe() {
   const { id } = useParams()
   const nav = useNavigate()
   const [tenant, setTenant] = useState(null)
-  const [clientes, setClientes] = useState([])
-  const [agendamentos, setAgendamentos] = useState([])
   const [tab, setTab] = useState('info')
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    Promise.all([
-      api(`/api/admin/tenants/${id}`),
-      api(`/api/admin/tenants/${id}/clientes?limite=10`),
-      api(`/api/admin/tenants/${id}/agendamentos?limite=10`),
-    ]).then(([t, c, a]) => {
-      setTenant(t)
-      setClientes(c.clientes)
-      setAgendamentos(a.agendamentos)
-    }).catch(console.error).finally(() => setLoading(false))
+    api(`/api/admin/tenants/${id}`)
+      .then(setTenant)
+      .catch(console.error)
+      .finally(() => setLoading(false))
   }, [id])
 
   const toggleAtivo = async () => {
@@ -47,8 +40,6 @@ export default function TenantDetalhe() {
   const tabs = [
     { id: 'info', label: 'Info' },
     { id: 'usuarios', label: `Usuários (${tenant.usuarios?.length || 0})` },
-    { id: 'clientes', label: `Clientes (${tenant._count?.clientes || 0})` },
-    { id: 'agendamentos', label: `Agendamentos (${tenant._count?.agendamentos || 0})` },
   ]
 
   return (
@@ -95,10 +86,10 @@ export default function TenantDetalhe() {
               ['Onboarding', tenant.onboardingCompleto ? 'Completo' : 'Pendente'],
               ['Ativo', tenant.ativo ? 'Sim' : 'Não'],
               ['Criado em', new Date(tenant.criadoEm).toLocaleDateString('pt-BR')],
-              ['Serviços', tenant._count?.servicos],
-              ['Profissionais', tenant._count?.profissionais],
-              ['Segmento', tenant.segmento],
-              ['Timezone', tenant.timezone],
+              ['Serviços', tenant._count?.servicos ?? '—'],
+              ['Profissionais', tenant._count?.profissionais ?? '—'],
+              ['Segmento', tenant.segmento || '—'],
+              ['Timezone', tenant.timezone || '—'],
               ['NPS ativo', tenant.npsAtivo ? 'Sim' : 'Não'],
               ['Fidelidade', tenant.fidelidadeAtivo ? 'Sim' : 'Não'],
             ].map(([k, v]) => (
@@ -129,60 +120,9 @@ export default function TenantDetalhe() {
                   <td className="px-4 py-3 text-center"><span className={`inline-block w-2 h-2 rounded-full ${u.ativo ? 'bg-emerald-500' : 'bg-red-400'}`} /></td>
                 </tr>
               ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {tab === 'clientes' && (
-        <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
-          <table className="w-full text-sm">
-            <thead><tr className="bg-slate-50 text-slate-500 text-xs uppercase">
-              <th className="text-left px-4 py-3">Nome</th>
-              <th className="text-left px-4 py-3">Telefone</th>
-              <th className="text-left px-4 py-3">Email</th>
-              <th className="text-left px-4 py-3">Criado em</th>
-            </tr></thead>
-            <tbody>
-              {clientes.map(c => (
-                <tr key={c.id} className="border-t border-slate-100">
-                  <td className="px-4 py-3 text-slate-800">{c.nome}</td>
-                  <td className="px-4 py-3 text-slate-500">{c.telefone}</td>
-                  <td className="px-4 py-3 text-slate-500">{c.email || '—'}</td>
-                  <td className="px-4 py-3 text-slate-400 text-xs">{new Date(c.criadoEm).toLocaleDateString('pt-BR')}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {tab === 'agendamentos' && (
-        <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
-          <table className="w-full text-sm">
-            <thead><tr className="bg-slate-50 text-slate-500 text-xs uppercase">
-              <th className="text-left px-4 py-3">Cliente</th>
-              <th className="text-left px-4 py-3">Serviço</th>
-              <th className="text-left px-4 py-3">Profissional</th>
-              <th className="text-left px-4 py-3">Data</th>
-              <th className="text-center px-4 py-3">Status</th>
-            </tr></thead>
-            <tbody>
-              {agendamentos.map(a => (
-                <tr key={a.id} className="border-t border-slate-100">
-                  <td className="px-4 py-3 text-slate-800">{a.cliente?.nome || '—'}</td>
-                  <td className="px-4 py-3 text-slate-500">{a.servico?.nome || '—'}</td>
-                  <td className="px-4 py-3 text-slate-500">{a.profissional?.nome || '—'}</td>
-                  <td className="px-4 py-3 text-slate-400 text-xs">{new Date(a.inicioEm).toLocaleString('pt-BR')}</td>
-                  <td className="px-4 py-3 text-center">
-                    <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
-                      { CONCLUIDO: 'bg-emerald-100 text-emerald-700', CANCELADO: 'bg-red-100 text-red-700', AGENDADO: 'bg-blue-100 text-blue-700', CONFIRMADO: 'bg-amber-100 text-amber-700' }[a.status] || 'bg-slate-100 text-slate-600'
-                    }`}>
-                      {a.status}
-                    </span>
-                  </td>
-                </tr>
-              ))}
+              {(tenant.usuarios || []).length === 0 && (
+                <tr><td colSpan={4} className="px-4 py-6 text-center text-slate-400 text-sm">Nenhum usuário</td></tr>
+              )}
             </tbody>
           </table>
         </div>

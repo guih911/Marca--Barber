@@ -461,7 +461,7 @@ const DashboardHome = () => {
             <p className="text-sm text-texto-sec">
               {planoSolo
                 ? 'Atalhos para o que você usa no dia a dia.'
-                : 'Entradas diretas para o que mais gira operação, venda e atendimento.'}
+                : 'Entradas diretas para o que mais gira operação e atendimento.'}
             </p>
           </div>
           <BadgeDollarSign size={16} className="text-primaria" />

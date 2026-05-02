@@ -1,10 +1,28 @@
 import { useState, useEffect } from 'react'
-import { Loader2, Save, Star, BarChart2, Smartphone, ClipboardList, Landmark, Lock, Zap } from 'lucide-react'
+import { Loader2, Save, Star, BarChart2, ClipboardList, Landmark, Lock, Gift, Camera } from 'lucide-react'
 import api from '../../servicos/api'
 import { useToast } from '../../contextos/ToastContexto'
 import useAuth from '../../hooks/useAuth'
 
 const recursos = [
+  {
+    chave: 'aniversarianteAtivo',
+    icone: Gift,
+    titulo: 'Corte grátis no aniversário',
+    descricao: 'Ativa o benefício de aniversário para relacionamento e fidelização dos clientes.',
+    cor: 'text-pink-500',
+    fundo: 'bg-pink-50',
+    recomendado: true,
+  },
+  {
+    chave: 'galeriaAtivo',
+    icone: Camera,
+    titulo: 'Galeria',
+    descricao: 'Permite publicar fotos e vitrine visual da barbearia para fortalecer presença e autoridade.',
+    cor: 'text-sky-500',
+    fundo: 'bg-sky-50',
+    recomendado: true,
+  },
   {
     chave: 'npsAtivo',
     icone: Star,
@@ -27,18 +45,9 @@ const recursos = [
     chave: 'listaEsperaAtivo',
     icone: ClipboardList,
     titulo: 'Lista de espera',
-    descricao: 'Fila para quando não houver horário; avisa o cliente (ou encaixa automaticamente, se a opção abaixo estiver ativa) quando alguém cancelar e abrir a vaga.',
+    descricao: 'Fila para quando não houver horário; quando abrir vaga, a IA oferece ao primeiro da fila e só encaixa se ele aceitar.',
     cor: 'text-indigo-500',
     fundo: 'bg-indigo-50',
-  },
-  {
-    chave: 'filaEncaixeAutomaticoAtivo',
-    icone: Zap,
-    titulo: 'Encaixe automático (fila)',
-    descricao: 'Se um horário abrir, o sistema reserva o cliente em primeiro lugar da fila e envia a confirmação no WhatsApp. Se desligar, só avisa a vaga e o cliente confirma antes de marcar.',
-    cor: 'text-violet-500',
-    fundo: 'bg-violet-50',
-    dependeDe: 'listaEsperaAtivo',
   },
   {
     chave: 'caixaAtivo',

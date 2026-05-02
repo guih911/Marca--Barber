@@ -277,9 +277,14 @@ const criar = async (tenantId, dados) => {
       }
     }
   }
+  const tenantConfig = await banco.tenant.findUnique({
+    where: { id: tenantId },
+    select: { membershipsAtivo: true, timezone: true, autoCancelarNaoConfirmados: true },
+  })
+  if (!tenantConfig) throw { status: 404, mensagem: 'Tenant não encontrado', codigo: 'NAO_ENCONTRADO' }
+
   if (dados.clienteId) {
-    const tenant = await banco.tenant.findUnique({ where: { id: tenantId }, select: { membershipsAtivo: true, timezone: true } })
-    if (tenant?.membershipsAtivo) {
+    if (tenantConfig?.membershipsAtivo) {
       const assinaturaAtiva = await banco.assinaturaCliente.findFirst({
         where: {
           tenantId,
@@ -292,7 +297,7 @@ const criar = async (tenantId, dados) => {
       })
       if (assinaturaAtiva?.planoAssinatura?.diasPermitidos?.length > 0) {
         const diasPermitidos = assinaturaAtiva.planoAssinatura.diasPermitidos
-        const tz = tenant.timezone || 'America/Sao_Paulo'
+        const tz = tenantConfig.timezone || 'America/Sao_Paulo'
         const dataStr = inicioEm.toLocaleDateString('en-CA', { timeZone: tz })
         const dataBRT = new Date(`${dataStr}T12:00:00.000-03:00`)
         const diaSemana = dataBRT.getDay()
@@ -311,11 +316,12 @@ const criar = async (tenantId, dados) => {
 
   const origem = dados.origem || 'DASHBOARD'
   const clienteJaChegou = Boolean(dados.walkin)
-  // Status inicial: walk-in, WHATSAPP e LINK_PUBLICO entram como CONFIRMADO.
-  // O cliente já confirmou durante a conversa com a IA ou ao preencher o link público.
-  // Agendamentos criados pelo dashboard sempre iniciam como AGENDADO, independente do prazo,
-  // para que o auto-cancelamento por não-confirmação funcione corretamente.
-  const statusInicial = clienteJaChegou || origem === 'WHATSAPP' || origem === 'LINK_PUBLICO' ? 'CONFIRMADO' : 'AGENDADO'
+  // Regra operacional:
+  // - Walk-in sempre nasce confirmado (cliente já está no salão)
+  // - Com regra de confirmação DESLIGADA, o agendamento nasce confirmado
+  // - Caso contrário, nasce pendente (AGENDADO)
+  const confirmacaoObrigatoria = tenantConfig.autoCancelarNaoConfirmados !== false
+  const statusInicial = (clienteJaChegou || !confirmacaoObrigatoria) ? 'CONFIRMADO' : 'AGENDADO'
   const profissionalAgenda = await banco.profissional.findUnique({
     where: { id: dados.profissionalId },
     select: { bufferMinutos: true },
@@ -382,7 +388,7 @@ const criar = async (tenantId, dados) => {
         servicoId: dados.servicoId,
         inicioEm,
         fimEm,
-        // Agendamentos feitos pelo WhatsApp já vêm confirmados — o cliente confirmou na conversa
+        // Novos agendamentos ficam pendentes de confirmação (exceto walk-in).
         status: statusInicial,
         origem,
         notas: dados.notas || null,
@@ -415,6 +421,12 @@ const criarCombo = async (tenantId, dados) => {
   if (servicoIds.length < 2) {
     throw { status: 422, mensagem: 'Informe ao menos dois servicos para o combo.', codigo: 'COMBO_INVALIDO' }
   }
+
+  const tenantRegraConfirmacao = await banco.tenant.findUnique({
+    where: { id: tenantId },
+    select: { autoCancelarNaoConfirmados: true },
+  })
+  const statusInicialCombo = tenantRegraConfirmacao?.autoCancelarNaoConfirmados === false ? 'CONFIRMADO' : 'AGENDADO'
 
   // Pré-validação básica fora da tx (expediente e antecedência mínima) usando validarJanelaTempo.
   // Aceita qualquer posição de início (ex: 09:45 após 45 min), não apenas múltiplos de 30 min.
@@ -513,8 +525,8 @@ const criarCombo = async (tenantId, dados) => {
           servicoId,
           inicioEm: inicioAtual,
           fimEm: fimAtual,
-          // Combos pelo WhatsApp/link público já vêm confirmados — cliente confirmou na conversa
-          status: dados.origem === 'WHATSAPP' || dados.origem === 'LINK_PUBLICO' ? 'CONFIRMADO' : 'AGENDADO',
+          // Quando a regra de confirmação está desligada, combo já nasce confirmado.
+          status: statusInicialCombo,
           origem: dados.origem || 'DASHBOARD',
           notas: dados.notas || 'Combo agendado via WhatsApp.',
         },
@@ -534,12 +546,21 @@ const criarCombo = async (tenantId, dados) => {
   })
 }
 
-const confirmar = async (tenantId, id) => {
+const confirmar = async (tenantId, id, opcoes = {}) => {
   const ag = await verificarPropriedade(tenantId, id)
   const agAtualizado = await banco.agendamento.update({ where: { id }, data: { status: 'CONFIRMADO' }, include: incluirRelacoes })
+  const origemViaPainel = opcoes?.origemViaPainel !== false
+  const dispararEvento = opcoes?.dispararEvento !== false
   
-  if (agAtualizado?.cliente) {
-    processarEvento({ evento: 'CONFIRMAR', agendamento: agAtualizado, tenantId, cliente: agAtualizado.cliente, origemViaPainel: true })
+  if (dispararEvento && agAtualizado?.cliente) {
+    processarEvento({
+      evento: 'CONFIRMAR',
+      agendamento: agAtualizado,
+      tenantId,
+      cliente: agAtualizado.cliente,
+      origemViaPainel,
+      extra: { confirmadoPor: origemViaPainel ? 'equipe' : 'cliente' },
+    })
   }
 
   return agAtualizado
@@ -565,9 +586,8 @@ const confirmarPresenca = async (tenantId, id) => {
     include: incluirRelacoes,
   })
 
-  if (agAtualizado?.cliente) {
-    processarEvento({ evento: 'CONFIRMAR_PRESENCA', agendamento: agAtualizado, tenantId, cliente: agAtualizado.cliente })
-  }
+  // Ao marcar "cliente chegou", não enviar mensagem automática no WhatsApp.
+  // Mantemos apenas a atualização operacional da agenda.
 
   return agAtualizado
 }
@@ -611,7 +631,7 @@ const cancelar = async (tenantId, id, motivo, { origem = 'CLIENTE' } = {}) => {
   return agCancelado
 }
 
-const remarcar = async (tenantId, id, novoInicio) => {
+const remarcar = async (tenantId, id, novoInicio, opcoes = {}) => {
   const agendamento = await verificarPropriedade(tenantId, id)
   garantirTransicaoValida('remarcar', agendamento.status)
 
@@ -705,7 +725,7 @@ const remarcar = async (tenantId, id, novoInicio) => {
     // Marca o antigo como remarcado
     await tx.agendamento.update({ where: { id }, data: { status: 'REMARCADO' } })
 
-    // Cria novo — se a origem era WhatsApp, o cliente já confirmou na conversa
+    // Cria novo remarcado pendente de confirmação.
     return tx.agendamento.create({
       data: {
         tenantId,
@@ -714,16 +734,23 @@ const remarcar = async (tenantId, id, novoInicio) => {
         servicoId: agendamento.servicoId,
         inicioEm,
         fimEm,
-        status: agendamento.origem === 'WHATSAPP' || agendamento.origem === 'LINK_PUBLICO' ? 'CONFIRMADO' : 'AGENDADO',
+        status: 'AGENDADO',
         origem: agendamento.origem,
         notas: agendamento.notas,
       },
       include: incluirRelacoes,
     })
   }).then((agRemarcado) => {
-    if (agRemarcado?.cliente) {
+    const notificarCliente = opcoes?.notificarCliente !== false
+    if (notificarCliente && agRemarcado?.cliente) {
       processarEvento({ evento: 'REMARCAR', agendamento: agRemarcado, tenantId, cliente: agRemarcado.cliente })
     }
+    // Slot antigo foi liberado pela remarcação: oferecer para a fila de espera.
+    filaEsperaServico.notificarFilaParaSlot(tenantId, {
+      servicoId: agendamento.servicoId,
+      profissionalId: agendamento.profissionalId,
+      dataHoraLiberada: agendamento.inicioEm,
+    }).catch((err) => console.warn('[FilaEspera] Falha ao notificar após remarcação:', err.message))
     return agRemarcado
   })
 }
@@ -746,6 +773,19 @@ const concluir = async (tenantId, id, formaPagamento) => {
 
     // Máquina de estados: apenas AGENDADO e CONFIRMADO podem ser concluídos.
     garantirTransicaoValida('concluir', atual.status)
+
+    // Evita concluir atendimento muito antes do horário marcado.
+    // Isso gera mensagens de pós-serviço/NPS incorretas e polui métricas.
+    const agora = new Date()
+    const inicioMs = new Date(atual.inicioEm).getTime()
+    const margemAntecipacaoMs = 15 * 60 * 1000
+    if (Number.isFinite(inicioMs) && agora.getTime() < (inicioMs - margemAntecipacaoMs)) {
+      throw {
+        status: 422,
+        mensagem: 'Esse horário ainda não começou. Aguarde o atendimento iniciar para concluir.',
+        codigo: 'CONCLUSAO_ANTES_DO_HORARIO',
+      }
+    }
 
     if (tenant?.exigirConfirmacaoPresenca && !atual.presencaConfirmadaEm) {
       throw {
@@ -919,6 +959,13 @@ const naoCompareceu = async (tenantId, id) => {
   if (agAtualizado?.cliente) {
     processarEvento({ evento: 'NAO_COMPARECEU', agendamento: agAtualizado, tenantId, cliente: agAtualizado.cliente })
   }
+
+  // No-show também libera o slot na prática para a fila de espera.
+  filaEsperaServico.notificarFilaParaSlot(tenantId, {
+    servicoId: agAtualizado.servicoId,
+    profissionalId: agAtualizado.profissionalId,
+    dataHoraLiberada: agAtualizado.inicioEm,
+  }).catch((err) => console.warn('[FilaEspera] Falha ao notificar após não comparecimento:', err.message))
 
   return agAtualizado
 }

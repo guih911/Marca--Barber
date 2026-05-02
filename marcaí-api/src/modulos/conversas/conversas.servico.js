@@ -91,6 +91,7 @@ const listar = async (tenantId, { status, canal, pagina = 1, limite = 30 }) => {
     include: {
       cliente: true,
       mensagens: {
+        where: { NOT: { conteudo: { startsWith: '[ORQ]' } } },
         orderBy: { criadoEm: 'desc' },
         take: 1,
       },
@@ -116,7 +117,10 @@ const buscarPorId = async (tenantId, id) => {
           },
         },
       },
-      mensagens: { orderBy: { criadoEm: 'asc' } },
+      mensagens: { 
+        where: { NOT: { conteudo: { startsWith: '[ORQ]' } } },
+        orderBy: { criadoEm: 'asc' } 
+      },
     },
   })
 

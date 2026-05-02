@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import {
-  Clock, UserPlus, Trash2, Bell, X, Loader2, Calendar, Scissors, ChevronDown, Check
+  Clock, UserPlus, Trash2, Bell, X, Loader2, Calendar, Scissors, ChevronDown, Check, Users, CircleAlert
 } from 'lucide-react'
 import api from '../../servicos/api'
 import { useToast } from '../../contextos/ToastContexto'
@@ -11,22 +11,58 @@ const formatarData = (data) => {
   return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' })
 }
 
+const formatarDataHora = (data) => {
+  if (!data) return '—'
+  const d = new Date(data)
+  return d.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
+}
+
 const BadgeStatus = ({ status }) => {
   if (status === 'NOTIFICADO') {
     return (
-      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700">
+      <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-green-100 text-green-700">
         <Check size={11} />
         Notificado
       </span>
     )
   }
   return (
-    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-700">
+    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-100 text-amber-700">
       <Clock size={11} />
       Aguardando
     </span>
   )
 }
+
+const CardResumo = ({ titulo, valor, icone: Icone, destaque = false }) => (
+  <div className={`rounded-2xl border p-4 shadow-sm ${destaque ? 'border-primaria/30 bg-primaria/5' : 'border-borda bg-white'}`}>
+    <div className="flex items-center justify-between gap-3">
+      <div>
+        <p className="text-xs font-medium text-texto-sec uppercase tracking-wide">{titulo}</p>
+        <p className="text-2xl font-bold text-texto mt-1">{valor}</p>
+      </div>
+      <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${destaque ? 'bg-primaria/15 text-primaria' : 'bg-fundo text-texto-sec'}`}>
+        <Icone size={18} />
+      </div>
+    </div>
+  </div>
+)
+
+const CampoSelect = ({ label, value, onChange, children }) => (
+  <div className="flex flex-col gap-1.5">
+    <label className="text-xs font-medium text-texto-sec">{label}</label>
+    <div className="relative">
+      <select
+        value={value}
+        onChange={onChange}
+        className="w-full appearance-none border border-borda rounded-xl px-3 py-2.5 text-sm text-texto bg-white pr-8 focus:outline-none focus:ring-2 focus:ring-primaria/30"
+      >
+        {children}
+      </select>
+      <ChevronDown size={14} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-texto-sec pointer-events-none" />
+    </div>
+  </div>
+)
 
 const ModalAdicionar = ({ onFechar, onSalvo }) => {
   const toast = useToast()
@@ -89,10 +125,13 @@ const ModalAdicionar = ({ onFechar, onSalvo }) => {
 
   return (
     <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-md">
+      <div className="bg-white rounded-3xl shadow-xl w-full max-w-md overflow-hidden">
         {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-borda">
-          <h2 className="text-base font-semibold text-texto">Adicionar à lista de espera</h2>
+        <div className="flex items-center justify-between px-5 py-4 border-b border-borda bg-fundo/60">
+          <div>
+            <h2 className="text-base font-semibold text-texto">Adicionar à lista de espera</h2>
+            <p className="text-xs text-texto-sec mt-0.5">Cadastro rápido para não perder encaixes.</p>
+          </div>
           <button
             onClick={onFechar}
             className="p-1.5 rounded-lg text-texto-sec hover:bg-fundo transition-colors"
@@ -109,64 +148,43 @@ const ModalAdicionar = ({ onFechar, onSalvo }) => {
             </div>
           ) : (
             <>
-              {/* Cliente */}
-              <div className="flex flex-col gap-1">
-                <label className="text-xs font-medium text-texto-sec">Cliente *</label>
-                <div className="relative">
-                  <select
-                    value={form.clienteId}
-                    onChange={e => handleChange('clienteId', e.target.value)}
-                    className="w-full appearance-none border border-borda rounded-xl px-3 py-2.5 text-sm text-texto bg-white pr-8 focus:outline-none focus:ring-2 focus:ring-primaria/30"
-                  >
-                    <option value="">Selecione um cliente</option>
-                    {clientes.map(c => (
-                      <option key={c.id} value={c.id}>
-                        {c.nome}{c.telefone ? ` — ${c.telefone}` : ''}
-                      </option>
-                    ))}
-                  </select>
-                  <ChevronDown size={14} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-texto-sec pointer-events-none" />
-                </div>
-              </div>
+              <CampoSelect
+                label="Cliente *"
+                value={form.clienteId}
+                onChange={(e) => handleChange('clienteId', e.target.value)}
+              >
+                <option value="">Selecione um cliente</option>
+                {clientes.map(c => (
+                  <option key={c.id} value={c.id}>
+                    {c.nome}{c.telefone ? ` — ${c.telefone}` : ''}
+                  </option>
+                ))}
+              </CampoSelect>
 
-              {/* Serviço */}
-              <div className="flex flex-col gap-1">
-                <label className="text-xs font-medium text-texto-sec">Serviço *</label>
-                <div className="relative">
-                  <select
-                    value={form.servicoId}
-                    onChange={e => handleChange('servicoId', e.target.value)}
-                    className="w-full appearance-none border border-borda rounded-xl px-3 py-2.5 text-sm text-texto bg-white pr-8 focus:outline-none focus:ring-2 focus:ring-primaria/30"
-                  >
-                    <option value="">Selecione um serviço</option>
-                    {servicos.map(s => (
-                      <option key={s.id} value={s.id}>{s.nome}</option>
-                    ))}
-                  </select>
-                  <ChevronDown size={14} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-texto-sec pointer-events-none" />
-                </div>
-              </div>
+              <CampoSelect
+                label="Serviço *"
+                value={form.servicoId}
+                onChange={(e) => handleChange('servicoId', e.target.value)}
+              >
+                <option value="">Selecione um serviço</option>
+                {servicos.map(s => (
+                  <option key={s.id} value={s.id}>{s.nome}</option>
+                ))}
+              </CampoSelect>
 
-              {/* Profissional */}
-              <div className="flex flex-col gap-1">
-                <label className="text-xs font-medium text-texto-sec">Profissional (opcional)</label>
-                <div className="relative">
-                  <select
-                    value={form.profissionalId}
-                    onChange={e => handleChange('profissionalId', e.target.value)}
-                    className="w-full appearance-none border border-borda rounded-xl px-3 py-2.5 text-sm text-texto bg-white pr-8 focus:outline-none focus:ring-2 focus:ring-primaria/30"
-                  >
-                    <option value="">Qualquer profissional</option>
-                    {profissionais.map(p => (
-                      <option key={p.id} value={p.id}>{p.nome}</option>
-                    ))}
-                  </select>
-                  <ChevronDown size={14} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-texto-sec pointer-events-none" />
-                </div>
-              </div>
+              <CampoSelect
+                label="Profissional (opcional)"
+                value={form.profissionalId}
+                onChange={(e) => handleChange('profissionalId', e.target.value)}
+              >
+                <option value="">Qualquer profissional</option>
+                {profissionais.map(p => (
+                  <option key={p.id} value={p.id}>{p.nome}</option>
+                ))}
+              </CampoSelect>
 
               {/* Data desejada */}
-              <div className="flex flex-col gap-1">
+              <div className="flex flex-col gap-1.5">
                 <label className="text-xs font-medium text-texto-sec">Data desejada *</label>
                 <input
                   type="date"
@@ -190,7 +208,7 @@ const ModalAdicionar = ({ onFechar, onSalvo }) => {
           <button
             onClick={handleSalvar}
             disabled={salvando || carregando}
-            className="bg-primaria text-white rounded-xl px-4 py-2 text-sm font-medium flex items-center gap-2 disabled:opacity-50 transition-opacity"
+            className="bg-primaria text-white rounded-xl px-4 py-2 text-sm font-medium flex items-center gap-2 disabled:opacity-50 transition-opacity hover:bg-primaria-escura"
           >
             {salvando && <Loader2 size={14} className="animate-spin" />}
             Salvar
@@ -204,6 +222,7 @@ const ModalAdicionar = ({ onFechar, onSalvo }) => {
 const ListaEspera = () => {
   const toast = useToast()
   const [entradas, setEntradas] = useState([])
+  const [resumo, setResumo] = useState({ total: 0, aguardando: 0, notificado: 0 })
   const [carregando, setCarregando] = useState(true)
   const [filtro, setFiltro] = useState('AGUARDANDO')
   const [modalAberto, setModalAberto] = useState(false)
@@ -215,13 +234,23 @@ const ListaEspera = () => {
     try {
       const params = new URLSearchParams()
       if (filtro !== 'TODOS') params.set('status', filtro)
-      const res = await api.get(`/api/fila-espera?${params}`)
-      const lista = res?.dados || res || []
+      const [resFiltrado, resTodos] = await Promise.all([
+        api.get(`/api/fila-espera?${params}`),
+        api.get('/api/fila-espera'),
+      ])
+      const lista = resFiltrado?.dados || resFiltrado || []
+      const listaTodos = resTodos?.dados || resTodos || []
       const ordenada = [...lista].sort((a, b) => new Date(a.dataDesejada) - new Date(b.dataDesejada))
       setEntradas(ordenada)
+      setResumo({
+        total: listaTodos.length,
+        aguardando: listaTodos.filter((item) => item.status === 'AGUARDANDO').length,
+        notificado: listaTodos.filter((item) => item.status === 'NOTIFICADO').length,
+      })
     } catch {
       toast('Erro ao carregar a lista de espera.', 'erro')
       setEntradas([])
+      setResumo({ total: 0, aguardando: 0, notificado: 0 })
     } finally {
       setCarregando(false)
     }
@@ -233,7 +262,7 @@ const ListaEspera = () => {
     setAcaoId(id)
     try {
       await api.patch(`/api/fila-espera/${id}/status`, { status: 'NOTIFICADO' })
-      toast('Cliente notificado.', 'sucesso')
+      toast('Entrada marcada como ofertada manualmente.', 'sucesso')
       carregar()
     } catch {
       toast('Erro ao notificar cliente.', 'erro')
@@ -257,43 +286,52 @@ const ListaEspera = () => {
   }
 
   return (
-    <div className="flex flex-col gap-6 p-6 max-w-3xl mx-auto">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-primaria/10 flex items-center justify-center">
-            <Clock size={20} className="text-primaria" />
+    <div className="max-w-5xl space-y-5">
+      <section className="rounded-3xl border border-borda bg-white p-5 md:p-6 shadow-sm">
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex items-start gap-3">
+            <div className="w-11 h-11 rounded-2xl bg-primaria/10 flex items-center justify-center shrink-0">
+              <Clock size={20} className="text-primaria" />
+            </div>
+            <div>
+              <h1 className="text-xl font-semibold text-texto">Lista de espera</h1>
+              <p className="text-sm text-texto-sec mt-1">
+                Controle de encaixes com prioridade, sem perder vaga quando houver cancelamento ou não confirmação.
+              </p>
+            </div>
           </div>
-          <div>
-            <h1 className="text-lg font-semibold text-texto">Lista de espera</h1>
-            <p className="text-xs text-texto-sec">Clientes aguardando disponibilidade</p>
-          </div>
+          <button
+            onClick={() => setModalAberto(true)}
+            className="bg-primaria text-white rounded-xl px-4 py-2.5 text-sm font-semibold flex items-center gap-2 hover:bg-primaria-escura transition-colors shrink-0"
+          >
+            <UserPlus size={16} />
+            Adicionar cliente
+          </button>
         </div>
-        <button
-          onClick={() => setModalAberto(true)}
-          className="bg-primaria text-white rounded-xl px-4 py-2 text-sm font-medium flex items-center gap-2"
-        >
-          <UserPlus size={16} />
-          Adicionar
-        </button>
-      </div>
+      </section>
+
+      <section className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <CardResumo titulo="Na fila" valor={resumo.aguardando} icone={Clock} destaque />
+        <CardResumo titulo="Já notificados" valor={resumo.notificado} icone={Bell} />
+        <CardResumo titulo="Total de entradas" valor={resumo.total} icone={Users} />
+      </section>
 
       {/* Filtros */}
-      <div className="flex gap-2">
+      <div className="flex flex-wrap gap-2">
         {[
-          { valor: 'AGUARDANDO', label: 'Aguardando' },
-          { valor: 'TODOS', label: 'Todos' },
-        ].map(({ valor, label }) => (
+          { valor: 'AGUARDANDO', label: 'Aguardando', total: resumo.aguardando },
+          { valor: 'TODOS', label: 'Todos', total: resumo.total },
+        ].map(({ valor, label, total }) => (
           <button
             key={valor}
             onClick={() => setFiltro(valor)}
             className={`px-4 py-1.5 rounded-xl text-sm font-medium transition-colors ${
               filtro === valor
                 ? 'bg-primaria text-white'
-                : 'bg-white border border-borda text-texto-sec hover:text-texto'
+                : 'bg-white border border-borda text-texto-sec hover:text-texto hover:bg-fundo'
             }`}
           >
-            {label}
+            {label} ({total})
           </button>
         ))}
       </div>
@@ -305,7 +343,7 @@ const ListaEspera = () => {
         </div>
       ) : entradas.length === 0 ? (
         /* Estado vazio */
-        <div className="flex flex-col items-center justify-center py-20 gap-4 text-center">
+        <div className="rounded-3xl border border-dashed border-borda bg-white py-16 px-6 flex flex-col items-center justify-center gap-4 text-center">
           <div className="w-16 h-16 rounded-2xl bg-fundo border border-borda flex items-center justify-center">
             <Clock size={28} className="text-texto-sec" />
           </div>
@@ -319,103 +357,112 @@ const ListaEspera = () => {
           </div>
           <button
             onClick={() => setModalAberto(true)}
-            className="bg-primaria text-white rounded-xl px-4 py-2 text-sm font-medium flex items-center gap-2"
+            className="bg-primaria text-white rounded-xl px-4 py-2.5 text-sm font-semibold flex items-center gap-2 hover:bg-primaria-escura transition-colors"
           >
             <UserPlus size={15} />
             Adicionar primeiro cliente
           </button>
         </div>
       ) : (
-        <div className="flex flex-col gap-3">
+        <div className="space-y-3">
           {entradas.map(entrada => (
             <div
               key={entrada.id}
-              className="bg-white rounded-2xl border border-borda p-5 shadow-sm flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"
+              className="bg-white rounded-2xl border border-borda p-5 shadow-sm flex flex-col gap-3"
             >
-              {/* Informações */}
-              <div className="flex flex-col gap-1.5 flex-1 min-w-0">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-sm font-semibold text-texto">
-                    {entrada.cliente?.nome || '—'}
-                  </span>
-                  <BadgeStatus status={entrada.status} />
-                </div>
-
-                {entrada.cliente?.telefone && (
-                  <p className="text-xs text-texto-sec">{entrada.cliente.telefone}</p>
-                )}
-
-                <div className="flex flex-wrap gap-3 mt-1">
-                  {/* Serviço */}
-                  <div className="flex items-center gap-1.5 text-xs text-texto-sec">
-                    <Scissors size={12} className="text-primaria shrink-0" />
-                    <span>{entrada.servico?.nome || '—'}</span>
-                    {entrada.servico?.duracaoMinutos && (
-                      <span className="text-texto-sec/60">({entrada.servico.duracaoMinutos} min)</span>
-                    )}
+              <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-3">
+                {/* Informações */}
+                <div className="flex flex-col gap-1.5 flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-sm font-semibold text-texto">
+                      {entrada.cliente?.nome || '—'}
+                    </span>
+                    <BadgeStatus status={entrada.status} />
                   </div>
 
-                  {/* Profissional */}
-                  {entrada.profissional && (
-                    <div className="flex items-center gap-1.5 text-xs text-texto-sec">
-                      <Check size={12} className="text-texto-sec/60 shrink-0" />
-                      <span>{entrada.profissional.nome}</span>
-                    </div>
+                  {entrada.cliente?.telefone && (
+                    <p className="text-xs text-texto-sec">{entrada.cliente.telefone}</p>
                   )}
 
-                  {/* Data desejada */}
-                  <div className="flex items-center gap-1.5 text-xs text-texto-sec">
-                    <Calendar size={12} className="shrink-0" />
-                    <span>{formatarData(entrada.dataDesejada)}</span>
+                  <div className="flex flex-wrap gap-3 mt-1">
+                    {/* Serviço */}
+                    <div className="flex items-center gap-1.5 text-xs text-texto-sec">
+                      <Scissors size={12} className="text-primaria shrink-0" />
+                      <span>{entrada.servico?.nome || '—'}</span>
+                      {entrada.servico?.duracaoMinutos && (
+                        <span className="text-texto-sec/60">({entrada.servico.duracaoMinutos} min)</span>
+                      )}
+                    </div>
+
+                    {/* Profissional */}
+                    {entrada.profissional && (
+                      <div className="flex items-center gap-1.5 text-xs text-texto-sec">
+                        <Check size={12} className="text-texto-sec/60 shrink-0" />
+                        <span>{entrada.profissional.nome}</span>
+                      </div>
+                    )}
+
+                    {/* Data desejada */}
+                    <div className="flex items-center gap-1.5 text-xs text-texto-sec">
+                      <Calendar size={12} className="shrink-0" />
+                      <span>{formatarData(entrada.dataDesejada)}</span>
+                    </div>
                   </div>
+                </div>
+
+                {/* Ações */}
+                <div className="flex items-center gap-2 shrink-0">
+                  {entrada.status === 'AGUARDANDO' && (
+                    <button
+                      onClick={() => handleNotificar(entrada.id)}
+                      disabled={acaoId === entrada.id}
+                      title="Notificar cliente"
+                      className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold bg-blue-50 text-blue-600 hover:bg-blue-100 transition-colors disabled:opacity-50"
+                    >
+                      {acaoId === entrada.id ? (
+                        <Loader2 size={13} className="animate-spin" />
+                      ) : (
+                        <Bell size={13} />
+                      )}
+                      Marcar ofertado
+                    </button>
+                  )}
+
+                  {confirmandoId === entrada.id ? (
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-xs text-texto-sec">Remover?</span>
+                      <button
+                        onClick={() => handleRemover(entrada.id)}
+                        disabled={acaoId === entrada.id}
+                        className="px-2.5 py-1.5 rounded-xl text-xs font-semibold bg-red-500 text-white hover:bg-red-600 transition-colors disabled:opacity-50"
+                      >
+                        {acaoId === entrada.id ? <Loader2 size={12} className="animate-spin" /> : 'Confirmar'}
+                      </button>
+                      <button
+                        onClick={() => setConfirmandoId(null)}
+                        className="px-2.5 py-1.5 rounded-xl text-xs font-semibold text-texto-sec hover:bg-fundo transition-colors"
+                      >
+                        Cancelar
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => setConfirmandoId(entrada.id)}
+                      title="Remover da lista"
+                      className="p-2 rounded-xl text-red-400 hover:bg-red-50 hover:text-red-600 transition-colors"
+                    >
+                      <Trash2 size={15} />
+                    </button>
+                  )}
                 </div>
               </div>
 
-              {/* Ações */}
-              <div className="flex items-center gap-2 shrink-0">
-                {entrada.status === 'AGUARDANDO' && (
-                  <button
-                    onClick={() => handleNotificar(entrada.id)}
-                    disabled={acaoId === entrada.id}
-                    title="Notificar cliente"
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium bg-blue-50 text-blue-600 hover:bg-blue-100 transition-colors disabled:opacity-50"
-                  >
-                    {acaoId === entrada.id ? (
-                      <Loader2 size={13} className="animate-spin" />
-                    ) : (
-                      <Bell size={13} />
-                    )}
-                    Notificar
-                  </button>
-                )}
-
-                {confirmandoId === entrada.id ? (
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-xs text-texto-sec">Remover?</span>
-                    <button
-                      onClick={() => handleRemover(entrada.id)}
-                      disabled={acaoId === entrada.id}
-                      className="px-2.5 py-1.5 rounded-xl text-xs font-medium bg-red-500 text-white hover:bg-red-600 transition-colors disabled:opacity-50"
-                    >
-                      {acaoId === entrada.id ? <Loader2 size={12} className="animate-spin" /> : 'Confirmar'}
-                    </button>
-                    <button
-                      onClick={() => setConfirmandoId(null)}
-                      className="px-2.5 py-1.5 rounded-xl text-xs font-medium text-texto-sec hover:bg-fundo transition-colors"
-                    >
-                      Cancelar
-                    </button>
-                  </div>
-                ) : (
-                  <button
-                    onClick={() => setConfirmandoId(entrada.id)}
-                    title="Remover da lista"
-                    className="p-2 rounded-xl text-red-400 hover:bg-red-50 hover:text-red-600 transition-colors"
-                  >
-                    <Trash2 size={15} />
-                  </button>
-                )}
-              </div>
+              {entrada.notificadoEm && (
+                <div className="pt-3 border-t border-borda flex items-center gap-1.5 text-xs text-texto-sec">
+                  <CircleAlert size={12} className="text-texto-sec/70" />
+                  Oferta enviada em {formatarDataHora(entrada.notificadoEm)}.
+                </div>
+              )}
             </div>
           ))}
         </div>

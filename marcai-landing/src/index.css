@@ -23,6 +23,11 @@ body {
   color: #0f172a;
 }
 
+::selection {
+  background: rgba(185, 131, 69, 0.22);
+  color: #0c0c0d;
+}
+
 a {
   color: inherit;
   text-decoration: none;

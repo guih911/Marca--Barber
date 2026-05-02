@@ -1,0 +1,5 @@
+# Ajuste o Sitemap se VITE_LANDING_BASE_URL (domínio público) for outro
+User-agent: *
+Allow: /
+
+Sitemap: https://marcaí.com/sitemap.xml

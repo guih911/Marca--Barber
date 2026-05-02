@@ -1,4 +1,5 @@
 import { X, AlertTriangle } from 'lucide-react'
+import { createPortal } from 'react-dom'
 
 /**
  * Modal de confirmação reutilizável.
@@ -30,7 +31,9 @@ const ModalConfirmar = ({
       ? 'bg-red-600 hover:bg-red-700 text-white'
       : 'bg-primaria hover:bg-primaria-escura text-white'
 
-  return (
+  if (typeof document === 'undefined') return null
+
+  return createPortal(
     <div className="fixed inset-0 bg-black/50 z-[70] flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl w-full max-w-sm shadow-xl">
         <div className="flex items-start gap-3 p-5">
@@ -63,6 +66,8 @@ const ModalConfirmar = ({
         </div>
       </div>
     </div>
+    ,
+    document.body
   )
 }
 

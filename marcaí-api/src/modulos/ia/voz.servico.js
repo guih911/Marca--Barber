@@ -1,10 +1,20 @@
 const { OpenAI } = require('openai')
 const configIA = require('../../config/ia')
 
-const openai = new OpenAI({ 
-  apiKey: configIA.apiKey || process.env.OPENAI_API_KEY, 
-  baseURL: configIA.baseURL 
-})
+/**
+ * Cliente SÓ para Whisper (transcrição de voz do WhatsApp).
+ * NÃO reutilize configIA: quando GEMINI_API_KEY está definida, configIA aponta para
+ * a API OpenAI-compatible do Google — ela NÃO oferece /audio/transcriptions (Whisper).
+ */
+const getClienteWhisper = () => {
+  const key = (process.env.OPENAI_API_KEY || '').trim()
+  if (!key) return null
+  const base = (process.env.OPENAI_WHISPER_BASE_URL || '').trim()
+  return new OpenAI({
+    apiKey: key,
+    ...(base ? { baseURL: base } : {}),
+  })
+}
 
 const ELEVENLABS_API_URL = 'https://api.elevenlabs.io/v1/text-to-speech'
 
@@ -106,10 +116,32 @@ const sintetizarAudio = async (texto, { estilo = 'default' } = {}) => {
 const transcreverAudio = async (buffer, mimetype = 'audio/ogg') => {
   if (!buffer || !buffer.length) return null
 
-  try {
-    const file = await OpenAI.toFile(buffer, `audio_${Date.now()}.ogg`, { type: mimetype })
+  const openai = getClienteWhisper()
+  if (!openai) {
+    console.warn(
+      '[Voz/Whisper] OPENAI_API_KEY ausente. Transcrição de áudio desligada; defina a chave da OpenAI (Whisper) no .env — não use só GEMINI para voz recebida.'
+    )
+    return null
+  }
 
-    console.log(`[Whisper] Enviando para transcrição OpenAI...`)
+  try {
+    const mime = String(mimetype || 'audio/ogg').split(';')[0].trim().toLowerCase()
+    const extByMime = {
+      'audio/ogg': 'ogg',
+      'audio/opus': 'ogg',
+      'audio/webm': 'webm',
+      'audio/mpeg': 'mp3',
+      'audio/mp3': 'mp3',
+      'audio/mp4': 'mp4',
+      'audio/aac': 'aac',
+      'audio/wav': 'wav',
+      'audio/x-wav': 'wav',
+      'audio/m4a': 'm4a',
+    }
+    const ext = extByMime[mime] || 'ogg'
+    const file = await OpenAI.toFile(buffer, `audio_${Date.now()}.${ext}`, { type: mime || mimetype })
+
+    console.log(`[Whisper] Enviando para transcrição OpenAI (chave dedicada, não misturada com Gemini)...`)
     const response = await withTimeout(
       openai.audio.transcriptions.create({
         file,
@@ -121,13 +153,20 @@ const transcreverAudio = async (buffer, mimetype = 'audio/ogg') => {
       'Tempo esgotado na transcrição de áudio'
     )
 
-    if (response) {
-      console.log(`[Whisper] Transcrição concluída: "${response.slice(0, 50)}..."`)
+    const texto =
+      typeof response === 'string'
+        ? response
+        : response && typeof response === 'object' && 'text' in response
+          ? String(response.text || '')
+          : ''
+
+    if (texto.trim()) {
+      console.log(`[Whisper] Transcrição concluída: "${texto.trim().slice(0, 50)}..."`)
     } else {
-      console.log(`[Whisper] Resposta nula ou vazia.`)
+      console.warn(`[Whisper] Resposta vazia ou inesperada.`)
     }
 
-    return response || null
+    return texto.trim() || null
   } catch (err) {
     console.warn('[Voz] Falha ao transcrever áudio:', err.message)
     return null
